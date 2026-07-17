@@ -1,0 +1,13 @@
+[workspace]
+
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2021"
+description = "Example Rust API workspace"
+
+[[bin]]
+name = "api"
+path = "src/main.rs"
+
+[dependencies]

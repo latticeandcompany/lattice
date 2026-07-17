@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "crates/lattice",
+    "crates/lattice-cache",
+    "crates/lattice-config",
+    "crates/lattice-dag",
+    "crates/lattice-output",
+    "crates/lattice-runner",
+    "crates/lattice-workspace",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Ryan Mullin <mullin.ry@northeastern.edu>"]
+license = "MIT"

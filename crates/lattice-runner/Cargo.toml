@@ -1,0 +1,18 @@
+[package]
+name = "lattice-runner"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Lattice async task executor"
+
+[dependencies]
+lattice-cache = { path = "../lattice-cache" }
+lattice-config = { path = "../lattice-config" }
+lattice-dag = { path = "../lattice-dag" }
+lattice-output = { path = "../lattice-output" }
+lattice-workspace = { path = "../lattice-workspace" }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+shlex = "1"
+tokio = { version = "1", features = ["full"] }

@@ -1,0 +1,10 @@
+[package]
+name = "lattice-output"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Lattice terminal output formatting"
+
+[dependencies]
+console = "0.15"

@@ -1,0 +1,55 @@
+{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "libs/*",
+    "services/*"
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "rust": ">=1.75.0"
+  },
+  "pipeline": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**/*"],
+      "ignore": ["**/*.test.*", "**/README.md"],
+      "outputs": ["dist/**", "target/debug/**", "bin/**"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*", "tests/**/*"]
+    },
+    "lint": {
+      "inputs": ["src/**/*"]
+    },
+    "clean": {}
+  },
+  "projects": {
+    "shared-cpp": {
+      "tasks": {
+        "build": "make all",
+        "test": "make test",
+        "clean": "make clean",
+        "lint": "echo 'No linter configured for C++'"
+      }
+    },
+    "utils": {
+      "tasks": {
+        "build": "python3 -c \"import os; os.makedirs('dist', exist_ok=True); import shutil; shutil.copy('src/utils.py', 'dist/utils.py'); print('utils build complete')\"",
+        "test": "python3 src/utils.py",
+        "lint": "python3 -m py_compile src/utils.py && echo 'Syntax OK'",
+        "clean": "python3 -c \"import shutil; shutil.rmtree('dist', ignore_errors=True); print('utils clean complete')\""
+      }
+    },
+    "worker": {
+      "tasks": {
+        "build": "sh -c 'if command -v go >/dev/null; then go build ./...; else echo \"[worker] go not installed, skipping native build\"; fi'",
+        "test": "sh -c 'if command -v go >/dev/null; then go test ./...; else echo \"[worker] go not installed, skipping tests\"; fi'",
+        "lint": "sh -c 'if command -v go >/dev/null; then go vet ./...; else echo \"[worker] go not installed, skipping lint\"; fi'",
+        "clean": "sh -c 'rm -rf bin && echo worker clean complete'"
+      }
+    }
+  },
+  "maxCacheSize": "1GB"
+}

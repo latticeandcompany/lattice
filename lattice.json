@@ -1,0 +1,41 @@
+{
+  "latticeVersion": "0.1.0",
+  "workspaces": ["crates/*"],
+  "engines": {
+    "rust": ">=1.75.0"
+  },
+  "pipeline": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**/*", "Cargo.toml"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*", "tests/**/*"]
+    },
+    "lint": {
+      "inputs": ["src/**/*"]
+    },
+    "check": {
+      "inputs": ["src/**/*", "Cargo.toml"]
+    },
+    "clean": {}
+  },
+  "projects": {
+    "lattice-workspace": {
+      "dependsOn": ["lattice-config"]
+    },
+    "lattice-cache": {
+      "dependsOn": ["lattice-config"]
+    },
+    "lattice-dag": {
+      "dependsOn": ["lattice-config", "lattice-workspace"]
+    },
+    "lattice-runner": {
+      "dependsOn": ["lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"]
+    },
+    "lattice": {
+      "dependsOn": ["lattice-runner", "lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"]
+    }
+  }
+}

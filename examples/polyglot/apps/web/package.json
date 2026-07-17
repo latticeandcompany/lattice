@@ -1,0 +1,14 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "description": "Example Next.js web application workspace",
+  "scripts": {
+    "build": "echo 'Building web app...' && mkdir -p dist && echo '<html><body>Hello from web</body></html>' > dist/index.html",
+    "test": "echo 'Running web tests... OK'",
+    "lint": "echo 'Linting web app... OK'",
+    "dev": "echo 'Starting web dev server on :3000'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

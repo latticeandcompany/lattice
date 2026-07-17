@@ -1,0 +1,5 @@
+[project]
+name = "utils"
+version = "0.1.0"
+description = "Example Python utilities workspace"
+requires-python = ">=3.11"
