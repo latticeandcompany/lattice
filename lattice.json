@@ -1,4 +1,5 @@
 {
+  "$schema": ".lattice/schema.json",
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "path": "crates/lattice-config" },
