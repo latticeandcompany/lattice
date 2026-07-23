@@ -16,3 +16,9 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 shlex = "1"
 tokio = { version = "1", features = ["full"] }
+indicatif = "0.17"
+console = "0.15"
+petgraph = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
