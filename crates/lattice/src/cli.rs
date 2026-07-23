@@ -2,7 +2,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    generate::GenerateArgs, run::RunArgs, setup::SetupArgs, template::TemplateArgs,
+    dev::{DevLinkArgs, DevUnlinkArgs},
+    generate::GenerateArgs,
+    run::RunArgs,
+    setup::SetupArgs,
+    template::TemplateArgs,
     version::VersionArgs,
 };
 
@@ -42,6 +46,18 @@ pub enum Commands {
 
     #[command(about = "Scaffold a new workspace from a template")]
     Generate(GenerateArgs),
+
+    #[command(
+        name = "dev-link",
+        about = "Build and point .lattice/bin/lattice at the local dev binary (target/debug/lattice)"
+    )]
+    DevLink(DevLinkArgs),
+
+    #[command(
+        name = "dev-unlink",
+        about = "Restore .lattice/bin/lattice to the pinned release binary (latticeVersion)"
+    )]
+    DevUnlink(DevUnlinkArgs),
 }
 
 impl Cli {
@@ -52,6 +68,8 @@ impl Cli {
             Commands::Setup(args) => args.execute(self.loquacious).await,
             Commands::Template(args) => args.execute().await,
             Commands::Generate(args) => args.execute().await,
+            Commands::DevLink(args) => args.execute().await,
+            Commands::DevUnlink(args) => args.execute().await,
         }
     }
 }
