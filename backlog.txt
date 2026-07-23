@@ -1,0 +1,11 @@
+cli cleanup (making it NOT look like a generic rust cli)
+markeitng cleanup, language, logo
+wesbite
+github release system
+rest of PRD
+github stuff like a readme, community guidelines
+AI guideliens
+turborepo copies in the cli
+documentation
+remove cpp from example
+tests
