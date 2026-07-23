@@ -183,7 +183,7 @@ async fn run_command(command: &str, cwd: &Path, output: &OutputManager) -> Resul
     let stderr = child.stderr.take().expect("stderr piped");
 
     let loquacious = output.loquacious;
-    let is_ci = output.is_ci;
+    let is_ci = output.is_ci();
     let show_output = loquacious || is_ci;
 
     let stdout_handle = tokio::spawn(async move {
