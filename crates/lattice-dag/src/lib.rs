@@ -76,7 +76,11 @@ pub fn build_execution_graph(
     }
 
     for task_name in &task_set {
-        let pipeline_task = config.pipeline.get(task_name.as_str()).cloned().unwrap_or_default();
+        let pipeline_task = config
+            .pipeline
+            .get(task_name.as_str())
+            .cloned()
+            .unwrap_or_default();
         let is_persistent = pipeline_task.persistent.unwrap_or(false);
 
         for ws in workspaces {
@@ -111,7 +115,11 @@ pub fn build_execution_graph(
     }
 
     for task_name in &task_set {
-        let pipeline_task = config.pipeline.get(task_name.as_str()).cloned().unwrap_or_default();
+        let pipeline_task = config
+            .pipeline
+            .get(task_name.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if let Some(depends_on) = &pipeline_task.depends_on {
             for dep in depends_on {
@@ -120,7 +128,9 @@ pub fn build_execution_graph(
                         if let Some(&to_idx) = node_map.get(&(ws.name.clone(), task_name.clone())) {
                             let deps = ws_deps.get(&ws.name).cloned().unwrap_or_default();
                             for dep_ws_name in &deps {
-                                if let Some(&from_idx) = node_map.get(&(dep_ws_name.clone(), dep_task.to_string())) {
+                                if let Some(&from_idx) =
+                                    node_map.get(&(dep_ws_name.clone(), dep_task.to_string()))
+                                {
                                     graph.add_edge(from_idx, to_idx, ());
                                 }
                             }

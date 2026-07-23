@@ -28,7 +28,10 @@ pub struct TemplateAddArgs {
     #[arg(help = "URL or git repository to fetch the template from")]
     pub url: String,
 
-    #[arg(long, help = "Name to give this template locally (defaults to repo name)")]
+    #[arg(
+        long,
+        help = "Name to give this template locally (defaults to repo name)"
+    )]
     pub name: Option<String>,
 }
 

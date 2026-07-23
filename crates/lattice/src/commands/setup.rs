@@ -113,7 +113,10 @@ impl SetupArgs {
         }
 
         println!();
-        println!("{} All workspaces set up successfully.", style("◆").cyan().bold());
+        println!(
+            "{} All workspaces set up successfully.",
+            style("◆").cyan().bold()
+        );
         Ok(())
     }
 }
@@ -136,16 +139,12 @@ fn lockfile_changed(workspace_path: &std::path::Path) -> bool {
         "uv.lock",
     ];
 
-    let marker_time = std::fs::metadata(&marker)
-        .and_then(|m| m.modified())
-        .ok();
+    let marker_time = std::fs::metadata(&marker).and_then(|m| m.modified()).ok();
 
     for lf in &lockfiles {
         let lf_path = workspace_path.join(lf);
         if lf_path.exists() {
-            if let (Some(marker_t), Ok(lf_meta)) =
-                (marker_time, std::fs::metadata(&lf_path))
-            {
+            if let (Some(marker_t), Ok(lf_meta)) = (marker_time, std::fs::metadata(&lf_path)) {
                 if let Ok(lf_t) = lf_meta.modified() {
                     if lf_t > marker_t {
                         return true;
@@ -163,11 +162,7 @@ fn touch_marker(workspace_path: &std::path::Path) -> std::io::Result<()> {
     std::fs::write(marker, "")
 }
 
-async fn run_setup_command(
-    command: &str,
-    cwd: &std::path::Path,
-    loquacious: bool,
-) -> Result<bool> {
+async fn run_setup_command(command: &str, cwd: &std::path::Path, loquacious: bool) -> Result<bool> {
     let mut child = tokio::process::Command::new("sh")
         .args(["-c", command])
         .current_dir(cwd)
