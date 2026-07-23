@@ -33,8 +33,8 @@ fn collect_task_set(root_task: &str, config: &LatticeConfig) -> Vec<String> {
         if let Some(pipeline_task) = config.pipeline.get(&task) {
             if let Some(deps) = &pipeline_task.depends_on {
                 for dep in deps {
-                    let dep_task = if dep.starts_with('^') {
-                        dep[1..].to_string()
+                    let dep_task = if let Some(stripped) = dep.strip_prefix('^') {
+                        stripped.to_string()
                     } else {
                         dep.clone()
                     };
@@ -115,8 +115,7 @@ pub fn build_execution_graph(
 
         if let Some(depends_on) = &pipeline_task.depends_on {
             for dep in depends_on {
-                if dep.starts_with('^') {
-                    let dep_task = &dep[1..];
+                if let Some(dep_task) = dep.strip_prefix('^') {
                     for ws in workspaces {
                         if let Some(&to_idx) = node_map.get(&(ws.name.clone(), task_name.clone())) {
                             let deps = ws_deps.get(&ws.name).cloned().unwrap_or_default();

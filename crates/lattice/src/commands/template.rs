@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use console::style;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use lattice_config::find_root;
 
@@ -140,7 +140,7 @@ fn list_templates(templates_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn remove_template(templates_dir: &PathBuf, args: &TemplateRemoveArgs) -> Result<()> {
+fn remove_template(templates_dir: &Path, args: &TemplateRemoveArgs) -> Result<()> {
     let dest = templates_dir.join(&args.name);
     if !dest.exists() {
         bail!("Template '{}' not found.", args.name);
@@ -178,7 +178,7 @@ fn normalize_git_url(url: &str) -> String {
     }
 }
 
-async fn git_clone(url: &str, dest: &PathBuf) -> Result<()> {
+async fn git_clone(url: &str, dest: &Path) -> Result<()> {
     let status = tokio::process::Command::new("git")
         .args(["clone", "--depth=1", url, dest.to_str().unwrap_or(".")])
         .status()
@@ -190,7 +190,7 @@ async fn git_clone(url: &str, dest: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn http_fetch(url: &str, dest: &PathBuf) -> Result<()> {
+async fn http_fetch(url: &str, dest: &Path) -> Result<()> {
     let tmp = dest.with_extension("tmp.tar.gz");
     std::fs::create_dir_all(dest.parent().unwrap_or(dest))?;
 
