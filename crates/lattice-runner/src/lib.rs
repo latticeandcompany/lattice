@@ -117,12 +117,24 @@ enum TaskOutcome {
     },
 }
 
+/// Execute the DAG.
+///
+/// * `no_cache` — bypass the cache and force re-execution of every task.
+/// * `concurrency` — cap on the number of tasks running at once. `None` keeps the
+///   default of `std::thread::available_parallelism()`.
+/// * `keep_going` — when `true`, do NOT fail-fast: independent tasks keep running
+///   after a failure, tasks whose prerequisites failed are skipped, and the run
+///   ends by reporting how many tasks failed (a non-`Ok` result). When `false`,
+///   the first failure aborts scheduling of new work (fail-fast).
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_tasks(
     graph: &ExecutionGraph,
     workspaces: &[Workspace],
     config: &LatticeConfig,
     root: &Path,
     no_cache: bool,
+    concurrency: Option<usize>,
+    keep_going: bool,
     output: &OutputManager,
 ) -> Result<RunResult> {
     let ws_map: HashMap<&str, &Workspace> =
@@ -156,9 +168,13 @@ pub async fn execute_tasks(
     }
     let specs = Arc::new(specs);
 
-    let concurrency = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
+    // Cap parallelism at the requested override, else the machine's default.
+    // Guard against a nonsensical `Some(0)` so the semaphore always has permits.
+    let concurrency = concurrency.filter(|&c| c > 0).unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+    });
 
     let cache_manager = Arc::new(CacheManager::new(root));
     let semaphore = Arc::new(Semaphore::new(concurrency));
@@ -185,7 +201,15 @@ pub async fn execute_tasks(
     let mut join_set: JoinSet<(usize, TaskOutcome)> = JoinSet::new();
 
     // The first failure to report (fail-fast). Preserved across the drain phase.
+    // In keep-going mode this is left `None`; we summarize via `failed` instead.
     let first_failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    // Count of tasks that failed. In keep-going mode this drives the final
+    // summary/exit; in fail-fast mode the run aborts on the first failure so the
+    // count is effectively 1.
+    let mut failed = 0usize;
+    // Nodes whose prerequisites failed and were therefore skipped (keep-going).
+    let mut skipped = 0usize;
 
     // Queue of ready-but-not-yet-spawned node positions.
     let mut ready: Vec<usize> = schedule.initial_ready();
@@ -235,12 +259,15 @@ pub async fn execute_tasks(
         let (pos, outcome) = match join_set.join_next().await {
             Some(Ok(res)) => res,
             Some(Err(e)) => {
-                // A spawned task panicked; treat as fatal.
+                // A spawned task panicked. This is a runner-internal fault (not a
+                // task exit code), so treat it as fatal even in keep-going mode.
                 abort.store(true, Ordering::SeqCst);
                 let mut ff = first_failure.lock().unwrap();
                 if ff.is_none() {
                     *ff = Some(format!("Task runner panicked: {}", e));
                 }
+                drop(ff);
+                failed += 1;
                 in_flight -= 1;
                 continue;
             }
@@ -267,8 +294,20 @@ pub async fn execute_tasks(
                 task,
                 captured,
             } => {
-                abort.store(true, Ordering::SeqCst);
-                {
+                failed += 1;
+                // Surface the failed task's captured output so the user can see
+                // what broke. In interactive mode this is collapsed by default.
+                surface_failure(multi.as_deref(), interactive, &workspace, &task, &captured);
+
+                if keep_going {
+                    // Keep-going: don't abort. Transitively skip every dependent
+                    // of the failed node (its prerequisites can never succeed),
+                    // so independent branches of the DAG keep running.
+                    skipped += skip_dependents(pos, &schedule, &mut completed);
+                } else {
+                    // Fail-fast: signal abort and remember the first failure so
+                    // scheduling of new work stops. Downstream tasks won't run.
+                    abort.store(true, Ordering::SeqCst);
                     let mut ff = first_failure.lock().unwrap();
                     if ff.is_none() {
                         *ff = Some(format!(
@@ -277,10 +316,6 @@ pub async fn execute_tasks(
                         ));
                     }
                 }
-                // Surface the failed task's captured output so the user can see
-                // what broke. In interactive mode this is collapsed by default.
-                surface_failure(multi.as_deref(), interactive, &workspace, &task, &captured);
-                // Do NOT push dependents; downstream tasks must not run.
             }
         }
     }
@@ -293,17 +328,81 @@ pub async fn execute_tasks(
 
     let elapsed_ms = global_start.elapsed().as_millis() as u64;
 
+    // Fail-fast: return the first failure verbatim (also covers a runner panic).
     if let Some(msg) = first_failure.lock().unwrap().take() {
         return Err(anyhow::anyhow!(msg));
+    }
+
+    // Keep-going: everything that could run has run. If anything failed, report a
+    // summary error so the process exits non-zero; `RunResult.failed` carries the
+    // real count for the caller's summary line.
+    if keep_going && failed > 0 {
+        let result = RunResult {
+            total: total.load(Ordering::SeqCst),
+            cached: cached.load(Ordering::SeqCst),
+            failed,
+            elapsed_ms,
+        };
+        return Err(RunFailure { result, skipped }.into());
     }
 
     Ok(RunResult {
         total: total.load(Ordering::SeqCst),
         cached: cached.load(Ordering::SeqCst),
-        failed: 0,
+        failed,
         elapsed_ms,
     })
 }
+
+/// Transitively mark every dependent of a failed/skipped node as completed
+/// (skipped), so keep-going mode never schedules a task whose prerequisites can
+/// no longer succeed. Returns the number of nodes newly skipped.
+fn skip_dependents(pos: usize, schedule: &Schedule, completed: &mut [bool]) -> usize {
+    let mut skipped = 0usize;
+    let mut stack = vec![pos];
+    while let Some(cur) = stack.pop() {
+        for &dep in &schedule.dependents[cur] {
+            if !completed[dep] {
+                completed[dep] = true;
+                skipped += 1;
+                stack.push(dep);
+            }
+        }
+    }
+    skipped
+}
+
+/// Error returned by keep-going mode when one or more tasks failed. Carries the
+/// full `RunResult` so callers can still print an accurate summary line.
+#[derive(Debug)]
+pub struct RunFailure {
+    pub result: RunResult,
+    /// Downstream tasks skipped because a prerequisite failed.
+    pub skipped: usize,
+}
+
+impl std::fmt::Display for RunFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.result.failed;
+        write!(
+            f,
+            "{} task{} failed (kept going)",
+            n,
+            if n == 1 { "" } else { "s" }
+        )?;
+        if self.skipped > 0 {
+            write!(
+                f,
+                "; {} downstream task{} skipped",
+                self.skipped,
+                if self.skipped == 1 { "" } else { "s" }
+            )?;
+        }
+        write!(f, ".")
+    }
+}
+
+impl std::error::Error for RunFailure {}
 
 /// Execute a single node: acquire a concurrency permit, handle caching, run the
 /// command, and store cache artifacts on success.
@@ -817,13 +916,143 @@ mod tests {
         let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
         let output = OutputManager::new(true); // loquacious => Raw / non-interactive
 
-        let result = execute_tasks(&graph, &workspaces, &config, root, true, &output)
-            .await
-            .unwrap();
+        let result = execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            root,
+            true,
+            None,
+            false,
+            &output,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.total, 2);
         assert_eq!(result.cached, 0);
         assert_eq!(result.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn concurrency_one_runs_everything_serially() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Three independent workspaces; with --concurrency 1 they run one at a
+        // time but all must still complete with correct counts.
+        let workspaces = vec![
+            ws("wa", root, &[("build", "sh -c \"true\"")]),
+            ws("wb", root, &[("build", "sh -c \"true\"")]),
+            ws("wc", root, &[("build", "sh -c \"true\"")]),
+        ];
+        let config = config_with(&[("build", None)]);
+        let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+        let output = OutputManager::new(true);
+
+        let result = execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            root,
+            true,
+            Some(1),
+            false,
+            &output,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.total, 3);
+        assert_eq!(result.cached, 0);
+        assert_eq!(result.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn keep_going_runs_independent_tasks_and_reports_failed_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let marker = root.join("independent-ran.txt");
+        let marker_str = marker.display().to_string();
+
+        // wa:build fails. wb:build is independent and touches a marker: in
+        // keep-going mode it must still run despite wa's failure.
+        let workspaces = vec![
+            ws("wa", root, &[("build", "sh -c \"exit 1\"")]),
+            ws(
+                "wb",
+                root,
+                &[("build", &format!("sh -c \"touch {}\"", marker_str))],
+            ),
+        ];
+        let config = config_with(&[("build", None)]);
+        let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+        let output = OutputManager::new(true);
+
+        // keep_going = true: the run should error, but report exactly one failure
+        // and still have executed the independent task.
+        let err = execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            root,
+            true,
+            None,
+            true,
+            &output,
+        )
+        .await
+        .unwrap_err();
+
+        let run_failure = err
+            .downcast_ref::<RunFailure>()
+            .expect("keep-going should yield a RunFailure");
+        assert_eq!(run_failure.result.failed, 1, "expected exactly one failure");
+        assert!(
+            marker.exists(),
+            "independent task did not run in keep-going mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn keep_going_skips_downstream_of_failed_prerequisite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let marker = root.join("downstream-ran.txt");
+        let marker_str = marker.display().to_string();
+
+        // build fails; test dependsOn build. Even in keep-going mode, test's
+        // prerequisite failed, so test must be skipped (marker never created).
+        let workspaces = vec![ws(
+            "wa",
+            root,
+            &[
+                ("build", "sh -c \"exit 1\""),
+                ("test", &format!("sh -c \"touch {}\"", marker_str)),
+            ],
+        )];
+        let config = config_with(&[("build", None), ("test", Some("build"))]);
+        let graph = build_execution_graph(&workspaces, "test", &config).unwrap();
+        let output = OutputManager::new(true);
+
+        let err = execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            root,
+            true,
+            None,
+            true,
+            &output,
+        )
+        .await
+        .unwrap_err();
+        let run_failure = err.downcast_ref::<RunFailure>().unwrap();
+        assert_eq!(run_failure.result.failed, 1);
+        assert!(
+            !marker.exists(),
+            "downstream task ran despite a failed prerequisite in keep-going mode"
+        );
     }
 
     #[tokio::test]
@@ -842,9 +1071,18 @@ mod tests {
         let graph = build_execution_graph(&workspaces, "test", &config).unwrap();
         let output = OutputManager::new(true); // Raw / non-interactive
 
-        let err = execute_tasks(&graph, &workspaces, &config, root, true, &output)
-            .await
-            .unwrap_err();
+        let err = execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            root,
+            true,
+            None,
+            false,
+            &output,
+        )
+        .await
+        .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("wa:build") && msg.contains("Stopping pipeline"),
@@ -875,7 +1113,17 @@ mod tests {
         let graph = build_execution_graph(&workspaces, "test", &config).unwrap();
         let output = OutputManager::new(true);
 
-        let _ = execute_tasks(&graph, &workspaces, &config, root, true, &output).await;
+        let _ = execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            root,
+            true,
+            None,
+            false,
+            &output,
+        )
+        .await;
         assert!(
             !marker.exists(),
             "downstream task ran despite upstream failure"

@@ -9,29 +9,60 @@ use lattice_runner::execute_tasks;
 use lattice_workspace::discover_workspaces;
 
 #[derive(Args, Debug)]
+#[command(long_about = "Run a pipeline task across your workspaces.\n\n\
+Lattice resolves the task's dependency graph from the 'pipeline' in lattice.json \
+and executes it in parallel, honoring each task's dependsOn edges. Scope the run \
+to specific workspaces with --filter, tune parallelism with --concurrency, and \
+choose whether a failure stops the whole run (default) or lets independent tasks \
+finish with --continue.\n\n\
+Examples:\n  \
+lattice run build\n  \
+lattice run test --filter api\n  \
+lattice run lint --concurrency 4 --continue")]
 pub struct RunArgs {
-    #[arg(help = "Task name to run across workspaces")]
+    #[arg(help = "Pipeline task to run across workspaces (e.g. build, test, lint)")]
     pub task: String,
 
     #[arg(
         short,
         long,
-        help = "Only run tasks in workspaces matching this pattern"
+        value_name = "PATTERN",
+        help = "Only run in workspaces whose name contains this pattern"
     )]
     pub filter: Option<String>,
 
-    #[arg(long, help = "Skip the cache and force re-execution of all tasks")]
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Cap how many tasks run at once (default: number of CPUs)"
+    )]
+    pub concurrency: Option<usize>,
+
+    #[arg(
+        long = "continue",
+        help = "Keep running independent tasks after a failure instead of stopping"
+    )]
+    pub keep_going: bool,
+
+    #[arg(long, help = "Ignore the cache and re-run every task")]
     pub no_cache: bool,
 
-    #[arg(long, help = "List tasks that would run without executing")]
+    #[arg(long, help = "Ignore the cache for this run (alias for --no-cache)")]
+    pub force: bool,
+
+    #[arg(
+        long,
+        help = "List the tasks that would run, then exit without running them"
+    )]
     pub dry_run: bool,
 }
 
 impl RunArgs {
     pub async fn execute(&self, loquacious: bool) -> Result<()> {
         let cwd = std::env::current_dir()?;
-        let root = find_root(&cwd)
-            .ok_or_else(|| anyhow::anyhow!("No lattice.json found in this directory or any parent directory."))?;
+        let root = find_root(&cwd).ok_or_else(|| {
+            anyhow::anyhow!("No lattice.json found in this directory or any parent directory.")
+        })?;
 
         let config = lattice_config::load_config(&root)?;
         let output = OutputManager::new(loquacious);
@@ -47,7 +78,9 @@ impl RunArgs {
         let mut workspaces = discover_workspaces(&root, &config)?;
 
         if workspaces.is_empty() {
-            output.warn("No workspaces found. Declare them in the 'workspaces' array of lattice.json.");
+            output.warn(
+                "No workspaces found. Declare them in the 'workspaces' array of lattice.json.",
+            );
             return Ok(());
         }
 
@@ -94,9 +127,41 @@ impl RunArgs {
             return Ok(());
         }
 
-        let result = execute_tasks(&graph, &workspaces, &config, &root, self.no_cache, &output).await?;
+        // `--force` is a Turbo-familiar alias for `--no-cache`; either one bypasses
+        // the cache for this run.
+        let no_cache = self.no_cache || self.force;
 
-        output.summary(result.total, result.cached, result.failed, result.elapsed_ms);
+        let result = match execute_tasks(
+            &graph,
+            &workspaces,
+            &config,
+            &root,
+            no_cache,
+            self.concurrency,
+            self.keep_going,
+            &output,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                // In keep-going mode a run with failures returns a RunFailure that
+                // still carries the full tally, so print an accurate summary line
+                // before propagating the non-zero exit.
+                if let Some(failure) = err.downcast_ref::<lattice_runner::RunFailure>() {
+                    let r = failure.result;
+                    output.summary(r.total, r.cached, r.failed, r.elapsed_ms);
+                }
+                return Err(err);
+            }
+        };
+
+        output.summary(
+            result.total,
+            result.cached,
+            result.failed,
+            result.elapsed_ms,
+        );
 
         Ok(())
     }
