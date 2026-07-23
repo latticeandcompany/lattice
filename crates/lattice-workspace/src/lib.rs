@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +9,10 @@ pub struct Workspace {
     pub name: String,
     pub path: PathBuf,
     pub language: Language,
+    /// Whether task commands are inferred (true) or only what the config declares (false).
+    pub auto: bool,
+    /// Other workspaces (by name) this one depends on.
+    pub depends_on: Vec<String>,
     pub tasks: HashMap<String, String>,
 }
 
@@ -81,35 +85,67 @@ impl Language {
 }
 
 pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Workspace>> {
+    use std::collections::HashSet;
+
     let mut workspaces = Vec::new();
+    let mut seen_names: HashSet<String> = HashSet::new();
+    let mut seen_paths: HashSet<PathBuf> = HashSet::new();
 
-    for glob_pattern in &config.workspaces {
-        let full_pattern = root.join(glob_pattern).display().to_string();
+    for ws_cfg in &config.workspaces {
+        let path = root.join(&ws_cfg.path);
 
-        for entry in glob::glob(&full_pattern)? {
-            match entry {
-                Ok(path) => {
-                    if path.is_dir() {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-
-                        let language = detect_language(&path);
-                        let tasks = build_task_map(&name, &path, &language, config);
-
-                        workspaces.push(Workspace {
-                            name,
-                            path,
-                            language,
-                            tasks,
-                        });
-                    }
-                }
-                Err(e) => eprintln!("Warning: glob error: {}", e),
-            }
+        // Strict failure: the declared path must be an existing directory (§2.1).
+        if !path.is_dir() {
+            bail!(
+                "Workspace path '{}' does not point to a directory. \
+                 Workspace paths are literal directories, not globs.",
+                ws_cfg.path
+            );
         }
+
+        let name = ws_cfg.name.clone().unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        });
+
+        // Strict failure: duplicate names or paths (§2.1).
+        if !seen_names.insert(name.clone()) {
+            bail!("Duplicate workspace name '{}' in lattice.json.", name);
+        }
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !seen_paths.insert(canonical) {
+            bail!(
+                "Duplicate workspace path '{}' in lattice.json.",
+                ws_cfg.path
+            );
+        }
+
+        let language = detect_language(&path);
+
+        // Strict failure: an auto workspace must match a first-class ecosystem (§2.1, §2.2).
+        if ws_cfg.auto && language == Language::Unknown {
+            bail!(
+                "Workspace '{}' is auto but no recognized manifest (package.json, Cargo.toml, \
+                 go.mod, pyproject.toml, etc.) was found in '{}'. \
+                 Set \"auto\": false and declare a \"tasks\" map, or add a manifest.",
+                name,
+                ws_cfg.path
+            );
+        }
+
+        let tasks = build_task_map(ws_cfg, &path, &language, config);
+        let depends_on = ws_cfg.depends_on.clone().unwrap_or_default();
+
+        workspaces.push(Workspace {
+            name,
+            path,
+            language,
+            auto: ws_cfg.auto,
+            depends_on,
+            tasks,
+        });
     }
 
     Ok(workspaces)
@@ -156,25 +192,30 @@ fn has_csproj(path: &Path) -> bool {
 }
 
 fn build_task_map(
-    workspace_name: &str,
+    ws_cfg: &lattice_config::WorkspaceConfig,
     path: &Path,
     language: &Language,
     config: &LatticeConfig,
 ) -> HashMap<String, String> {
     let mut tasks = HashMap::new();
 
-    for task_name in config.pipeline.keys() {
-        if let Some(projects) = &config.projects {
-            if let Some(project) = projects.get(workspace_name) {
-                if let Some(cmd) = project.tasks.get(task_name) {
-                    tasks.insert(task_name.clone(), cmd.clone());
-                    continue;
-                }
-            }
+    // 1. Explicit per-workspace task overrides always win (§2.2).
+    if let Some(overrides) = &ws_cfg.tasks {
+        for (task_name, cmd) in overrides {
+            tasks.insert(task_name.clone(), cmd.clone());
         }
+    }
 
-        if let Some(cmd) = infer_task_command(task_name, language, path) {
-            tasks.insert(task_name.clone(), cmd);
+    // 2. Auto workspaces infer commands for pipeline tasks not already overridden.
+    //    Manual workspaces (auto: false) use only what they declared above.
+    if ws_cfg.auto {
+        for task_name in config.pipeline.keys() {
+            if tasks.contains_key(task_name) {
+                continue;
+            }
+            if let Some(cmd) = infer_task_command(task_name, language, path) {
+                tasks.insert(task_name.clone(), cmd);
+            }
         }
     }
 

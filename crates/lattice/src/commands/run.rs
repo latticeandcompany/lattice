@@ -47,7 +47,7 @@ impl RunArgs {
         let mut workspaces = discover_workspaces(&root, &config)?;
 
         if workspaces.is_empty() {
-            output.warn("No workspaces found. Check your 'workspaces' globs in lattice.json.");
+            output.warn("No workspaces found. Declare them in the 'workspaces' array of lattice.json.");
             return Ok(());
         }
 

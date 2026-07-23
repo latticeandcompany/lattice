@@ -66,12 +66,12 @@ pub fn build_execution_graph(
     let mut graph: DiGraph<TaskNode, ()> = DiGraph::new();
     let mut node_map: HashMap<(String, String), NodeIndex> = HashMap::new();
 
+    // Inter-workspace dependency edges now come from each workspace's own
+    // `dependsOn` (the unified model — there is no separate `projects` map).
     let mut ws_deps: HashMap<String, Vec<String>> = HashMap::new();
-    if let Some(projects) = &config.projects {
-        for (ws_name, proj) in projects {
-            if let Some(deps) = &proj.depends_on {
-                ws_deps.insert(ws_name.clone(), deps.clone());
-            }
+    for ws in workspaces {
+        if !ws.depends_on.is_empty() {
+            ws_deps.insert(ws.name.clone(), ws.depends_on.clone());
         }
     }
 
@@ -83,12 +83,15 @@ pub fn build_execution_graph(
             let command = match ws.tasks.get(task_name) {
                 Some(cmd) => cmd.clone(),
                 None => {
-                    if ws.language == lattice_workspace::Language::Unknown {
+                    // Strict failure (§2.2): a manual workspace with no command for the
+                    // requested task halts. Auto workspaces simply skip tasks that don't
+                    // apply to their toolchain (e.g. a Go workspace with no `lint`).
+                    if !ws.auto && task_name == root_task {
                         bail!(
-                            "No command defined for task '{}' in workspace '{}'. \
-                            Add a command under 'projects.{}.tasks.{}' in lattice.json, \
-                            or add a recognized language manifest (package.json, Cargo.toml, etc.) to the workspace.",
-                            task_name, ws.name, ws.name, task_name
+                            "Workspace '{}' is \"auto\": false but declares no command for \
+                            task '{}'. Add it under this workspace's \"tasks\" map in lattice.json.",
+                            ws.name,
+                            task_name
                         );
                     }
                     continue;

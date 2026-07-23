@@ -1,6 +1,14 @@
 {
   "latticeVersion": "0.1.0",
-  "workspaces": ["crates/*"],
+  "workspaces": [
+    { "path": "crates/lattice-config" },
+    { "path": "crates/lattice-output" },
+    { "path": "crates/lattice-workspace", "dependsOn": ["lattice-config"] },
+    { "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
+    { "path": "crates/lattice-dag", "dependsOn": ["lattice-config", "lattice-workspace"] },
+    { "path": "crates/lattice-runner", "dependsOn": ["lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
+    { "path": "crates/lattice", "dependsOn": ["lattice-runner", "lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] }
+  ],
   "engines": {
     "rust": ">=1.75.0"
   },
@@ -20,22 +28,5 @@
       "inputs": ["src/**/*", "Cargo.toml"]
     },
     "clean": {}
-  },
-  "projects": {
-    "lattice-workspace": {
-      "dependsOn": ["lattice-config"]
-    },
-    "lattice-cache": {
-      "dependsOn": ["lattice-config"]
-    },
-    "lattice-dag": {
-      "dependsOn": ["lattice-config", "lattice-workspace"]
-    },
-    "lattice-runner": {
-      "dependsOn": ["lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"]
-    },
-    "lattice": {
-      "dependsOn": ["lattice-runner", "lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"]
-    }
   }
 }
