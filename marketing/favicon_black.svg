@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="84 84 532 532" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simplified Lattice mark for favicons: 4 rings, open aperture. -->
+  <g fill="none" stroke="#020D0C" stroke-width="16">
+    <ellipse cx="350" cy="350" rx="250" ry="95"/>
+    <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(45 350 350)"/>
+    <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(90 350 350)"/>
+    <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(135 350 350)"/>
+  </g>
+</svg>
