@@ -23,6 +23,8 @@ Lattice Cloud      →  "Lattice" in ink/paper, "Cloud" in purple
 Lattice & Co.      →  fully neutral, no accent (the parent)
 ```
 
+**IMPORTANT TO NOTE**: lattice build should only be used when in the presence of other products that it needs to be differentiated from. If lattice build is on its own it should only be a black or white lockup.
+
 The wordmark `Lattice` never appears in an accent color. This keeps the parent
 recognizable everywhere and lets products own their color without fragmenting
 the brand.
