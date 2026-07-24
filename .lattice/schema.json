@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lattice.build/schema.json",
+  "title": "Lattice Configuration",
+  "description": "Schema for lattice.json — the root configuration of a Lattice polyglot monorepo (PRD §11). Uses a no-globs, per-workspace-object model.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional reference to this JSON Schema (e.g. \".lattice/schema.json\")."
+    },
+    "latticeVersion": {
+      "type": "string",
+      "description": "Version of Lattice this config targets."
+    },
+    "workspaces": {
+      "type": "array",
+      "description": "Explicitly declared workspaces. Each entry is a single project directory (no globs).",
+      "items": {
+        "$ref": "#/$defs/workspace"
+      }
+    },
+    "engines": {
+      "$ref": "#/$defs/engines",
+      "description": "Root-level toolchain defaults for all workspaces."
+    },
+    "pipeline": {
+      "type": "object",
+      "description": "Named tasks and how they relate across the workspace graph.",
+      "additionalProperties": {
+        "$ref": "#/$defs/pipelineTask"
+      }
+    },
+    "maxCacheSize": {
+      "type": "string",
+      "description": "Upper bound on the local cache size (e.g. \"10GB\")."
+    },
+    "logging": {
+      "type": "string",
+      "description": "Logging verbosity mode (e.g. \"default\")."
+    }
+  },
+  "$defs": {
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Literal directory path (relative to repo root) to the workspace. Never a glob."
+        },
+        "name": {
+          "type": "string",
+          "description": "Workspace name; defaults to the basename of `path`."
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "When true (default), infer engine and task commands from the native manifest."
+        },
+        "engines": {
+          "$ref": "#/$defs/engines",
+          "description": "Per-workspace toolchain constraints; overrides/pins the inferred engine."
+        },
+        "dependsOn": {
+          "type": "array",
+          "description": "Other workspaces (by name) this one depends on.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tasks": {
+          "type": "object",
+          "description": "Explicit task-name -> command overrides.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "type": "string",
+          "description": "Node.js version constraint (e.g. \">=20.0.0\")."
+        },
+        "rust": {
+          "type": "string",
+          "description": "Rust version constraint (e.g. \">=1.75.0\")."
+        },
+        "python": {
+          "type": "string",
+          "description": "Python version constraint."
+        },
+        "go": {
+          "type": "string",
+          "description": "Go version constraint."
+        },
+        "custom": {
+          "type": "object",
+          "description": "Custom engine definitions keyed by an arbitrary name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/customEngine"
+          }
+        }
+      }
+    },
+    "customEngine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bin", "version", "versionCmd"],
+      "properties": {
+        "bin": {
+          "type": "string",
+          "description": "Executable name/path for the engine."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version constraint (e.g. \">=13.0.0\")."
+        },
+        "versionCmd": {
+          "type": "string",
+          "description": "Command that prints the tool's version (e.g. \"g++ --version\")."
+        }
+      }
+    },
+    "pipelineTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dependsOn": {
+          "type": "array",
+          "description": "Task dependencies. `^task` means the same task in dependency workspaces.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "description": "File globs hashed to determine cache keys.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "description": "File globs captured as cached artifacts.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ignore": {
+          "type": "array",
+          "description": "File globs excluded from input hashing.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "array",
+          "description": "Environment variable names that affect the task's cache key.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "persistent": {
+          "type": "boolean",
+          "description": "When true, the task is long-running (e.g. a dev server) and never cached."
+        },
+        "cache": {
+          "type": "boolean",
+          "description": "Whether outputs of this task are cached."
+        }
+      }
+    }
+  }
+}

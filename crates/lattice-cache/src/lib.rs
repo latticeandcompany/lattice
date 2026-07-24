@@ -100,9 +100,7 @@ impl CacheManager {
     }
 
     pub fn is_cached(&self, hash: &str) -> bool {
-        self.cache_dir
-            .join(format!("{}.meta.json", hash))
-            .exists()
+        self.cache_dir.join(format!("{}.meta.json", hash)).exists()
     }
 
     #[allow(dead_code)]
@@ -165,7 +163,11 @@ impl CacheManager {
     }
 }
 
-fn collect_files(base: &Path, patterns: &[String], ignore_patterns: &[String]) -> Result<Vec<PathBuf>> {
+fn collect_files(
+    base: &Path,
+    patterns: &[String],
+    ignore_patterns: &[String],
+) -> Result<Vec<PathBuf>> {
     let mut ignore_builder = globset::GlobSetBuilder::new();
     for pat in ignore_patterns {
         ignore_builder.add(globset::Glob::new(pat)?);

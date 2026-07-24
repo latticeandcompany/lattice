@@ -16,6 +16,9 @@ target/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Claude Code agent worktrees (ephemeral, machine-specific).
+.claude/
+
 # Lattice local-first runtime artifacts — never commit these (machine-specific, ephemeral).
 # Templates (.lattice/templates/) and schema (.lattice/schema.json) ARE meant to be checked in.
 .lattice/cache/

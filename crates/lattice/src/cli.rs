@@ -11,7 +11,12 @@ use crate::commands::{
     name = "lattice",
     about = "Cross-language monorepo task orchestrator",
     version = env!("CARGO_PKG_VERSION"),
-    long_about = "Lattice is a local-first, high-performance, and language-agnostic monorepo build system.\nBuilt for polyglot codebases with robust dependency graph resolution and parallel task execution."
+    long_about = "Lattice is a local-first, high-performance, language-agnostic monorepo build system \
+for polyglot codebases, with robust dependency-graph resolution and parallel task execution.\n\n\
+If you know Turborepo, you already know the shape: define a 'pipeline' in lattice.json, then \
+`lattice run <task>` to execute it across your workspaces. Scope with --filter, tune parallelism \
+with --concurrency, and keep going past failures with --continue. Familiar — not a clone: Lattice \
+keeps its own voice, output, and extras like -l/--loquacious."
 )]
 pub struct Cli {
     #[arg(

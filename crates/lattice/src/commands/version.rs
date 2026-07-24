@@ -25,7 +25,10 @@ impl VersionArgs {
                 style(VERSION).bold(),
                 style(format!("({})", std::env::consts::ARCH)).dim()
             );
-            println!("{}", style("Cross-language monorepo task orchestrator").dim());
+            println!(
+                "{}",
+                style("Cross-language monorepo task orchestrator").dim()
+            );
         }
         Ok(())
     }

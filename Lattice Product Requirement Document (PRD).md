@@ -322,7 +322,7 @@ The correct engine under the new config model, dogfooded by this very repo.
 * Parallel task execution across the DAG.
 * Local content-addressed caching correctness (§5.1–5.2).
 * Full interactive TUI with automatic raw-output fallback (§6).
-* Self-hosting: the Lattice repo's own `lattice.json` migrated to the new model, plus a one-command dev-binary hotswap (§13).
+* Self-hosting: the Lattice repo's own `lattice.json` migrated to the new model, plus a repo-local dev-binary hotswap script (§13).
 
 ### **v0.2 — Ecosystems, Correctness & Brand Foundations**
 Breadth and rigor across the matrix — and Lattice starts to look like a product.
@@ -359,10 +359,10 @@ Something a stranger can install and rely on.
 
 Lattice manages Lattice. This repository is itself a Lattice monorepo: the root `lattice.json` declares the `crates/*` as explicit workspaces (§2.1) and every build/test/lint task is run through Lattice. Dogfooding is a first-class requirement — if a workflow is awkward for the maintainers running Lattice on Lattice, it is a bug.
 
-Because Lattice is the tool *and* the code under development, contributors constantly need to swap between a stable pinned binary and a freshly built dev binary. This is deliberately a **symlink swap, not a reinstall**, reusing the distribution model from §9:
+Because Lattice is the tool *and* the code under development, contributors constantly need to swap between a stable pinned binary and a freshly built dev binary. This is deliberately a **symlink swap, not a reinstall**, reusing the distribution model from §9. It is **repo-local developer tooling, not a `lattice` subcommand** — the shipped CLI stays free of self-hosting machinery:
 
 * `./.lattice/bin/lattice` is the symlink every command resolves.
-* A single command — e.g. `lattice dev-link` (with a plain `scripts/` fallback for bootstrapping before a binary exists) — runs `cargo build` and repoints that symlink at the freshly compiled `target/debug/lattice`.
-* Restoring the pinned release is the same swap in reverse (`lattice dev-unlink`), pointing the symlink back at the `latticeVersion`-stamped binary.
+* `scripts/dev-link.sh` runs `cargo build` and repoints that symlink at the freshly compiled `target/debug/lattice`. It is a plain script, so it works before any binary exists.
+* Restoring the pinned release is the same swap in reverse (`scripts/dev-unlink.sh`), pointing the symlink back at the `latticeVersion`-stamped binary.
 
-The hotswap must be fast and non-destructive: switching to the dev binary, running the suite, and switching back should never re-download or corrupt the pinned install, and the currently-linked build should always be obvious from `lattice version`.
+The hotswap must be fast and non-destructive: switching to the dev binary, running the suite, and switching back should never re-download or corrupt the pinned install.
