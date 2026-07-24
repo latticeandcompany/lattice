@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# dev-unlink.sh — bash fallback for `lattice dev-unlink` (PRD §13).
+# dev-unlink.sh — restore the pinned release binary (PRD §13).
 #
-# Restores the stable ./.lattice/bin/lattice symlink to the pinned release binary
-# (lattice-<latticeVersion>), reading the version from the repo's lattice.json.
+# Repo-local tooling (NOT a lattice subcommand). Restores the stable
+# ./.lattice/bin/lattice symlink to the pinned release binary (lattice-<latticeVersion>),
+# reading the version from the repo's lattice.json.
 # Non-destructive: if the pinned release binary is not installed, nothing is changed.
 set -euo pipefail
 

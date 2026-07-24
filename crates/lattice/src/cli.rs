@@ -2,11 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    dev::{DevLinkArgs, DevUnlinkArgs},
-    generate::GenerateArgs,
-    run::RunArgs,
-    setup::SetupArgs,
-    template::TemplateArgs,
+    generate::GenerateArgs, run::RunArgs, setup::SetupArgs, template::TemplateArgs,
     version::VersionArgs,
 };
 
@@ -20,7 +16,7 @@ for polyglot codebases, with robust dependency-graph resolution and parallel tas
 If you know Turborepo, you already know the shape: define a 'pipeline' in lattice.json, then \
 `lattice run <task>` to execute it across your workspaces. Scope with --filter, tune parallelism \
 with --concurrency, and keep going past failures with --continue. Familiar — not a clone: Lattice \
-keeps its own voice, output, and extras like -l/--loquacious and dev-link."
+keeps its own voice, output, and extras like -l/--loquacious."
 )]
 pub struct Cli {
     #[arg(
@@ -51,18 +47,6 @@ pub enum Commands {
 
     #[command(about = "Scaffold a new workspace from a template")]
     Generate(GenerateArgs),
-
-    #[command(
-        name = "dev-link",
-        about = "Build and point .lattice/bin/lattice at the local dev binary (target/debug/lattice)"
-    )]
-    DevLink(DevLinkArgs),
-
-    #[command(
-        name = "dev-unlink",
-        about = "Restore .lattice/bin/lattice to the pinned release binary (latticeVersion)"
-    )]
-    DevUnlink(DevUnlinkArgs),
 }
 
 impl Cli {
@@ -73,8 +57,6 @@ impl Cli {
             Commands::Setup(args) => args.execute(self.loquacious).await,
             Commands::Template(args) => args.execute().await,
             Commands::Generate(args) => args.execute().await,
-            Commands::DevLink(args) => args.execute().await,
-            Commands::DevUnlink(args) => args.execute().await,
         }
     }
 }

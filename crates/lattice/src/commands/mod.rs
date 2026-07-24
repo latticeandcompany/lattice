@@ -1,4 +1,3 @@
-pub mod dev;
 pub mod generate;
 pub mod run;
 pub mod setup;

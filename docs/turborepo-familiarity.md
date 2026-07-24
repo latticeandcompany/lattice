@@ -29,11 +29,13 @@ These have no direct Turbo analogue — they are part of Lattice's own voice:
 
 - **`-l` / `--loquacious`** — a global flag that streams detailed, line-by-line
   task output, bypassing the interactive TUI. Handy for CI logs and debugging.
-- **`lattice dev-link` / `lattice dev-unlink`** — build and point
-  `.lattice/bin/lattice` at your local dev binary, then restore it to the pinned
-  release binary. Part of Lattice's local-first, inspectable workflow (§1.1).
 - Other subcommands: `setup` (run native dependency installers),
   `template` / `generate` (workspace scaffolding), and `version`.
+
+The dev-binary hotswap for contributors working *on* Lattice is deliberately
+**not** a subcommand — it lives as repo-local scripts (`scripts/dev-link.sh` /
+`scripts/dev-unlink.sh`), keeping the shipped CLI free of self-hosting machinery
+(PRD §13).
 
 ## `--force` vs `--no-cache`
 
@@ -47,8 +49,8 @@ OR'd together before reaching the runner.
 Turbo lets you write `turbo build` as shorthand for `turbo run build`. Lattice
 **does not** ship this yet. With clap's derived subcommand enum, a clean
 implementation that (a) never shadows real subcommands (`run`, `setup`,
-`template`, `generate`, `version`, `dev-link`, `dev-unlink`, `--help`,
-`--version`) and (b) correctly forwards every `run` flag (`--filter`,
+`template`, `generate`, `version`, `--help`, `--version`) and (b) correctly
+forwards every `run` flag (`--filter`,
 `--concurrency`, `--continue`, `--force`, `--no-cache`, `--dry-run`) proved
 fragile and ambiguous. Correctness was prioritized over completeness, so the
 shorthand is deferred. Until then, use the explicit form:
