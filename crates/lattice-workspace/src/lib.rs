@@ -1,89 +1,647 @@
-use anyhow::{bail, Result};
-use std::collections::HashMap;
+//! Workspace discovery + the "never-prescribe" detect-or-declare driver model.
+//!
+//! Lattice detects the task *driver* (the tool that runs tasks) for each
+//! workspace by walking an EVIDENCE LADDER and stopping at the first tier that
+//! gives an unambiguous answer:
+//!
+//! * (a) a **declaration** in `lattice.json` `engines` — always wins;
+//! * (b) a **dev-authored native declaration file** (`packageManager`,
+//!   `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`, `./gradlew`, …);
+//! * (c) a **tool-unique lockfile/artifact** (`bun.lockb`, `pnpm-lock.yaml`,
+//!   `Cargo.lock`, `poetry.lock`, …);
+//! * (d) otherwise → **HALT and ask** ([`AmbiguityError`]). A bare generic
+//!   ecosystem marker (a lone `package.json`, `pom.xml`, …) is deliberately not
+//!   enough — that would be prescribing a tool the developer never chose.
+//!
+//! Tools carry a [`Role`]. Tools with *different* roles COMPOSE into a stack
+//! (a node runtime + a pnpm package-manager); only tools competing for the
+//! *same* role are a conflict.
+
 use std::path::{Path, PathBuf};
 
-use lattice_config::LatticeConfig;
+use anyhow::{bail, Result};
+use indexmap::IndexMap;
+use lattice_config::{EngineMap, LatticeConfig};
 
+pub mod toolchain;
+
+/// The kind of job a tool does. The key to multi-tool ecosystems: tools with
+/// different roles compose; tools competing for the same role conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    Runtime,
+    PackageManager,
+    BuildTool,
+    TaskRunner,
+}
+
+impl Role {
+    /// Higher rank == more authoritative as a *task driver*. A pure `Runtime`
+    /// (node/python/ruby/java) cannot run named tasks on its own.
+    fn drive_rank(self) -> u8 {
+        match self {
+            Role::Runtime => 0,
+            Role::BuildTool => 1,
+            Role::PackageManager => 2,
+            Role::TaskRunner => 3,
+        }
+    }
+}
+
+/// A built-in, extensible registry of known task drivers.
+pub struct DriverRegistry;
+
+/// One known tool: how to recognize it, version-check it, and invoke a task.
+pub struct DriverSpec {
+    pub tool: &'static str,
+    pub role: Role,
+    /// Files that identify this tool when present in a workspace dir.
+    pub fingerprint: &'static [&'static str],
+    /// Command that prints the tool's version.
+    pub version_cmd: &'static str,
+    /// Invoke template with a `{task}` placeholder (invoke form via [`DriverSpec::invoke`]).
+    invoke_tpl: &'static str,
+}
+
+impl DriverSpec {
+    /// The shell command that drives `task` through this tool.
+    pub fn invoke(&self, task: &str) -> String {
+        self.invoke_tpl.replace("{task}", task)
+    }
+}
+
+static DRIVERS: &[DriverSpec] = &[
+    // --- JavaScript / TypeScript --------------------------------------------
+    DriverSpec {
+        tool: "node",
+        role: Role::Runtime,
+        fingerprint: &[".nvmrc"],
+        version_cmd: "node --version",
+        invoke_tpl: "node {task}",
+    },
+    DriverSpec {
+        tool: "deno",
+        role: Role::TaskRunner,
+        fingerprint: &["deno.json", "deno.jsonc", "deno.lock"],
+        version_cmd: "deno --version",
+        invoke_tpl: "deno task {task}",
+    },
+    DriverSpec {
+        tool: "bun",
+        role: Role::PackageManager,
+        fingerprint: &["bun.lockb", "bun.lock"],
+        version_cmd: "bun --version",
+        invoke_tpl: "bun run {task}",
+    },
+    DriverSpec {
+        tool: "pnpm",
+        role: Role::PackageManager,
+        fingerprint: &["pnpm-lock.yaml"],
+        version_cmd: "pnpm --version",
+        invoke_tpl: "pnpm run {task}",
+    },
+    DriverSpec {
+        tool: "yarn",
+        role: Role::PackageManager,
+        fingerprint: &["yarn.lock"],
+        version_cmd: "yarn --version",
+        invoke_tpl: "yarn {task}",
+    },
+    DriverSpec {
+        tool: "npm",
+        role: Role::PackageManager,
+        fingerprint: &["package-lock.json"],
+        version_cmd: "npm --version",
+        invoke_tpl: "npm run {task}",
+    },
+    // --- Rust ----------------------------------------------------------------
+    DriverSpec {
+        tool: "cargo",
+        role: Role::BuildTool,
+        fingerprint: &["Cargo.lock", "rust-toolchain.toml", "rust-toolchain"],
+        version_cmd: "cargo --version",
+        invoke_tpl: "cargo {task}",
+    },
+    // --- Go ------------------------------------------------------------------
+    DriverSpec {
+        tool: "go",
+        role: Role::BuildTool,
+        fingerprint: &["go.sum"],
+        version_cmd: "go version",
+        invoke_tpl: "go {task}",
+    },
+    // --- Python --------------------------------------------------------------
+    DriverSpec {
+        tool: "uv",
+        role: Role::PackageManager,
+        fingerprint: &["uv.lock"],
+        version_cmd: "uv --version",
+        invoke_tpl: "uv run {task}",
+    },
+    DriverSpec {
+        tool: "poetry",
+        role: Role::PackageManager,
+        fingerprint: &["poetry.lock"],
+        version_cmd: "poetry --version",
+        invoke_tpl: "poetry run {task}",
+    },
+    DriverSpec {
+        tool: "python",
+        role: Role::Runtime,
+        fingerprint: &[".python-version"],
+        version_cmd: "python --version",
+        invoke_tpl: "python -m {task}",
+    },
+    // --- Ruby ----------------------------------------------------------------
+    DriverSpec {
+        tool: "bundler",
+        role: Role::PackageManager,
+        fingerprint: &["Gemfile.lock"],
+        version_cmd: "bundle --version",
+        invoke_tpl: "bundle exec {task}",
+    },
+    DriverSpec {
+        tool: "rake",
+        role: Role::TaskRunner,
+        fingerprint: &["Rakefile"],
+        version_cmd: "rake --version",
+        invoke_tpl: "rake {task}",
+    },
+    DriverSpec {
+        tool: "ruby",
+        role: Role::Runtime,
+        fingerprint: &[".ruby-version"],
+        version_cmd: "ruby --version",
+        invoke_tpl: "ruby {task}",
+    },
+    // --- JVM -----------------------------------------------------------------
+    DriverSpec {
+        tool: "gradle",
+        role: Role::BuildTool,
+        fingerprint: &["gradlew"],
+        version_cmd: "gradle --version",
+        invoke_tpl: "./gradlew {task}",
+    },
+    DriverSpec {
+        tool: "maven",
+        role: Role::BuildTool,
+        fingerprint: &["mvnw"],
+        version_cmd: "mvn --version",
+        invoke_tpl: "./mvnw {task}",
+    },
+    DriverSpec {
+        tool: "java",
+        role: Role::Runtime,
+        fingerprint: &[".java-version"],
+        version_cmd: "java -version",
+        invoke_tpl: "java {task}",
+    },
+    // --- .NET ----------------------------------------------------------------
+    DriverSpec {
+        tool: "dotnet",
+        role: Role::BuildTool,
+        fingerprint: &["global.json"],
+        version_cmd: "dotnet --version",
+        invoke_tpl: "dotnet {task}",
+    },
+    // --- iOS -----------------------------------------------------------------
+    DriverSpec {
+        tool: "pod",
+        role: Role::PackageManager,
+        fingerprint: &["Podfile", "Podfile.lock"],
+        version_cmd: "pod --version",
+        invoke_tpl: "pod {task}",
+    },
+];
+
+impl DriverRegistry {
+    /// Look up a known driver spec by tool name.
+    pub fn get(tool: &str) -> Option<&'static DriverSpec> {
+        DRIVERS.iter().find(|d| d.tool == tool)
+    }
+
+    /// All built-in driver specs.
+    pub fn known() -> &'static [DriverSpec] {
+        DRIVERS
+    }
+}
+
+/// How a driver was selected (which rung of the evidence ladder).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Evidence {
+    /// Declared in `lattice.json` `engines` (the escape hatch).
+    Declaration,
+    /// A dev-authored native declaration file (carries a description).
+    NativeFile(String),
+    /// A tool-unique lockfile/artifact (carries the file name).
+    Lockfile(String),
+}
+
+impl Evidence {
+    /// Precedence rank: declaration beats native file beats lockfile.
+    fn rank(&self) -> u8 {
+        match self {
+            Evidence::Declaration => 2,
+            Evidence::NativeFile(_) => 1,
+            Evidence::Lockfile(_) => 0,
+        }
+    }
+}
+
+/// The detected/declared task driver for a workspace.
+#[derive(Debug, Clone)]
+pub struct DriverResolution {
+    pub tool: String,
+    pub role: Role,
+    pub via: Evidence,
+}
+
+/// A resolved workspace: discovered, validated, with commands materialized.
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub name: String,
     pub path: PathBuf,
-    pub language: Language,
-    /// Whether task commands are inferred (true) or only what the config declares (false).
     pub auto: bool,
-    /// Other workspaces (by name) this one depends on.
     pub depends_on: Vec<String>,
-    pub tasks: HashMap<String, String>,
+    /// Resolved (root-merged) engine constraints.
+    pub engines: EngineMap,
+    /// The detected/declared task driver (`None` for pure manual scripts).
+    pub driver: Option<DriverResolution>,
+    /// Resolved `task_name -> shell command`.
+    pub commands: IndexMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Language {
-    JavaScript,
-    Rust,
-    Python,
-    Go,
-    Ruby,
-    CSharp,
-    JavaGradle,
-    JavaMaven,
-    Cpp,
-    Unknown,
-}
-
-impl Language {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Language::JavaScript => "JavaScript/TypeScript",
-            Language::Rust => "Rust",
-            Language::Python => "Python",
-            Language::Go => "Go",
-            Language::Ruby => "Ruby",
-            Language::CSharp => "C#/.NET",
-            Language::JavaGradle => "Java (Gradle)",
-            Language::JavaMaven => "Java (Maven)",
-            Language::Cpp => "C/C++",
-            Language::Unknown => "Unknown",
-        }
-    }
-
-    pub fn setup_command(&self, path: &Path) -> Option<String> {
-        match self {
-            Language::JavaScript => {
-                let pm = detect_js_package_manager(path);
-                Some(format!("{} install", pm))
-            }
-            Language::Rust => Some("cargo fetch".to_string()),
-            Language::Python => {
-                if path.join("uv.lock").exists() || path.join("pyproject.toml").exists() {
-                    Some("uv sync".to_string())
-                } else if path.join("requirements.txt").exists() {
-                    Some("pip install -r requirements.txt".to_string())
-                } else {
-                    None
-                }
-            }
-            Language::Go => Some("go mod download".to_string()),
-            Language::Ruby => Some("bundle install".to_string()),
-            Language::CSharp => Some("dotnet restore".to_string()),
-            Language::JavaGradle => {
-                if path.join("gradlew").exists() {
-                    Some("./gradlew dependencies".to_string())
-                } else {
-                    Some("gradle dependencies".to_string())
-                }
-            }
-            Language::JavaMaven => {
-                if path.join("mvnw").exists() {
-                    Some("./mvnw dependency:resolve".to_string())
-                } else {
-                    Some("mvn dependency:resolve".to_string())
-                }
-            }
-            Language::Cpp | Language::Unknown => None,
-        }
+impl Workspace {
+    /// The resolved shell command for `task`, if this workspace has one.
+    pub fn command_for(&self, task: &str) -> Option<&str> {
+        self.commands.get(task).map(|s| s.as_str())
     }
 }
 
+/// Raised when Lattice cannot unambiguously pick a task driver: either two
+/// tools compete for the same role, or a workspace shows only a bare generic
+/// marker with no tool-unique signal. Renders a copy-pasteable fix.
+#[derive(Debug, Clone)]
+pub struct AmbiguityError {
+    pub workspace: String,
+    pub candidates: Vec<String>,
+    pub suggested_fix: String,
+}
+
+impl std::fmt::Display for AmbiguityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "Workspace '{}' has an ambiguous or undeclared task driver.",
+            self.workspace
+        )?;
+        if self.candidates.is_empty() {
+            writeln!(
+                f,
+                "No task driver could be detected (no lockfile, wrapper, or \
+                 native declaration)."
+            )?;
+        } else {
+            writeln!(f, "Candidate tools seen: {}", self.candidates.join(", "))?;
+        }
+        write!(
+            f,
+            "Lattice never guesses a tool you didn't choose. Declare one \
+             explicitly by adding to this workspace in lattice.json:\n  {}",
+            self.suggested_fix
+        )
+    }
+}
+
+impl std::error::Error for AmbiguityError {}
+
+/// The plausible ecosystem package-managers/build-tools for the generic marker
+/// present in `path`, if any. Used only to populate an [`AmbiguityError`].
+fn ecosystem_candidates(path: &Path) -> Vec<&'static str> {
+    if path.join("package.json").exists() {
+        vec!["pnpm", "npm", "yarn", "bun"]
+    } else if path.join("pom.xml").exists() {
+        vec!["maven"]
+    } else if path.join("build.gradle").exists() || path.join("build.gradle.kts").exists() {
+        vec!["gradle"]
+    } else if path.join("pyproject.toml").exists()
+        || path.join("setup.py").exists()
+        || path.join("requirements.txt").exists()
+    {
+        vec!["uv", "poetry"]
+    } else if path.join("Gemfile").exists() {
+        vec!["bundler", "rake"]
+    } else {
+        vec![]
+    }
+}
+
+/// Build a copy-pasteable `"engines"` snippet naming `tool`.
+fn suggested_fix_for(tool: &str) -> String {
+    format!("\"engines\": {{ \"{tool}\": \">=0.0.0\" }}")
+}
+
+/// Read the `scripts` (JS) / `tasks` (deno) map keys from a manifest, if any.
+fn manifest_script_names(path: &Path, tool: &str) -> Option<Vec<String>> {
+    let (file, key) = match tool {
+        "npm" | "pnpm" | "yarn" | "bun" => ("package.json", "scripts"),
+        "deno" => {
+            if path.join("deno.jsonc").exists() {
+                ("deno.jsonc", "tasks")
+            } else {
+                ("deno.json", "tasks")
+            }
+        }
+        _ => return None,
+    };
+    let raw = std::fs::read_to_string(path.join(file)).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let map = json.get(key)?.as_object()?;
+    Some(map.keys().cloned().collect())
+}
+
+/// Insert a candidate tool with its evidence, keeping the highest-ranked
+/// evidence per tool (declaration > native file > lockfile).
+fn add_candidate(cands: &mut IndexMap<String, Evidence>, tool: &str, ev: Evidence) {
+    match cands.get(tool) {
+        Some(existing) if existing.rank() >= ev.rank() => {}
+        _ => {
+            cands.insert(tool.to_string(), ev);
+        }
+    }
+}
+
+/// Walk the evidence ladder for one workspace directory and its declared
+/// engines, returning the single task driver or an [`AmbiguityError`].
+///
+/// (The `workspace` field of any error is set to the directory's file name;
+/// [`discover_workspaces`] overwrites it with the configured name.)
+pub fn detect_drivers(
+    path: &Path,
+    declared: &EngineMap,
+) -> Result<DriverResolution, AmbiguityError> {
+    let ws_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace")
+        .to_string();
+
+    let mut cands: IndexMap<String, Evidence> = IndexMap::new();
+
+    // (a) Declarations in lattice.json — always the strongest evidence.
+    for name in declared.keys() {
+        if DriverRegistry::get(name).is_some() {
+            add_candidate(&mut cands, name, Evidence::Declaration);
+        }
+    }
+
+    // (b) Dev-authored native declaration files — the developer's stated intent.
+    if path.join(".nvmrc").exists() {
+        add_candidate(&mut cands, "node", Evidence::NativeFile(".nvmrc".into()));
+    }
+    if let Some(pm) = read_package_manager_field(path) {
+        if DriverRegistry::get(&pm).is_some() {
+            add_candidate(
+                &mut cands,
+                &pm,
+                Evidence::NativeFile("package.json packageManager".into()),
+            );
+        }
+    }
+    for tool in read_tool_versions(path) {
+        if DriverRegistry::get(&tool).is_some() {
+            add_candidate(
+                &mut cands,
+                &tool,
+                Evidence::NativeFile(".tool-versions".into()),
+            );
+        }
+    }
+    if path.join("rust-toolchain.toml").exists() || path.join("rust-toolchain").exists() {
+        add_candidate(
+            &mut cands,
+            "cargo",
+            Evidence::NativeFile("rust-toolchain".into()),
+        );
+    }
+    if path.join(".python-version").exists() {
+        add_candidate(
+            &mut cands,
+            "python",
+            Evidence::NativeFile(".python-version".into()),
+        );
+    }
+    if path.join(".ruby-version").exists() || has_gemfile_ruby_directive(path) {
+        add_candidate(
+            &mut cands,
+            "ruby",
+            Evidence::NativeFile("ruby-version".into()),
+        );
+    }
+    if path.join(".java-version").exists() {
+        add_candidate(
+            &mut cands,
+            "java",
+            Evidence::NativeFile(".java-version".into()),
+        );
+    }
+    if go_mod_has_toolchain(path) {
+        add_candidate(
+            &mut cands,
+            "go",
+            Evidence::NativeFile("go.mod toolchain".into()),
+        );
+    }
+    if path.join("gradlew").exists() {
+        add_candidate(&mut cands, "gradle", Evidence::NativeFile("gradlew".into()));
+    }
+    if path.join("mvnw").exists() {
+        add_candidate(&mut cands, "maven", Evidence::NativeFile("mvnw".into()));
+    }
+    if path.join("deno.json").exists() || path.join("deno.jsonc").exists() {
+        add_candidate(&mut cands, "deno", Evidence::NativeFile("deno.json".into()));
+    }
+
+    // (c) Tool-unique lockfiles/artifacts.
+    for spec in DRIVERS {
+        for fp in spec.fingerprint {
+            // Skip the fingerprints already handled above as native files.
+            if is_native_fingerprint(fp) {
+                continue;
+            }
+            if path.join(fp).exists() {
+                add_candidate(&mut cands, spec.tool, Evidence::Lockfile((*fp).to_string()));
+            }
+        }
+    }
+
+    // (d) Resolve.
+    if cands.is_empty() {
+        return Err(bare_marker_error(&ws_name, path));
+    }
+
+    // Group by role; find the highest driving role present.
+    let mut top_rank = 0u8;
+    for ev_tool in cands.keys() {
+        if let Some(spec) = DriverRegistry::get(ev_tool) {
+            top_rank = top_rank.max(spec.role.drive_rank());
+        }
+    }
+
+    // A pure runtime cannot drive named tasks — that's still ambiguity.
+    if top_rank == Role::Runtime.drive_rank() {
+        return Err(bare_marker_error(&ws_name, path));
+    }
+
+    let in_top: Vec<(&String, &Evidence)> = cands
+        .iter()
+        .filter(|(t, _)| {
+            DriverRegistry::get(t)
+                .map(|s| s.role.drive_rank() == top_rank)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    let chosen = if in_top.len() == 1 {
+        in_top[0]
+    } else {
+        // Same-role conflict: a declaration disambiguates if exactly one exists.
+        let declared: Vec<_> = in_top
+            .iter()
+            .filter(|(_, ev)| matches!(**ev, Evidence::Declaration))
+            .copied()
+            .collect();
+        if declared.len() == 1 {
+            declared[0]
+        } else {
+            let mut candidates: Vec<String> = in_top.iter().map(|(t, _)| (*t).clone()).collect();
+            candidates.sort();
+            let fix = suggested_fix_for(&candidates[0]);
+            return Err(AmbiguityError {
+                workspace: ws_name,
+                candidates,
+                suggested_fix: fix,
+            });
+        }
+    };
+
+    let spec = DriverRegistry::get(chosen.0).expect("candidate is a known tool");
+    Ok(DriverResolution {
+        tool: chosen.0.clone(),
+        role: spec.role,
+        via: chosen.1.clone(),
+    })
+}
+
+fn bare_marker_error(ws_name: &str, path: &Path) -> AmbiguityError {
+    let candidates: Vec<String> = ecosystem_candidates(path)
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let fix = suggested_fix_for(candidates.first().map(|s| s.as_str()).unwrap_or("node"));
+    AmbiguityError {
+        workspace: ws_name.to_string(),
+        candidates,
+        suggested_fix: fix,
+    }
+}
+
+/// Fingerprints that are handled explicitly as native-declaration evidence
+/// (so the generic fingerprint sweep doesn't double-count them as lockfiles).
+fn is_native_fingerprint(fp: &str) -> bool {
+    matches!(
+        fp,
+        ".nvmrc"
+            | "rust-toolchain.toml"
+            | "rust-toolchain"
+            | ".python-version"
+            | ".ruby-version"
+            | ".java-version"
+            | "gradlew"
+            | "mvnw"
+            | "deno.json"
+            | "deno.jsonc"
+    )
+}
+
+fn read_package_manager_field(path: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path.join("package.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let pm = json.get("packageManager")?.as_str()?;
+    // Value looks like "pnpm@8.6.0" — take the name before '@'.
+    Some(pm.split('@').next().unwrap_or(pm).to_string())
+}
+
+fn read_tool_versions(path: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    // .tool-versions (asdf / mise): "node 20.11.1" per line.
+    if let Ok(raw) = std::fs::read_to_string(path.join(".tool-versions")) {
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(tool) = line.split_whitespace().next() {
+                names.push(tool.to_string());
+            }
+        }
+    }
+    // mise.toml / .mise.toml: names appear under a [tools] table.
+    for f in ["mise.toml", ".mise.toml"] {
+        if let Ok(raw) = std::fs::read_to_string(path.join(f)) {
+            let mut in_tools = false;
+            for line in raw.lines() {
+                let t = line.trim();
+                if t.starts_with('[') {
+                    in_tools = t.starts_with("[tools]");
+                    continue;
+                }
+                if in_tools {
+                    if let Some(key) = t.split('=').next() {
+                        let key = key.trim().trim_matches('"');
+                        if !key.is_empty() {
+                            names.push(key.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+fn has_gemfile_ruby_directive(path: &Path) -> bool {
+    std::fs::read_to_string(path.join("Gemfile"))
+        .map(|s| s.lines().any(|l| l.trim_start().starts_with("ruby ")))
+        .unwrap_or(false)
+}
+
+fn go_mod_has_toolchain(path: &Path) -> bool {
+    std::fs::read_to_string(path.join("go.mod"))
+        .map(|s| s.lines().any(|l| l.trim_start().starts_with("toolchain ")))
+        .unwrap_or(false)
+}
+
+/// Resolve one task's command for a workspace. For JS/deno drivers the task
+/// must exist in the manifest's `scripts`/`tasks` map; other drivers use the
+/// tool's invoke form directly.
+pub fn infer_task_command(task: &str, ws_driver: &DriverResolution, path: &Path) -> Option<String> {
+    let spec = DriverRegistry::get(&ws_driver.tool)?;
+    if let Some(names) = manifest_script_names(path, &ws_driver.tool) {
+        if names.iter().any(|n| n == task) {
+            Some(spec.invoke(task))
+        } else {
+            None
+        }
+    } else {
+        Some(spec.invoke(task))
+    }
+}
+
+/// Discover + validate + resolve commands for every configured workspace.
+///
+/// Strict failures: a workspace path that is not an existing directory; a
+/// duplicate name or path; an `auto` workspace that hits the ambiguity halt.
 pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Workspace>> {
     use std::collections::HashSet;
 
@@ -94,7 +652,6 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
     for ws_cfg in &config.workspaces {
         let path = root.join(&ws_cfg.path);
 
-        // Strict failure: the declared path must be an existing directory (§2.1).
         if !path.is_dir() {
             bail!(
                 "Workspace path '{}' does not point to a directory. \
@@ -103,14 +660,7 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
             );
         }
 
-        let name = ws_cfg.name.clone().unwrap_or_else(|| {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string()
-        });
-
-        // Strict failure: duplicate names or paths (§2.1).
+        let name = ws_cfg.name.clone();
         if !seen_names.insert(name.clone()) {
             bail!("Duplicate workspace name '{}' in lattice.json.", name);
         }
@@ -122,187 +672,262 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
             );
         }
 
-        let language = detect_language(&path);
+        let engines = lattice_config::resolve_engines(&config.engines, &ws_cfg.engines);
 
-        // Strict failure: an auto workspace must match a first-class ecosystem (§2.1, §2.2).
-        if ws_cfg.auto && language == Language::Unknown {
-            bail!(
-                "Workspace '{}' is auto but no recognized manifest (package.json, Cargo.toml, \
-                 go.mod, pyproject.toml, etc.) was found in '{}'. \
-                 Set \"auto\": false and declare a \"tasks\" map, or add a manifest.",
-                name,
-                ws_cfg.path
-            );
+        // Detect the driver for auto workspaces; a manual workspace with only
+        // its own scripts has no driver.
+        let driver = if ws_cfg.auto {
+            match detect_drivers(&path, &engines) {
+                Ok(d) => Some(d),
+                Err(mut e) => {
+                    e.workspace = name.clone();
+                    bail!("{e}");
+                }
+            }
+        } else {
+            // A manual workspace may still name a driver, but never halts on it.
+            detect_drivers(&path, &engines).ok()
+        };
+
+        // Commands: explicit scripts overrides always win; auto workspaces then
+        // infer commands for each root task via the resolved driver.
+        let mut commands: IndexMap<String, String> = IndexMap::new();
+        for (task, cmd) in &ws_cfg.scripts {
+            commands.insert(task.clone(), cmd.clone());
+        }
+        if ws_cfg.auto {
+            if let Some(drv) = &driver {
+                for task in config.tasks.keys() {
+                    if commands.contains_key(task) {
+                        continue;
+                    }
+                    if let Some(cmd) = infer_task_command(task, drv, &path) {
+                        commands.insert(task.clone(), cmd);
+                    }
+                }
+            }
         }
 
-        let tasks = build_task_map(ws_cfg, &path, &language, config);
         let depends_on = ws_cfg.depends_on.clone().unwrap_or_default();
 
         workspaces.push(Workspace {
             name,
             path,
-            language,
             auto: ws_cfg.auto,
             depends_on,
-            tasks,
+            engines,
+            driver,
+            commands,
         });
     }
 
     Ok(workspaces)
 }
 
-pub fn detect_language(path: &Path) -> Language {
-    if path.join("package.json").exists() {
-        Language::JavaScript
-    } else if path.join("Cargo.toml").exists() {
-        Language::Rust
-    } else if path.join("pyproject.toml").exists()
-        || path.join("setup.py").exists()
-        || path.join("requirements.txt").exists()
-    {
-        Language::Python
-    } else if path.join("go.mod").exists() {
-        Language::Go
-    } else if path.join("Gemfile").exists() || path.join("Rakefile").exists() {
-        Language::Ruby
-    } else if path.join("build.gradle").exists() || path.join("build.gradle.kts").exists() {
-        Language::JavaGradle
-    } else if path.join("pom.xml").exists() {
-        Language::JavaMaven
-    } else if has_csproj(path) {
-        Language::CSharp
-    } else if path.join("CMakeLists.txt").exists() || path.join("Makefile").exists() {
-        Language::Cpp
-    } else {
-        Language::Unknown
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::TempDir;
 
-fn has_csproj(path: &Path) -> bool {
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.ends_with(".csproj") || name == "project.json" {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn build_task_map(
-    ws_cfg: &lattice_config::WorkspaceConfig,
-    path: &Path,
-    language: &Language,
-    config: &LatticeConfig,
-) -> HashMap<String, String> {
-    let mut tasks = HashMap::new();
-
-    // 1. Explicit per-workspace task overrides always win (§2.2).
-    if let Some(overrides) = &ws_cfg.tasks {
-        for (task_name, cmd) in overrides {
-            tasks.insert(task_name.clone(), cmd.clone());
-        }
+    fn engines(v: serde_json::Value) -> EngineMap {
+        serde_json::from_value(v).unwrap()
     }
 
-    // 2. Auto workspaces infer commands for pipeline tasks not already overridden.
-    //    Manual workspaces (auto: false) use only what they declared above.
-    if ws_cfg.auto {
-        for task_name in config.pipeline.keys() {
-            if tasks.contains_key(task_name) {
-                continue;
-            }
-            if let Some(cmd) = infer_task_command(task_name, language, path) {
-                tasks.insert(task_name.clone(), cmd);
-            }
-        }
+    fn write(dir: &Path, name: &str, contents: &str) {
+        fs::write(dir.join(name), contents).unwrap();
     }
 
-    tasks
-}
+    // ---- evidence ladder ----------------------------------------------------
 
-fn infer_task_command(task_name: &str, language: &Language, path: &Path) -> Option<String> {
-    match language {
-        Language::JavaScript => {
-            let pm = detect_js_package_manager(path);
-            Some(format!("{} run {}", pm, task_name))
-        }
-        Language::Rust => {
-            let cmd = match task_name {
-                "build" => "cargo build".to_string(),
-                "test" => "cargo test".to_string(),
-                "check" => "cargo check".to_string(),
-                "fmt" => "cargo fmt".to_string(),
-                "lint" => "cargo clippy".to_string(),
-                "doc" => "cargo doc".to_string(),
-                "clean" => "cargo clean".to_string(),
-                other => format!("cargo {}", other),
-            };
-            Some(cmd)
-        }
-        Language::Python => {
-            if path.join("pyproject.toml").exists() {
-                Some(format!("uv run {}", task_name))
-            } else {
-                Some(format!("python -m {}", task_name))
-            }
-        }
-        Language::Go => {
-            let cmd = match task_name {
-                "build" => "go build ./...".to_string(),
-                "test" => "go test ./...".to_string(),
-                "run" => "go run .".to_string(),
-                "fmt" => "go fmt ./...".to_string(),
-                "lint" => "go vet ./...".to_string(),
-                other => format!("go {}", other),
-            };
-            Some(cmd)
-        }
-        Language::Ruby => Some(format!("rake {}", task_name)),
-        Language::CSharp => {
-            let cmd = match task_name {
-                "build" => "dotnet build".to_string(),
-                "test" => "dotnet test".to_string(),
-                "run" => "dotnet run".to_string(),
-                "clean" => "dotnet clean".to_string(),
-                other => format!("dotnet {}", other),
-            };
-            Some(cmd)
-        }
-        Language::JavaGradle => {
-            if path.join("gradlew").exists() {
-                Some(format!("./gradlew {}", task_name))
-            } else {
-                Some(format!("gradle {}", task_name))
-            }
-        }
-        Language::JavaMaven => {
-            if path.join("mvnw").exists() {
-                Some(format!("./mvnw {}", task_name))
-            } else {
-                Some(format!("mvn {}", task_name))
-            }
-        }
-        Language::Cpp => {
-            if path.join("Makefile").exists() {
-                Some(format!("make {}", task_name))
-            } else {
-                None
-            }
-        }
-        Language::Unknown => None,
+    #[test]
+    fn tier_a_declaration_overrides_lockfile() {
+        // A pnpm lockfile is present, but engines declares bun → bun wins, and
+        // since they share a role the declaration is the tiebreaker.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "pnpm-lock.yaml", "");
+        write(tmp.path(), "package.json", "{}");
+        let d = detect_drivers(tmp.path(), &engines(json!({ "bun": ">=1.1" }))).unwrap();
+        assert_eq!(d.tool, "bun");
+        assert_eq!(d.via, Evidence::Declaration);
     }
-}
 
-pub fn detect_js_package_manager(path: &Path) -> &'static str {
-    if path.join("bun.lockb").exists() || path.join("bun.lock").exists() {
-        "bun"
-    } else if path.join("pnpm-lock.yaml").exists() {
-        "pnpm"
-    } else if path.join("yarn.lock").exists() {
-        "yarn"
-    } else {
-        "npm"
+    #[test]
+    fn tier_b_tool_versions_selects_named_tool() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), ".tool-versions", "pnpm 8.6.0\n");
+        write(tmp.path(), "package.json", "{}");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "pnpm");
+        assert!(matches!(d.via, Evidence::NativeFile(_)));
+    }
+
+    #[test]
+    fn tier_b_package_manager_field_selects() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "package.json",
+            r#"{ "packageManager": "yarn@4.0.0" }"#,
+        );
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "yarn");
+    }
+
+    #[test]
+    fn tier_b_gradlew_selects_gradle() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "gradlew", "#!/bin/sh\n");
+        write(tmp.path(), "build.gradle", "");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "gradle");
+    }
+
+    #[test]
+    fn tier_b_gemfile_ruby_directive_selects_ruby_but_rake_drives() {
+        // Gemfile ruby directive (ruby runtime) + Rakefile (task runner) →
+        // rake drives (higher role); no conflict.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "Gemfile", "ruby \"3.2.0\"\n");
+        write(tmp.path(), "Rakefile", "");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "rake");
+    }
+
+    #[test]
+    fn tier_c_bun_lockfile_selects() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "bun.lockb", "");
+        write(tmp.path(), "package.json", "{}");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "bun");
+        assert_eq!(d.via, Evidence::Lockfile("bun.lockb".into()));
+    }
+
+    #[test]
+    fn tier_c_cargo_lock_selects() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "Cargo.lock", "");
+        write(tmp.path(), "Cargo.toml", "");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "cargo");
+    }
+
+    #[test]
+    fn tier_c_poetry_lock_selects() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "poetry.lock", "");
+        write(tmp.path(), "pyproject.toml", "");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "poetry");
+    }
+
+    #[test]
+    fn tier_d_bare_package_json_is_ambiguous() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "package.json", r#"{ "name": "x" }"#);
+        let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+        assert!(err.candidates.contains(&"pnpm".to_string()));
+        let msg = format!("{err}");
+        assert!(msg.contains("engines"), "fix must be copy-pasteable: {msg}");
+    }
+
+    #[test]
+    fn same_role_conflict_is_ambiguous() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "bun.lockb", "");
+        write(tmp.path(), "pnpm-lock.yaml", "");
+        write(tmp.path(), "package.json", "{}");
+        let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+        assert!(err.candidates.contains(&"bun".to_string()));
+        assert!(err.candidates.contains(&"pnpm".to_string()));
+        assert!(format!("{err}").contains("engines"));
+    }
+
+    #[test]
+    fn role_composition_node_plus_pnpm_resolves_to_pnpm() {
+        // node runtime (.nvmrc) + pnpm package-manager (lockfile) → pnpm drives,
+        // no conflict. node is still in the engine map for provisioning.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), ".nvmrc", "20.11.1\n");
+        write(tmp.path(), "pnpm-lock.yaml", "");
+        write(tmp.path(), "package.json", "{}");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "pnpm");
+        assert_eq!(d.role, Role::PackageManager);
+    }
+
+    #[test]
+    fn js_driver_reads_real_package_json_scripts() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "pnpm-lock.yaml", "");
+        write(
+            tmp.path(),
+            "package.json",
+            r#"{ "scripts": { "build": "tsc", "start": "node ." } }"#,
+        );
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(
+            infer_task_command("build", &d, tmp.path()).as_deref(),
+            Some("pnpm run build")
+        );
+        // A task not in package.json scripts is not invented.
+        assert_eq!(infer_task_command("test", &d, tmp.path()), None);
+    }
+
+    #[test]
+    fn discover_builds_commands_and_overrides_win() {
+        use lattice_config::WorkspaceConfig;
+        let tmp = TempDir::new().unwrap();
+        let ws_dir = tmp.path().join("app");
+        fs::create_dir_all(&ws_dir).unwrap();
+        write(&ws_dir, "pnpm-lock.yaml", "");
+        write(
+            &ws_dir,
+            "package.json",
+            r#"{ "scripts": { "build": "tsc" } }"#,
+        );
+
+        let mut config = LatticeConfig::default();
+        config.tasks.insert("build".into(), Default::default());
+        config.tasks.insert("deploy".into(), Default::default());
+        let mut scripts = indexmap::IndexMap::new();
+        scripts.insert("deploy".to_string(), "./deploy.sh".to_string());
+        config.workspaces.push(WorkspaceConfig {
+            name: "app".into(),
+            path: "app".into(),
+            auto: true,
+            engines: EngineMap::new(),
+            depends_on: None,
+            scripts,
+        });
+
+        let ws = discover_workspaces(tmp.path(), &config).unwrap();
+        assert_eq!(ws.len(), 1);
+        assert_eq!(ws[0].command_for("build"), Some("pnpm run build"));
+        assert_eq!(ws[0].command_for("deploy"), Some("./deploy.sh"));
+        assert_eq!(ws[0].driver.as_ref().unwrap().tool, "pnpm");
+    }
+
+    #[test]
+    fn discover_halts_on_auto_ambiguity() {
+        use lattice_config::WorkspaceConfig;
+        let tmp = TempDir::new().unwrap();
+        let ws_dir = tmp.path().join("app");
+        fs::create_dir_all(&ws_dir).unwrap();
+        write(&ws_dir, "package.json", "{}");
+
+        let mut config = LatticeConfig::default();
+        config.workspaces.push(WorkspaceConfig {
+            name: "app".into(),
+            path: "app".into(),
+            auto: true,
+            engines: EngineMap::new(),
+            depends_on: None,
+            scripts: Default::default(),
+        });
+        let err = discover_workspaces(tmp.path(), &config).unwrap_err();
+        assert!(format!("{err:#}").contains("app"));
     }
 }

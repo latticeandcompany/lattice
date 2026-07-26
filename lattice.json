@@ -2,18 +2,18 @@
   "$schema": ".lattice/schema.json",
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "path": "crates/lattice-config" },
-    { "path": "crates/lattice-output" },
-    { "path": "crates/lattice-workspace", "dependsOn": ["lattice-config"] },
-    { "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
-    { "path": "crates/lattice-dag", "dependsOn": ["lattice-config", "lattice-workspace"] },
-    { "path": "crates/lattice-runner", "dependsOn": ["lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
-    { "path": "crates/lattice", "dependsOn": ["lattice-runner", "lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] }
+    { "name": "lattice-config", "path": "crates/lattice-config" },
+    { "name": "lattice-output", "path": "crates/lattice-output" },
+    { "name": "lattice-workspace", "path": "crates/lattice-workspace", "dependsOn": ["lattice-config"] },
+    { "name": "lattice-cache", "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
+    { "name": "lattice-dag", "path": "crates/lattice-dag", "dependsOn": ["lattice-config", "lattice-workspace"] },
+    { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
+    { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-runner", "lattice-dag", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] }
   ],
   "engines": {
-    "rust": ">=1.75.0"
+    "cargo": ">=1.75.0"
   },
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["src/**/*", "Cargo.toml"]

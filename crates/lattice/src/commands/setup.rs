@@ -1,180 +1,286 @@
-use anyhow::Result;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use lattice_config::find_root;
-use lattice_output::OutputManager;
-use lattice_workspace::discover_workspaces;
+use lattice_config::{find_root, resolve_engines};
+use lattice_output::{banner_line, make_reporter, teal};
+use lattice_workspace::toolchain;
+use lattice_workspace::{discover_workspaces, Workspace};
+
+use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag};
 
 #[derive(Args, Debug)]
+#[command(
+    long_about = "Provision pinned toolchains and install native dependencies.\n\n\
+Toolchains declared under `engines` are provisioned first (into .lattice/toolchains), so \
+dependency installers see the pinned PATH. Then each workspace's package manager installs \
+its dependencies. Works on a toolchain-only repo with no workspaces, too."
+)]
 pub struct SetupArgs {
-    #[arg(help = "Only set up specific workspaces (by name)")]
+    /// Only set up specific workspaces (by name).
     pub workspaces: Vec<String>,
 
-    #[arg(long, help = "Force reinstall even if lockfile hasn't changed")]
+    /// Reinstall dependencies even if the lockfile has not changed.
+    #[arg(long)]
     pub force: bool,
 }
 
 impl SetupArgs {
-    pub async fn execute(&self, loquacious: bool) -> Result<()> {
+    pub async fn execute(&self, flag_loq: bool, no_version_check: bool) -> Result<()> {
         let cwd = std::env::current_dir()?;
         let root = find_root(&cwd).ok_or_else(|| {
-            anyhow::anyhow!("No lattice.json found in this directory or any parent directory.")
+            anyhow::anyhow!(
+                "No lattice.json found in this directory or any parent. \
+                 Run `lattice init` to create one."
+            )
         })?;
 
         let config = lattice_config::load_config(&root)?;
-        let output = OutputManager::new(loquacious);
+        let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
+        let mode = detect_output_mode(effective_loq);
+        let reporter = make_reporter(mode, effective_loq);
 
-        let mut workspaces = discover_workspaces(&root, &config)?;
+        maybe_emit_version_nag(mode, &config, no_version_check);
 
-        if !self.workspaces.is_empty() {
-            workspaces.retain(|ws| self.workspaces.contains(&ws.name));
+        println!("{}", banner_line("setup"));
+
+        // --- Step 1: provision toolchains FIRST -----------------------------
+        // Root engines, so dependency installers see the pinned PATH. Memoize
+        // by the merged engine spec so identical toolchains install once.
+        let mut memo: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        reporter.note("provisioning root toolchains");
+        let root_resolved =
+            toolchain::provision_and_resolve(&root, &config.engines, &mut |m| reporter.note(m))?;
+        memo.insert(format!("{:?}", config.engines), root_resolved.path_prepend);
+
+        let workspaces = discover_workspaces(&root, &config)?;
+        let selected: Vec<&Workspace> = if self.workspaces.is_empty() {
+            workspaces.iter().collect()
+        } else {
+            workspaces
+                .iter()
+                .filter(|w| self.workspaces.contains(&w.name))
+                .collect()
+        };
+
+        // Provision each workspace's toolchains and remember its PATH prefix.
+        let mut ws_prepend: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        for ws in &selected {
+            let merged = resolve_engines(&config.engines, &ws.engines);
+            let key = format!("{merged:?}");
+            let pp = if let Some(hit) = memo.get(&key) {
+                hit.clone()
+            } else {
+                reporter.note(&format!("provisioning toolchains for '{}'", ws.name));
+                let resolved =
+                    toolchain::provision_and_resolve(&root, &merged, &mut |m| reporter.note(m))?;
+                memo.insert(key, resolved.path_prepend.clone());
+                resolved.path_prepend
+            };
+            ws_prepend.insert(ws.name.clone(), pp);
         }
 
-        if workspaces.is_empty() {
-            output.warn("No workspaces found.");
-            return Ok(());
-        }
-
-        output.header(&format!(
-            "\n{} Lattice setup — {} workspaces\n",
-            style("◆").cyan().bold(),
-            workspaces.len()
-        ));
-
+        // --- Step 2: native dependency installers ---------------------------
         let mut any_failed = false;
+        let mut installed_any = false;
 
-        for ws in &workspaces {
-            let setup_cmd = match ws.language.setup_command(&ws.path) {
+        for ws in &selected {
+            // No driver and no engines → nothing to do, skip quietly.
+            let Some(driver) = &ws.driver else {
+                if ws.engines.is_empty() {
+                    continue;
+                }
+                reporter.note(&format!(
+                    "{}: toolchains ready (no package manager to install)",
+                    ws.name
+                ));
+                continue;
+            };
+
+            let has_wrapper = match driver.tool.as_str() {
+                "gradle" => ws.path.join("gradlew").exists(),
+                "maven" => ws.path.join("mvnw").exists(),
+                _ => false,
+            };
+
+            let install_cmd = match install_command_for(&driver.tool, has_wrapper) {
                 Some(cmd) => cmd,
                 None => {
-                    output.log_skipped(&ws.name, "setup");
+                    reporter.note(&format!(
+                        "{}: no known dependency installer for '{}' — skipping",
+                        ws.name, driver.tool
+                    ));
                     continue;
                 }
             };
 
+            // Keep the lockfile-mtime "up to date" skip unless --force.
             if !self.force && !lockfile_changed(&ws.path) {
                 println!(
                     "{} {} {}",
-                    style("●").green().bold(),
+                    teal().apply_to("●"),
                     style(&ws.name).bold(),
                     style("dependencies up to date").dim()
                 );
                 continue;
             }
 
-            let bin = setup_cmd.split_whitespace().next().unwrap_or("");
-            if !bin.is_empty() && bin != "sh" {
-                let available = tokio::process::Command::new("which")
-                    .arg(bin)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .await
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+            installed_any = true;
+            println!(
+                "{} {} {}",
+                teal().apply_to("◆"),
+                style(&ws.name).bold(),
+                style(&install_cmd).dim()
+            );
 
-                if !available {
-                    output.warn(&format!(
-                        "{}: '{}' not found in PATH — skipping setup",
-                        ws.name, bin
-                    ));
-                    continue;
-                }
-            }
-
-            output.log_start(&ws.name, "setup");
-            output.detail(&format!("running: {}", setup_cmd));
-
-            let start = std::time::Instant::now();
-            let result = run_setup_command(&setup_cmd, &ws.path, loquacious).await;
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            match result {
+            let prepend = ws_prepend.get(&ws.name).cloned().unwrap_or_default();
+            match run_install(&install_cmd, &ws.path, &prepend, effective_loq).await {
                 Ok(true) => {
-                    output.log_success(&ws.name, "setup", duration_ms);
                     let _ = touch_marker(&ws.path);
                 }
                 Ok(false) => {
-                    output.log_failure(&ws.name, "setup");
+                    reporter.warn(&format!("{}: `{}` failed", ws.name, install_cmd));
                     any_failed = true;
                 }
                 Err(e) => {
-                    output.log_failure(&ws.name, "setup");
-                    eprintln!("  error: {}", e);
+                    reporter.warn(&format!("{}: {}", ws.name, e));
                     any_failed = true;
                 }
             }
         }
 
         if any_failed {
-            anyhow::bail!("One or more workspaces failed setup.");
+            bail!("one or more workspaces failed setup.");
         }
 
-        println!();
+        let _ = installed_any;
         println!(
-            "{} All workspaces set up successfully.",
-            style("◆").cyan().bold()
+            "{} {}",
+            teal().apply_to("◆"),
+            style("setup complete").bold()
         );
         Ok(())
     }
 }
 
-fn lockfile_changed(workspace_path: &std::path::Path) -> bool {
+/// Map a detected driver tool to its native dependency-install command.
+/// `has_wrapper` selects the wrapper form for gradle/maven.
+pub fn install_command_for(tool: &str, has_wrapper: bool) -> Option<String> {
+    let cmd = match tool {
+        "pnpm" => "pnpm install",
+        "yarn" => "yarn install",
+        "npm" => "npm install",
+        "bun" => "bun install",
+        "deno" => "deno cache .",
+        "cargo" => "cargo fetch",
+        "go" => "go mod download",
+        "poetry" => "poetry install",
+        "uv" => "uv sync",
+        "bundler" => "bundle install",
+        "pip" => "pip install -r requirements.txt",
+        "gradle" => {
+            return Some(
+                if has_wrapper {
+                    "./gradlew dependencies"
+                } else {
+                    "gradle dependencies"
+                }
+                .to_string(),
+            )
+        }
+        "maven" => {
+            return Some(
+                if has_wrapper {
+                    "./mvnw dependency:resolve"
+                } else {
+                    "mvn dependency:resolve"
+                }
+                .to_string(),
+            )
+        }
+        _ => return None,
+    };
+    Some(cmd.to_string())
+}
+
+/// The lockfiles whose mtime (vs the setup marker) decides whether deps changed.
+const LOCKFILES: &[&str] = &[
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "bun.lock",
+    "Cargo.lock",
+    "go.sum",
+    "poetry.lock",
+    "uv.lock",
+    "Gemfile.lock",
+];
+
+fn lockfile_changed(workspace_path: &Path) -> bool {
     let marker = workspace_path.join(".lattice-setup-marker");
     if !marker.exists() {
         return true;
     }
-
-    let lockfiles = [
-        "package-lock.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        "bun.lockb",
-        "bun.lock",
-        "Cargo.lock",
-        "go.sum",
-        "poetry.lock",
-        "uv.lock",
-    ];
-
     let marker_time = std::fs::metadata(&marker).and_then(|m| m.modified()).ok();
-
-    for lf in &lockfiles {
+    for lf in LOCKFILES {
         let lf_path = workspace_path.join(lf);
-        if lf_path.exists() {
-            if let (Some(marker_t), Ok(lf_meta)) = (marker_time, std::fs::metadata(&lf_path)) {
-                if let Ok(lf_t) = lf_meta.modified() {
-                    if lf_t > marker_t {
-                        return true;
-                    }
+        if let (Some(marker_t), Ok(lf_meta)) = (marker_time, std::fs::metadata(&lf_path)) {
+            if let Ok(lf_t) = lf_meta.modified() {
+                if lf_t > marker_t {
+                    return true;
                 }
             }
         }
     }
-
     false
 }
 
-fn touch_marker(workspace_path: &std::path::Path) -> std::io::Result<()> {
-    let marker = workspace_path.join(".lattice-setup-marker");
-    std::fs::write(marker, "")
+fn touch_marker(workspace_path: &Path) -> std::io::Result<()> {
+    std::fs::write(workspace_path.join(".lattice-setup-marker"), "")
 }
 
-async fn run_setup_command(command: &str, cwd: &std::path::Path, loquacious: bool) -> Result<bool> {
-    let mut child = tokio::process::Command::new("sh")
-        .args(["-c", command])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
+/// Run an install command via the platform shell in `cwd`, prepending
+/// `path_prepend` to `PATH` (like the runner does). Streams output only in
+/// loquacious mode; stderr is always shown.
+async fn run_install(
+    command: &str,
+    cwd: &Path,
+    path_prepend: &[PathBuf],
+    loquacious: bool,
+) -> Result<bool> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = tokio::process::Command::new("cmd");
+        c.arg("/C").arg(command);
+        c
+    } else {
+        let mut c = tokio::process::Command::new("sh");
+        c.arg("-c").arg(command);
+        c
+    };
+    cmd.current_dir(cwd);
 
+    if !path_prepend.is_empty() {
+        let existing = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths: Vec<PathBuf> = path_prepend.to_vec();
+        paths.extend(std::env::split_paths(&existing));
+        if let Ok(joined) = std::env::join_paths(paths) {
+            cmd.env("PATH", joined);
+        }
+    }
+
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
     let show = loquacious;
-
     let stdout_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
@@ -183,7 +289,6 @@ async fn run_setup_command(command: &str, cwd: &std::path::Path, loquacious: boo
             }
         }
     });
-
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
@@ -194,6 +299,82 @@ async fn run_setup_command(command: &str, cwd: &std::path::Path, loquacious: boo
     let status = child.wait().await?;
     let _ = stdout_task.await;
     let _ = stderr_task.await;
-
     Ok(status.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_command_mapping_covers_known_tools() {
+        assert_eq!(
+            install_command_for("pnpm", false).as_deref(),
+            Some("pnpm install")
+        );
+        assert_eq!(
+            install_command_for("yarn", false).as_deref(),
+            Some("yarn install")
+        );
+        assert_eq!(
+            install_command_for("npm", false).as_deref(),
+            Some("npm install")
+        );
+        assert_eq!(
+            install_command_for("bun", false).as_deref(),
+            Some("bun install")
+        );
+        assert_eq!(
+            install_command_for("deno", false).as_deref(),
+            Some("deno cache .")
+        );
+        assert_eq!(
+            install_command_for("cargo", false).as_deref(),
+            Some("cargo fetch")
+        );
+        assert_eq!(
+            install_command_for("go", false).as_deref(),
+            Some("go mod download")
+        );
+        assert_eq!(
+            install_command_for("poetry", false).as_deref(),
+            Some("poetry install")
+        );
+        assert_eq!(install_command_for("uv", false).as_deref(), Some("uv sync"));
+        assert_eq!(
+            install_command_for("bundler", false).as_deref(),
+            Some("bundle install")
+        );
+        assert_eq!(
+            install_command_for("pip", false).as_deref(),
+            Some("pip install -r requirements.txt")
+        );
+    }
+
+    #[test]
+    fn gradle_and_maven_pick_wrapper_form() {
+        assert_eq!(
+            install_command_for("gradle", true).as_deref(),
+            Some("./gradlew dependencies")
+        );
+        assert_eq!(
+            install_command_for("gradle", false).as_deref(),
+            Some("gradle dependencies")
+        );
+        assert_eq!(
+            install_command_for("maven", true).as_deref(),
+            Some("./mvnw dependency:resolve")
+        );
+        assert_eq!(
+            install_command_for("maven", false).as_deref(),
+            Some("mvn dependency:resolve")
+        );
+    }
+
+    #[test]
+    fn unknown_tool_has_no_installer() {
+        assert_eq!(install_command_for("rake", false), None);
+        assert_eq!(install_command_for("pod", false), None);
+        assert_eq!(install_command_for("node", false), None);
+    }
 }

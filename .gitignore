@@ -20,7 +20,8 @@ target/
 .claude/
 
 # Lattice local-first runtime artifacts — never commit these (machine-specific, ephemeral).
-# Templates (.lattice/templates/) and schema (.lattice/schema.json) ARE meant to be checked in.
+# The schema (.lattice/schema.json) IS meant to be checked in.
 .lattice/cache/
+.lattice/toolchains/
 .lattice/bin/
 .lattice-setup-marker
