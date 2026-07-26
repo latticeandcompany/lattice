@@ -4,7 +4,7 @@ use console::style;
 
 use lattice_cache::{CacheStore, LocalStore};
 use lattice_config::{find_root, CacheSize};
-use lattice_output::teal;
+use lattice_output::{paint_teal, ROSETTE};
 
 #[derive(Args, Debug)]
 #[command(
@@ -41,7 +41,7 @@ impl PruneArgs {
 
         println!(
             "{} removed {} artifact{}, freed {}",
-            teal().apply_to("◆"),
+            paint_teal(ROSETTE),
             style(report.removed).bold(),
             if report.removed == 1 { "" } else { "s" },
             style(CacheSize(report.bytes_freed)).bold()

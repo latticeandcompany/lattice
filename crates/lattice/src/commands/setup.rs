@@ -7,7 +7,7 @@ use console::style;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use lattice_config::{find_root, resolve_engines};
-use lattice_output::{banner_line, make_reporter, teal};
+use lattice_output::{banner_line, make_reporter, paint_teal, ROSETTE};
 use lattice_workspace::toolchain;
 use lattice_workspace::{discover_workspaces, Workspace};
 
@@ -122,7 +122,7 @@ impl SetupArgs {
             if !self.force && !lockfile_changed(&ws.path) {
                 println!(
                     "{} {} {}",
-                    teal().apply_to("●"),
+                    paint_teal("●"),
                     style(&ws.name).bold(),
                     style("dependencies up to date").dim()
                 );
@@ -132,7 +132,7 @@ impl SetupArgs {
             installed_any = true;
             println!(
                 "{} {} {}",
-                teal().apply_to("◆"),
+                paint_teal(ROSETTE),
                 style(&ws.name).bold(),
                 style(&install_cmd).dim()
             );
@@ -158,11 +158,7 @@ impl SetupArgs {
         }
 
         let _ = installed_any;
-        println!(
-            "{} {}",
-            teal().apply_to("◆"),
-            style("setup complete").bold()
-        );
+        println!("{} {}", paint_teal(ROSETTE), style("setup complete").bold());
         Ok(())
     }
 }

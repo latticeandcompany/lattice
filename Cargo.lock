@@ -387,6 +387,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dagger"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "indexmap",
+ "lattice-config",
+ "lattice-workspace",
+ "petgraph",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1126,10 +1137,10 @@ dependencies = [
  "clap",
  "clap_complete",
  "console",
+ "dagger",
  "dialoguer",
  "lattice-cache",
  "lattice-config",
- "lattice-dag",
  "lattice-output",
  "lattice-runner",
  "lattice-workspace",
@@ -1168,17 +1179,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lattice-dag"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "indexmap",
- "lattice-config",
- "lattice-workspace",
- "petgraph",
-]
-
-[[package]]
 name = "lattice-output"
 version = "0.1.0"
 dependencies = [
@@ -1192,10 +1192,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dagger",
  "indexmap",
  "lattice-cache",
  "lattice-config",
- "lattice-dag",
  "lattice-output",
  "lattice-workspace",
  "libc",

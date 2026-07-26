@@ -20,9 +20,9 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
+use dagger::{build_schedule, ExecutionGraph, Schedule};
 use lattice_cache::{compute_key, CacheMeta, CacheStore, HashInputs, LocalStore};
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
-use lattice_dag::{build_schedule, ExecutionGraph, Schedule};
 use lattice_output::{Reporter, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::Workspace;
@@ -155,6 +155,8 @@ enum RunnerMsg {
         captured: Vec<(bool, String)>,
     },
     Warn(String),
+    /// A loquacious-only trace line (hashing / cache decisions).
+    Note(String),
 }
 
 /// The outcome of executing a single node.
@@ -182,6 +184,7 @@ fn forward(reporter: &dyn Reporter, msg: RunnerMsg) {
             captured,
         } => reporter.surface_failure(&workspace, &task, &captured),
         RunnerMsg::Warn(m) => reporter.warn(&m),
+        RunnerMsg::Note(m) => reporter.note(&m),
     }
 }
 
@@ -540,6 +543,12 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
         }
     };
 
+    // Loquacious trace: the computed cache identity for this task.
+    let _ = ctx.tx.send(RunnerMsg::Note(format!(
+        "{ws}:{task}: hash {}",
+        &key[..key.len().min(16)]
+    )));
+
     // --- Cache lookup (never for persistent / cache:false tasks) ------------
     if !ctx.no_cache && pt.is_cacheable() {
         match ctx.store.lookup(&key) {
@@ -565,7 +574,11 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
                     }
                 }
             }
-            Ok(None) => {}
+            Ok(None) => {
+                let _ = ctx
+                    .tx
+                    .send(RunnerMsg::Note(format!("{ws}:{task}: cache miss")));
+            }
             Err(e) => {
                 let _ = ctx.tx.send(RunnerMsg::Warn(format!(
                     "{ws}:{task}: cache lookup failed: {e}"
@@ -783,8 +796,8 @@ async fn drain_pipe<R: AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dagger::build_execution_graph;
     use lattice_config::{EngineMap, PipelineTask};
-    use lattice_dag::build_execution_graph;
     use lattice_output::TaskEvent;
     use std::sync::Mutex;
     use std::time::Duration;

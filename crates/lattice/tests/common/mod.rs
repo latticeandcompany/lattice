@@ -69,7 +69,7 @@ impl Fixture {
     }
 
     /// A `lattice` command pre-pointed at this fixture, with deterministic env:
-    /// `CI=1` + no TTY (assert_cmd pipes) forces Turborepo-style line output, and
+    /// `CI=1` + no TTY (assert_cmd pipes) forces the plain line output, and
     /// `NO_COLOR=1` keeps stdout ANSI-free and greppable.
     pub fn lattice(&self) -> Command {
         let mut cmd = Command::cargo_bin("lattice").expect("cargo_bin lattice");

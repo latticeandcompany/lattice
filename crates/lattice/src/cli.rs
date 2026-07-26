@@ -20,10 +20,12 @@ pub const BIN_VERSION: &str = env!("CARGO_PKG_VERSION");
     long_about = "Lattice runs tasks across the workspaces of a polyglot monorepo in dependency \
 order, with pinned toolchains and a content-addressed cache for reproducible builds.\n\n\
 Declare workspaces and tasks in lattice.json, then `lattice run <task>`. Toolchains are \
-provisioned locally under .lattice — nothing is installed globally."
+provisioned locally under .lattice — nothing is installed globally.",
+    help_template = "\u{2756} {name} {version}\n{about}\n\n\
+{usage-heading} {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
-    /// Stream the line-by-line log (Turborepo-style) instead of the interactive UI.
+    /// Stream the plain line-by-line log instead of the interactive UI.
     #[arg(short, long, global = true)]
     pub loquacious: bool,
 

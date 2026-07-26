@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 lattice-config = { path = "../lattice-config" }
-lattice-dag = { path = "../lattice-dag" }
+dagger = { path = "../dagger" }
 lattice-output = { path = "../lattice-output" }
 lattice-runner = { path = "../lattice-runner" }
 lattice-workspace = { path = "../lattice-workspace" }

@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Args;
 use console::style;
 
-use lattice_output::teal;
+use lattice_output::{logo, paint_teal, wordmark, ROSETTE};
 
 use crate::cli::BIN_VERSION;
 
@@ -22,11 +22,13 @@ impl VersionArgs {
                 std::env::consts::ARCH
             );
         } else {
-            // Branded: teal rosette + ink `lattice` wordmark (BRAND.md §2).
+            // Branded splash: teal rosette mark, then the ink `lattice` wordmark
+            // lockup with version + target and the tagline (BRAND.md §2/§6).
+            println!("{}", logo());
             println!(
-                "{} {} {} {}",
-                teal().apply_to("◆"),
-                style("lattice").bold(),
+                "{} {}  {}  {}",
+                paint_teal(ROSETTE),
+                wordmark(),
                 style(BIN_VERSION).bold(),
                 style(format!("({})", std::env::consts::ARCH)).dim()
             );

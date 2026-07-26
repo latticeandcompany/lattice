@@ -1,5 +1,5 @@
 [package]
-name = "lattice-dag"
+name = "dagger"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

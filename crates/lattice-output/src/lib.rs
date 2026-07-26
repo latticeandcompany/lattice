@@ -51,13 +51,23 @@ pub fn should_enable_color(mode: OutputMode, no_color_set: bool) -> bool {
 // ---------------------------------------------------------------------------
 
 /// The teal accent for **Lattice Build** (`teal-500`, BRAND.md §2). This is the
-/// ~5% accent — it rides on the rosette, spinners, and the summary glyph only.
+/// ~5% accent — it rides on the rosette mark, spinners, and product words only.
 pub const TEAL: (u8, u8, u8) = (0x1B, 0x99, 0x8B);
+/// The teal tint (`teal-300`) used for the rosette art fill.
+pub const TEAL_300: (u8, u8, u8) = (0x63, 0xC4, 0xB8);
+
+/// The rosette (woven-sphere) mark — the Lattice logo — as compact ASCII.
+/// Rendered in teal for the `version`/splash surface (BRAND.md §6).
+pub const ROSETTE_ART: &str = include_str!("../assets/rosette.txt");
+
+/// The inline rosette glyph — a four-petal node that echoes the woven mark.
+/// Used as the ~5% teal accent on headers, summaries, and cache hits.
+pub const ROSETTE: &str = "\u{2756}"; // ❖
 
 /// Map an RGB triple to the nearest xterm-256 color-cube index.
 ///
-/// `console` 0.15 does not expose 24-bit truecolor via [`Style`], so we snap the
-/// brand RGB to the closest entry of the 6×6×6 color cube. `TEAL` → index 30.
+/// Used only for the indicatif spinner template token (which takes a 256 index).
+/// `TEAL` → index 30.
 fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
     const LEVELS: [i32; 6] = [0, 95, 135, 175, 215, 255];
     fn nearest(v: u8) -> i32 {
@@ -76,25 +86,62 @@ fn rgb_to_ansi256(r: u8, g: u8, b: u8) -> u8 {
     (16 + 36 * nearest(r) + 6 * nearest(g) + nearest(b)) as u8
 }
 
-/// The teal accent as a [`console::Style`]. Used for the ~5% brand accent only.
-///
-/// Emits no escapes when color is globally disabled (NO_COLOR / Raw), because
-/// `console` respects [`console::set_colors_enabled`].
+/// The teal accent as a [`console::Style`] (256-color fallback), kept for the
+/// indicatif spinner token. Prefer [`paint_teal`] for static text — it emits
+/// true 24-bit color that matches the brand hex exactly.
 pub fn teal() -> Style {
     Style::new().color256(rgb_to_ansi256(TEAL.0, TEAL.1, TEAL.2))
 }
 
-/// A quiet, branded banner/header line: rosette + lowercase `lattice` wordmark
-/// (per BRAND.md the wordmark stays ink/paper; only the rosette carries teal).
+/// Paint text in true 24-bit brand teal (`#1B998B`). Emits no escapes when color
+/// is globally disabled (NO_COLOR / Raw / piped), honoring [`console::colors_enabled`].
+pub fn paint_teal(s: &str) -> String {
+    paint_rgb(s, TEAL)
+}
+
+fn paint_rgb(s: &str, (r, g, b): (u8, u8, u8)) -> String {
+    if console::colors_enabled() {
+        format!("\u{1b}[38;2;{r};{g};{b}m{s}\u{1b}[39m")
+    } else {
+        s.to_string()
+    }
+}
+
+/// The lowercase `lattice` wordmark, bold. Per BRAND.md §6 the wordmark stays
+/// ink/paper — it never takes the accent; only the rosette/product words do.
+pub fn wordmark() -> String {
+    style("lattice").bold().to_string()
+}
+
+/// The rosette logo painted in true teal, ready to print as a splash block.
+pub fn logo() -> String {
+    ROSETTE_ART
+        .lines()
+        .map(|l| paint_rgb(l, TEAL_300))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A quiet, branded one-line header: teal rosette glyph + bold `lattice`
+/// wordmark + a dim subtitle (BRAND.md: wordmark stays ink, rosette carries teal).
 pub fn banner_line(subtitle: &str) -> String {
-    format!("{} lattice {}", teal().apply_to("◆"), style(subtitle).dim())
+    format!(
+        "{} {}  {}",
+        paint_teal(ROSETTE),
+        wordmark(),
+        style(subtitle).dim()
+    )
 }
 
 /// The one-line, advisory version nag (interactive only). Branded and quiet.
 pub fn version_nag(binary_version: &str, pinned_version: &str) -> String {
     format!(
-        "lattice {} · this repo pins {} — run `lattice upgrade`",
-        binary_version, pinned_version
+        "{} {} {} · this repo pins {} — run {}",
+        paint_teal(ROSETTE),
+        wordmark(),
+        binary_version,
+        style(pinned_version).bold(),
+        style("`lattice upgrade`").dim()
     )
 }
 
@@ -171,10 +218,10 @@ fn fmt_secs(ms: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// CiReporter — Turborepo-style, ANSI-off, deterministic, greppable
+// CiReporter — plain line stream, ANSI-off, deterministic, greppable
 // ---------------------------------------------------------------------------
 
-/// Turborepo-style line stream: `workspace:task: <message>`, ANSI OFF,
+/// Plain line stream: `workspace:task: <message>`, ANSI OFF,
 /// deterministic, greppable. In loquacious mode it ALSO prints `note()` trace
 /// lines and per-task output. This is the CI-mode reporter (no-TTY OR `-l` OR
 /// `settings.loquacious`). It never styles output.
@@ -311,21 +358,20 @@ impl InteractiveReporter {
         (cols as usize).max(20)
     }
 
-    /// Truncate a display string to fit the terminal, appending an ellipsis.
-    fn truncate(&self, s: &str, reserve: usize) -> String {
-        let max = self.term_width().saturating_sub(reserve).max(8);
-        if s.chars().count() <= max {
-            s.to_string()
-        } else {
-            let keep = max.saturating_sub(1);
-            let mut out: String = s.chars().take(keep).collect();
-            out.push('…');
-            out
-        }
-    }
-
+    /// The `workspace:task` label, truncated and right-padded to a fixed column
+    /// so status glyphs and durations align down the run (DM-Mono-flavored).
     fn label(&self, workspace: &str, task: &str) -> String {
-        self.truncate(&format!("{}:{}", workspace, task), 12)
+        const LABEL_W: usize = 28;
+        let raw = format!("{}:{}", workspace, task);
+        let width = LABEL_W.min(self.term_width().saturating_sub(16).max(10));
+        let shown = if raw.chars().count() > width {
+            let mut s: String = raw.chars().take(width.saturating_sub(1)).collect();
+            s.push('…');
+            s
+        } else {
+            raw
+        };
+        format!("{:<width$}", shown, width = width)
     }
 
     /// Retire a running bar with a final static line (glyph + label + detail).
@@ -343,12 +389,24 @@ impl InteractiveReporter {
 
 impl Reporter for InteractiveReporter {
     fn run_start(&self, task: &str, workspaces: usize) {
-        self.mp
-            .println(banner_line(&format!(
-                "{} · {} workspaces",
-                task, workspaces
-            )))
-            .ok();
+        // Branded header: teal rosette + ink wordmark + the task as the teal
+        // accent, a dim workspace count, and a thin dim rule beneath.
+        let head = format!(
+            "{} {}  {}  {}",
+            paint_teal(ROSETTE),
+            wordmark(),
+            paint_teal(task),
+            style(format!(
+                "· {} workspace{}",
+                workspaces,
+                if workspaces == 1 { "" } else { "s" }
+            ))
+            .dim()
+        );
+        let rule = style("─".repeat(self.term_width().min(52)))
+            .dim()
+            .to_string();
+        self.mp.println(format!("\n{head}\n{rule}")).ok();
     }
 
     fn event(&self, ev: TaskEvent) {
@@ -374,9 +432,9 @@ impl Reporter for InteractiveReporter {
             } => {
                 let line = format!(
                     "{} {} {} {}",
-                    teal().apply_to("●"),
+                    paint_teal("●"),
                     self.label(&workspace, &task),
-                    teal().apply_to("cache hit"),
+                    paint_teal("cache hit"),
                     style(format!("[{}]", short_key(&key))).dim()
                 );
                 self.settle(&workspace, &task, line);
@@ -443,9 +501,13 @@ impl Reporter for InteractiveReporter {
         } else {
             style(failed.to_string()).dim().to_string()
         };
+        let rule = style("─".repeat(self.term_width().min(52)))
+            .dim()
+            .to_string();
         let line = format!(
-            "{}  {} tasks, {} cached, {} failed  {}",
-            teal().apply_to("◆"),
+            "{}\n{}  {} tasks · {} cached · {} failed  {}",
+            rule,
+            paint_teal(ROSETTE),
             style(total).bold(),
             style(cached).green(),
             failed_str,

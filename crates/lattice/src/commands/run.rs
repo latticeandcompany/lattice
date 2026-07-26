@@ -2,9 +2,9 @@ use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
+use dagger::{build_execution_graph, dry_run_order};
 use lattice_config::find_root;
-use lattice_dag::{build_execution_graph, dry_run_order};
-use lattice_output::{banner_line, make_reporter, teal};
+use lattice_output::{banner_line, make_reporter, paint_teal};
 use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure};
 use lattice_workspace::discover_workspaces;
 
@@ -109,7 +109,7 @@ impl RunArgs {
             for node in dry_run_order(&graph) {
                 println!(
                     "  {} {}  {}",
-                    teal().apply_to("→"),
+                    paint_teal("→"),
                     style(format!("{}:{}", node.workspace_name, node.task_name)).bold(),
                     style(&node.command).dim()
                 );

@@ -9,7 +9,7 @@ description = "Lattice async task executor"
 [dependencies]
 lattice-cache = { path = "../lattice-cache" }
 lattice-config = { path = "../lattice-config" }
-lattice-dag = { path = "../lattice-dag" }
+dagger = { path = "../dagger" }
 lattice-output = { path = "../lattice-output" }
 lattice-workspace = { path = "../lattice-workspace" }
 anyhow = "1"
