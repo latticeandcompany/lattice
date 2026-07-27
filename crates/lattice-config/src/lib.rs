@@ -377,7 +377,15 @@ mod tests {
     }
 
     fn compiled_schema() -> Validator {
-        let schema = read_json(&repo_root().join(".lattice").join("schema.json"));
+        // The schema is bundled with the `lattice` crate and written to
+        // `.lattice/schema.json` by `lattice init`.
+        let schema = read_json(
+            &repo_root()
+                .join("crates")
+                .join("lattice")
+                .join("assets")
+                .join("schema.json"),
+        );
         jsonschema::validator_for(&schema).expect("schema.json must be a valid JSON Schema")
     }
 

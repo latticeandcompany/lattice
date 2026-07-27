@@ -146,6 +146,20 @@ static DRIVERS: &[DriverSpec] = &[
         invoke_tpl: "poetry run {task}",
     },
     DriverSpec {
+        tool: "pdm",
+        role: Role::PackageManager,
+        fingerprint: &["pdm.lock"],
+        version_cmd: "pdm --version",
+        invoke_tpl: "pdm run {task}",
+    },
+    DriverSpec {
+        tool: "pipenv",
+        role: Role::PackageManager,
+        fingerprint: &["Pipfile.lock"],
+        version_cmd: "pipenv --version",
+        invoke_tpl: "pipenv run {task}",
+    },
+    DriverSpec {
         tool: "python",
         role: Role::Runtime,
         fingerprint: &[".python-version"],
@@ -211,6 +225,83 @@ static DRIVERS: &[DriverSpec] = &[
         fingerprint: &["Podfile", "Podfile.lock"],
         version_cmd: "pod --version",
         invoke_tpl: "pod {task}",
+    },
+    // --- PHP -----------------------------------------------------------------
+    DriverSpec {
+        tool: "composer",
+        role: Role::PackageManager,
+        fingerprint: &["composer.lock"],
+        version_cmd: "composer --version",
+        invoke_tpl: "composer {task}",
+    },
+    // --- Elixir --------------------------------------------------------------
+    DriverSpec {
+        tool: "mix",
+        role: Role::TaskRunner,
+        fingerprint: &["mix.lock"],
+        version_cmd: "mix --version",
+        invoke_tpl: "mix {task}",
+    },
+    // --- Dart / Flutter ------------------------------------------------------
+    DriverSpec {
+        tool: "dart",
+        role: Role::PackageManager,
+        fingerprint: &["pubspec.lock"],
+        version_cmd: "dart --version",
+        invoke_tpl: "dart pub {task}",
+    },
+    // --- Swift ---------------------------------------------------------------
+    DriverSpec {
+        tool: "swift",
+        role: Role::BuildTool,
+        fingerprint: &["Package.resolved"],
+        version_cmd: "swift --version",
+        invoke_tpl: "swift {task}",
+    },
+    // --- Haskell -------------------------------------------------------------
+    DriverSpec {
+        tool: "stack",
+        role: Role::BuildTool,
+        fingerprint: &["stack.yaml.lock"],
+        version_cmd: "stack --version",
+        invoke_tpl: "stack {task}",
+    },
+    DriverSpec {
+        tool: "cabal",
+        role: Role::BuildTool,
+        fingerprint: &["cabal.project.freeze"],
+        version_cmd: "cabal --version",
+        invoke_tpl: "cabal {task}",
+    },
+    // --- Cross-ecosystem task runners ----------------------------------------
+    DriverSpec {
+        tool: "just",
+        role: Role::TaskRunner,
+        fingerprint: &["justfile", ".justfile"],
+        version_cmd: "just --version",
+        invoke_tpl: "just {task}",
+    },
+    DriverSpec {
+        tool: "task",
+        role: Role::TaskRunner,
+        fingerprint: &["Taskfile.yml", "Taskfile.yaml"],
+        version_cmd: "task --version",
+        invoke_tpl: "task {task}",
+    },
+    // --- Meta task runners (Lattice can wrap a Turborepo/Nx workspace) --------
+    DriverSpec {
+        tool: "turbo",
+        role: Role::TaskRunner,
+        fingerprint: &["turbo.json"],
+        version_cmd: "turbo --version",
+        invoke_tpl: "turbo run {task}",
+    },
+    DriverSpec {
+        tool: "nx",
+        role: Role::TaskRunner,
+        fingerprint: &["nx.json"],
+        version_cmd: "nx --version",
+        invoke_tpl: "nx run {task}",
     },
 ];
 
@@ -306,8 +397,8 @@ impl std::fmt::Display for AmbiguityError {
         }
         write!(
             f,
-            "Lattice never guesses a tool you didn't choose. Declare one \
-             explicitly by adding to this workspace in lattice.json:\n  {}",
+            "Declare the task driver explicitly by adding to this workspace \
+             in lattice.json:\n  {}",
             self.suggested_fix
         )
     }
@@ -929,5 +1020,119 @@ mod tests {
         });
         let err = discover_workspaces(tmp.path(), &config).unwrap_err();
         assert!(format!("{err:#}").contains("app"));
+    }
+
+    // ---- role composition (different roles -> a stack, not a conflict) -------
+
+    #[test]
+    fn role_composition_python_runtime_plus_uv_resolves_to_uv() {
+        // python runtime (.python-version) + uv package-manager (lockfile) → uv
+        // drives; the runtime is not a conflict, it composes into the stack.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), ".python-version", "3.12.1\n");
+        write(tmp.path(), "uv.lock", "");
+        write(tmp.path(), "pyproject.toml", "");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "uv");
+        assert_eq!(d.role, Role::PackageManager);
+    }
+
+    #[test]
+    fn role_composition_turbo_over_pnpm_resolves_to_turbo() {
+        // A meta task runner (turbo.json) composes above a package-manager
+        // (pnpm-lock.yaml): turbo has the higher driving role, so it drives.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "turbo.json", "{}");
+        write(tmp.path(), "pnpm-lock.yaml", "");
+        write(tmp.path(), "package.json", "{}");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        assert_eq!(d.tool, "turbo");
+        assert_eq!(d.role, Role::TaskRunner);
+        assert_eq!(d.via, Evidence::Lockfile("turbo.json".into()));
+    }
+
+    // ---- same-role conflict (two of one role -> AmbiguityError) -------------
+
+    #[test]
+    fn same_role_conflict_two_python_package_managers() {
+        // pdm and pipenv are both package managers → no unique driver.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "pdm.lock", "");
+        write(tmp.path(), "Pipfile.lock", "");
+        write(tmp.path(), "pyproject.toml", "");
+        let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+        assert!(err.candidates.contains(&"pdm".to_string()));
+        assert!(err.candidates.contains(&"pipenv".to_string()));
+        assert!(format!("{err}").contains("engines"));
+    }
+
+    #[test]
+    fn same_role_conflict_two_build_tools() {
+        // stack and cabal are both Haskell build tools → conflict.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "stack.yaml.lock", "");
+        write(tmp.path(), "cabal.project.freeze", "");
+        let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+        assert!(err.candidates.contains(&"stack".to_string()));
+        assert!(err.candidates.contains(&"cabal".to_string()));
+        assert!(format!("{err}").contains("engines"));
+    }
+
+    #[test]
+    fn same_role_conflict_declaration_disambiguates() {
+        // Two package-manager lockfiles, but a declaration names one → resolved.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "pdm.lock", "");
+        write(tmp.path(), "Pipfile.lock", "");
+        write(tmp.path(), "pyproject.toml", "");
+        let d = detect_drivers(tmp.path(), &engines(json!({ "pdm": ">=2.0" }))).unwrap();
+        assert_eq!(d.tool, "pdm");
+        assert_eq!(d.via, Evidence::Declaration);
+    }
+
+    // ---- new-tool lockfiles resolve via the Lockfile rung -------------------
+
+    #[test]
+    fn tier_c_new_tool_lockfiles_select_their_driver() {
+        for (file, tool) in [
+            ("composer.lock", "composer"),
+            ("mix.lock", "mix"),
+            ("pubspec.lock", "dart"),
+            ("Package.resolved", "swift"),
+            ("stack.yaml.lock", "stack"),
+            ("cabal.project.freeze", "cabal"),
+            ("pdm.lock", "pdm"),
+            ("Pipfile.lock", "pipenv"),
+            ("justfile", "just"),
+            ("Taskfile.yml", "task"),
+            ("turbo.json", "turbo"),
+            ("nx.json", "nx"),
+        ] {
+            let tmp = TempDir::new().unwrap();
+            write(tmp.path(), file, "");
+            let d = detect_drivers(tmp.path(), &EngineMap::new())
+                .unwrap_or_else(|e| panic!("{file} should select {tool}: {e}"));
+            assert_eq!(d.tool, tool, "{file} → {tool}");
+        }
+    }
+
+    #[test]
+    fn new_tool_invoke_forms() {
+        assert_eq!(
+            DriverRegistry::get("mix").unwrap().invoke("test"),
+            "mix test"
+        );
+        assert_eq!(
+            DriverRegistry::get("dart").unwrap().invoke("get"),
+            "dart pub get"
+        );
+        assert_eq!(
+            DriverRegistry::get("turbo").unwrap().invoke("build"),
+            "turbo run build"
+        );
+        assert_eq!(
+            DriverRegistry::get("nx").unwrap().invoke("build"),
+            "nx run build"
+        );
     }
 }
