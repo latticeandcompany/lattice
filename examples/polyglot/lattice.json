@@ -16,17 +16,6 @@
       }
     },
     {
-      "name": "shared-cpp",
-      "path": "libs/shared-cpp",
-      "auto": false,
-      "scripts": {
-        "build": "make all",
-        "test": "make test",
-        "clean": "make clean",
-        "lint": "echo 'No linter configured for C++'"
-      }
-    },
-    {
       "name": "worker",
       "path": "services/worker",
       "auto": false,
