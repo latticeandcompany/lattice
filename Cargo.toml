@@ -3,7 +3,7 @@ members = [
     "crates/lattice",
     "crates/lattice-cache",
     "crates/lattice-config",
-    "crates/lattice-dag",
+    "crates/dagger",
     "crates/lattice-output",
     "crates/lattice-runner",
     "crates/lattice-workspace",

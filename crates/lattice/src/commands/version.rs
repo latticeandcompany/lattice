@@ -1,12 +1,14 @@
 use anyhow::Result;
 use clap::Args;
-use console::style;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use lattice_output::splash;
+
+use crate::cli::BIN_VERSION;
 
 #[derive(Args, Debug)]
 pub struct VersionArgs {
-    #[arg(long, help = "Output version as JSON")]
+    /// Output version information as JSON.
+    #[arg(long)]
     pub json: bool,
 }
 
@@ -15,20 +17,11 @@ impl VersionArgs {
         if self.json {
             println!(
                 r#"{{"version":"{}","target":"{}"}}"#,
-                VERSION,
+                BIN_VERSION,
                 std::env::consts::ARCH
             );
         } else {
-            println!(
-                "{} {} {}",
-                style("lattice").bold().cyan(),
-                style(VERSION).bold(),
-                style(format!("({})", std::env::consts::ARCH)).dim()
-            );
-            println!(
-                "{}",
-                style("Cross-language monorepo task orchestrator").dim()
-            );
+            println!("{}", splash(BIN_VERSION));
         }
         Ok(())
     }

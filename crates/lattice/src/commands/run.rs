@@ -2,124 +2,114 @@ use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
+use dagger::{build_execution_graph, dry_run_order};
 use lattice_config::find_root;
-use lattice_dag::build_execution_graph;
-use lattice_output::OutputManager;
-use lattice_runner::execute_tasks;
+use lattice_output::{banner_line, make_reporter, paint_teal};
+use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure};
 use lattice_workspace::discover_workspaces;
 
+use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag, BIN_VERSION};
+
 #[derive(Args, Debug)]
-#[command(long_about = "Run a pipeline task across your workspaces.\n\n\
-Lattice resolves the task's dependency graph from the 'pipeline' in lattice.json \
-and executes it in parallel, honoring each task's dependsOn edges. Scope the run \
-to specific workspaces with --filter, tune parallelism with --concurrency, and \
-choose whether a failure stops the whole run (default) or lets independent tasks \
-finish with --continue.\n\n\
+#[command(long_about = "Run a task across your workspaces.\n\n\
+Lattice resolves the task's dependency graph from the `tasks` map in lattice.json \
+and runs it in dependency order across your workspaces. Scope with --filter, tune \
+parallelism with --concurrency, and choose whether a failure stops the run (default) \
+or lets independent tasks finish with --continue.\n\n\
 Examples:\n  \
 lattice run build\n  \
 lattice run test --filter api\n  \
 lattice run lint --concurrency 4 --continue")]
 pub struct RunArgs {
-    #[arg(help = "Pipeline task to run across workspaces (e.g. build, test, lint)")]
+    /// Task to run across workspaces (e.g. build, test, lint).
     pub task: String,
 
-    #[arg(
-        short,
-        long,
-        value_name = "PATTERN",
-        help = "Only run in workspaces whose name contains this pattern"
-    )]
+    /// Only run in workspaces whose name contains this pattern.
+    #[arg(short, long, value_name = "PATTERN")]
     pub filter: Option<String>,
 
-    #[arg(
-        long,
-        value_name = "N",
-        help = "Cap how many tasks run at once (default: number of CPUs)"
-    )]
+    /// Cap how many tasks run at once (default: number of CPUs).
+    #[arg(long, value_name = "N")]
     pub concurrency: Option<usize>,
 
-    #[arg(
-        long = "continue",
-        help = "Keep running independent tasks after a failure instead of stopping"
-    )]
+    /// Keep running independent tasks after a failure instead of stopping.
+    #[arg(long = "continue")]
     pub keep_going: bool,
 
-    #[arg(long, help = "Ignore the cache and re-run every task")]
+    /// Ignore the cache and re-run every task.
+    #[arg(long)]
     pub no_cache: bool,
 
-    #[arg(long, help = "Ignore the cache for this run (alias for --no-cache)")]
+    /// Ignore the cache for this run (alias for --no-cache).
+    #[arg(long)]
     pub force: bool,
 
-    #[arg(
-        long,
-        help = "List the tasks that would run, then exit without running them"
-    )]
+    /// List the tasks that would run, then exit without running them.
+    #[arg(long)]
     pub dry_run: bool,
 }
 
 impl RunArgs {
-    pub async fn execute(&self, loquacious: bool) -> Result<()> {
+    pub async fn execute(&self, flag_loq: bool, no_version_check: bool) -> Result<()> {
         let cwd = std::env::current_dir()?;
         let root = find_root(&cwd).ok_or_else(|| {
-            anyhow::anyhow!("No lattice.json found in this directory or any parent directory.")
+            anyhow::anyhow!(
+                "No lattice.json found in this directory or any parent. \
+                 Run `lattice init` to create one."
+            )
         })?;
 
         let config = lattice_config::load_config(&root)?;
-        let output = OutputManager::new(loquacious);
 
-        if !config.pipeline.contains_key(self.task.as_str()) {
+        if !config.tasks.contains_key(self.task.as_str()) {
+            let mut available: Vec<&str> = config.tasks.keys().map(|s| s.as_str()).collect();
+            available.sort_unstable();
+            let listed = if available.is_empty() {
+                "(none defined)".to_string()
+            } else {
+                available.join(", ")
+            };
             bail!(
-                "Task '{}' is not defined in the pipeline. \
-                Add it to the 'pipeline' section of lattice.json.",
-                self.task
+                "Task '{}' is not defined in lattice.json. Available tasks: {}",
+                self.task,
+                listed
             );
         }
+
+        let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
+        let mode = detect_output_mode(effective_loq);
 
         let mut workspaces = discover_workspaces(&root, &config)?;
-
-        if workspaces.is_empty() {
-            output.warn(
-                "No workspaces found. Declare them in the 'workspaces' array of lattice.json.",
-            );
-            return Ok(());
-        }
 
         if let Some(filter) = &self.filter {
             workspaces.retain(|ws| ws.name.contains(filter.as_str()));
             if workspaces.is_empty() {
-                output.warn(&format!("No workspaces matched filter '{}'", filter));
+                // Nothing to run is not a failure — report and exit cleanly so a
+                // filtered no-op never breaks a pipeline.
+                println!("lattice: no workspaces matched filter '{}'.", filter);
                 return Ok(());
             }
         }
 
-        output.header(&format!(
-            "\n{} Lattice — running {} across {} workspaces\n",
-            style("◆").cyan().bold(),
-            style(&self.task).bold(),
-            workspaces.len()
-        ));
-
-        if loquacious {
-            output.detail(&format!("root: {}", root.display()));
-            output.detail(&format!(
-                "workspaces: {}",
-                workspaces
-                    .iter()
-                    .map(|w| format!("{} ({})", w.name, w.language.name()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        if workspaces.is_empty() {
+            // A freshly-scaffolded repo (empty `workspaces`) has nothing to run
+            // yet — show the shape and exit 0 rather than erroring.
+            println!(
+                "lattice: no workspaces declared yet — add them to the \
+                 `workspaces` array in lattice.json to run `{}`.",
+                self.task
+            );
+            return Ok(());
         }
 
         let graph = build_execution_graph(&workspaces, &self.task, &config)?;
 
         if self.dry_run {
-            println!("{} Dry run — tasks that would execute:", style("◇").dim());
-            for &node_idx in &graph.topo_order {
-                let node = &graph.graph[node_idx];
+            println!("{}", banner_line(&format!("dry run · {}", self.task)));
+            for node in dry_run_order(&graph) {
                 println!(
                     "  {} {}  {}",
-                    style("→").dim(),
+                    paint_teal("→"),
                     style(format!("{}:{}", node.workspace_name, node.task_name)).bold(),
                     style(&node.command).dim()
                 );
@@ -127,42 +117,42 @@ impl RunArgs {
             return Ok(());
         }
 
-        // `--force` is a Turbo-familiar alias for `--no-cache`; either one bypasses
-        // the cache for this run.
+        // Advisory version-drift nag, before the run and only in interactive mode.
+        maybe_emit_version_nag(mode, &config, no_version_check);
+
+        let reporter = make_reporter(mode, effective_loq);
         let no_cache = self.no_cache || self.force;
 
-        let result = match execute_tasks(
-            &graph,
-            &workspaces,
-            &config,
-            &root,
+        let shutdown = Some(Box::pin(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+            as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>);
+
+        let opts = ExecuteOptions {
+            graph: &graph,
+            workspaces: &workspaces,
+            config: &config,
+            root: &root,
             no_cache,
-            self.concurrency,
-            self.keep_going,
-            &output,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(err) => {
-                // In keep-going mode a run with failures returns a RunFailure that
-                // still carries the full tally, so print an accurate summary line
-                // before propagating the non-zero exit.
-                if let Some(failure) = err.downcast_ref::<lattice_runner::RunFailure>() {
-                    let r = failure.result;
-                    output.summary(r.total, r.cached, r.failed, r.elapsed_ms);
-                }
-                return Err(err);
-            }
+            concurrency: self.concurrency,
+            keep_going: self.keep_going,
+            reporter: reporter.as_ref(),
+            lattice_version: BIN_VERSION,
+            shutdown,
         };
 
-        output.summary(
-            result.total,
-            result.cached,
-            result.failed,
-            result.elapsed_ms,
-        );
-
-        Ok(())
+        match execute_tasks(opts).await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // The runner already printed the run summary (including for a
+                // keep-going RunFailure); just propagate a non-zero exit.
+                if err.downcast_ref::<RunFailure>().is_some() {
+                    // Non-zero exit without an extra error line: the reporter
+                    // has already surfaced everything.
+                    std::process::exit(1);
+                }
+                Err(err)
+            }
+        }
     }
 }
