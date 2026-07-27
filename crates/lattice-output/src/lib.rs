@@ -53,8 +53,58 @@ pub fn should_enable_color(mode: OutputMode, no_color_set: bool) -> bool {
 /// The teal accent for **Lattice Build** (`teal-500`, BRAND.md §2). This is the
 /// ~5% accent — it rides on the rosette mark, spinners, and product words only.
 pub const TEAL: (u8, u8, u8) = (0x1B, 0x99, 0x8B);
-/// The teal tint (`teal-300`) used for the rosette art fill.
+/// The teal tint (`teal-300`) used for the rosette art fill on dark terminals.
 pub const TEAL_300: (u8, u8, u8) = (0x63, 0xC4, 0xB8);
+
+/// Which terminal background the splash art should be tuned for (BRAND.md §7:
+/// "Dark and light both first-class"). The mark keeps its teal identity but
+/// swaps shade so it never washes out: the lighter `teal-300` on a dark
+/// background, the deeper `teal-500` on a light one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Theme {
+    /// Light background (paper) — render the mark in the deeper `teal-500`.
+    Light,
+    /// Dark background (ink) — render the mark in the lighter `teal-300`.
+    Dark,
+}
+
+/// Pure, unit-testable theme resolution.
+///
+/// An explicit `LATTICE_THEME=light|dark` override always wins. Otherwise we
+/// consult `COLORFGBG` (set by many terminals as `fg;bg`, occasionally
+/// `fg;default;bg`) and read the trailing background field: ANSI `7`/`15`
+/// (white / bright white) means a light background, anything else is dark.
+/// With no signal we default to [`Theme::Dark`] — most terminals are dark, and
+/// this preserves the historical splash color.
+pub fn theme_from_env(theme_override: Option<&str>, colorfgbg: Option<&str>) -> Theme {
+    if let Some(v) = theme_override {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "light" => return Theme::Light,
+            "dark" => return Theme::Dark,
+            _ => {}
+        }
+    }
+    if let Some(spec) = colorfgbg {
+        if let Some(bg) = spec.split(';').next_back() {
+            if let Ok(n) = bg.trim().parse::<u8>() {
+                return if n == 7 || n == 15 {
+                    Theme::Light
+                } else {
+                    Theme::Dark
+                };
+            }
+        }
+    }
+    Theme::Dark
+}
+
+/// Resolve the terminal theme from the real environment (see [`theme_from_env`]).
+pub fn detect_theme() -> Theme {
+    theme_from_env(
+        std::env::var("LATTICE_THEME").ok().as_deref(),
+        std::env::var("COLORFGBG").ok().as_deref(),
+    )
+}
 
 /// The rosette (woven-sphere) mark — the Lattice logo — as compact ASCII.
 /// Rendered in teal for the `version`/splash surface (BRAND.md §6).
@@ -114,12 +164,39 @@ pub fn wordmark() -> String {
 }
 
 /// The rosette logo painted in true teal, ready to print as a splash block.
+/// The teal shade adapts to the terminal background (see [`Theme`]).
 pub fn logo() -> String {
+    logo_for(detect_theme())
+}
+
+/// The rosette logo painted for a specific [`Theme`] — a pure helper that lets
+/// callers (and tests) pick the shade without touching the environment.
+pub fn logo_for(theme: Theme) -> String {
+    let fill = match theme {
+        Theme::Light => TEAL,
+        Theme::Dark => TEAL_300,
+    };
     ROSETTE_ART
         .lines()
-        .map(|l| paint_rgb(l, TEAL_300))
+        .map(|l| paint_rgb(l, fill))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The full branded splash: the teal rosette mark, the `lattice <version>
+/// (arch)` lockup, and the tagline. Shared by `version`, `init`, and the
+/// bare `lattice` invocation so the brand reads identically everywhere. The
+/// mark's teal shade adapts to the terminal background.
+pub fn splash(version: &str) -> String {
+    format!(
+        "{}\n{} {}  {}  {}\n{}",
+        logo(),
+        paint_teal(ROSETTE),
+        wordmark(),
+        style(version).bold(),
+        style(format!("({})", std::env::consts::ARCH)).dim(),
+        style("A fast, local toolchain for managing monorepos.").dim(),
+    )
 }
 
 /// A quiet, branded one-line header: teal rosette glyph + bold `lattice`
@@ -389,8 +466,6 @@ impl InteractiveReporter {
 
 impl Reporter for InteractiveReporter {
     fn run_start(&self, task: &str, workspaces: usize) {
-        // Branded header: teal rosette + ink wordmark + the task as the teal
-        // accent, a dim workspace count, and a thin dim rule beneath.
         let head = format!(
             "{} {}  {}  {}",
             paint_teal(ROSETTE),
@@ -537,7 +612,6 @@ mod tests {
 
     #[test]
     fn not_a_tty_is_raw() {
-        // No interactive terminal (piped/redirected) always forces Raw.
         assert_eq!(detect_mode(false, false, false), OutputMode::Raw);
     }
 
@@ -594,8 +668,6 @@ mod tests {
         assert!(!should_enable_color(OutputMode::Raw, false));
         assert!(!should_enable_color(OutputMode::Raw, true));
     }
-
-    // ----- New API tests -----
 
     /// A test-only reporter that records every event in order. Proves the trait
     /// shape is usable and that impls can be `Send + Sync` via interior mut.
@@ -717,5 +789,48 @@ mod tests {
     fn short_key_truncates_to_eight() {
         assert_eq!(short_key("deadbeefcafe"), "deadbeef");
         assert_eq!(short_key("abc"), "abc");
+    }
+
+    #[test]
+    fn theme_override_wins_over_colorfgbg() {
+        assert_eq!(theme_from_env(Some("light"), Some("15;0")), Theme::Light);
+        assert_eq!(theme_from_env(Some("dark"), Some("0;15")), Theme::Dark);
+        // Case-insensitive and whitespace-tolerant.
+        assert_eq!(theme_from_env(Some(" LIGHT "), None), Theme::Light);
+    }
+
+    #[test]
+    fn theme_reads_colorfgbg_background_field() {
+        // Trailing field is the background: 15/7 → light, else dark.
+        assert_eq!(theme_from_env(None, Some("0;15")), Theme::Light);
+        assert_eq!(theme_from_env(None, Some("0;7")), Theme::Light);
+        assert_eq!(theme_from_env(None, Some("15;0")), Theme::Dark);
+        // The three-field "fg;default;bg" form still reads the last field.
+        assert_eq!(theme_from_env(None, Some("15;default;0")), Theme::Dark);
+        assert_eq!(theme_from_env(None, Some("0;default;15")), Theme::Light);
+    }
+
+    #[test]
+    fn theme_defaults_to_dark_without_signal() {
+        assert_eq!(theme_from_env(None, None), Theme::Dark);
+        // Unparseable / bogus values fall through to the dark default.
+        assert_eq!(theme_from_env(Some("teal"), None), Theme::Dark);
+        assert_eq!(theme_from_env(None, Some("nonsense")), Theme::Dark);
+    }
+
+    #[test]
+    fn logo_variants_carry_the_mark() {
+        // Both variants render the full rosette; they differ only in shade.
+        let light = logo_for(Theme::Light);
+        let dark = logo_for(Theme::Dark);
+        assert_eq!(light.lines().count(), ROSETTE_ART.lines().count());
+        assert_eq!(dark.lines().count(), ROSETTE_ART.lines().count());
+    }
+
+    #[test]
+    fn splash_contains_wordmark_and_version() {
+        let s = splash("9.9.9");
+        assert!(s.contains("lattice"));
+        assert!(s.contains("9.9.9"));
     }
 }

@@ -7,7 +7,7 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use serde_json::{json, Map, Value};
 
-use lattice_output::teal;
+use lattice_output::{logo, teal};
 
 use crate::cli::BIN_VERSION;
 
@@ -45,6 +45,14 @@ impl InitArgs {
 
         // Never hang a pipeline: no-TTY OR `-y/--yes` writes the skeleton.
         let tty = console::user_attended();
+
+        // Lead an interactive init with the branded mark (BRAND.md §6/§7); skip
+        // it for pipes/CI so scripted `init --yes` output stays clean.
+        if tty {
+            println!("{}", logo());
+            println!();
+        }
+
         let config = if self.yes || !tty {
             default_skeleton(BIN_VERSION)
         } else {

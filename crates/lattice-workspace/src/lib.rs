@@ -306,8 +306,8 @@ impl std::fmt::Display for AmbiguityError {
         }
         write!(
             f,
-            "Lattice never guesses a tool you didn't choose. Declare one \
-             explicitly by adding to this workspace in lattice.json:\n  {}",
+            "Declare the task driver explicitly by adding to this workspace \
+             in lattice.json:\n  {}",
             self.suggested_fix
         )
     }

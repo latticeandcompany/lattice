@@ -15,12 +15,12 @@ pub const BIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Parser, Debug)]
 #[command(
     name = "lattice",
-    about = "Local-first build tool for polyglot monorepos.",
+    about = "A fast, local toolchain for managing monorepos.",
     version = BIN_VERSION,
-    long_about = "Lattice runs tasks across the workspaces of a polyglot monorepo in dependency \
+    long_about = "Lattice runs tasks across the workspaces of a monorepo in dependency \
 order, with pinned toolchains and a content-addressed cache for reproducible builds.\n\n\
 Declare workspaces and tasks in lattice.json, then `lattice run <task>`. Toolchains are \
-provisioned locally under .lattice — nothing is installed globally.",
+provisioned under .lattice.",
     help_template = "\u{2756} {name} {version}\n{about}\n\n\
 {usage-heading} {usage}\n\n{all-args}{after-help}"
 )]
@@ -38,7 +38,7 @@ pub struct Cli {
     pub no_version_check: bool,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -72,12 +72,23 @@ impl Cli {
         let flag_loq = self.flag_loquacious();
         let no_version_check = self.no_version_check;
         match self.command {
-            Commands::Run(args) => args.execute(flag_loq, no_version_check).await,
-            Commands::Setup(args) => args.execute(flag_loq, no_version_check).await,
-            Commands::Init(args) => args.execute().await,
-            Commands::Prune(args) => args.execute().await,
-            Commands::Completions(args) => args.execute(),
-            Commands::Version(args) => args.execute().await,
+            Some(Commands::Run(args)) => args.execute(flag_loq, no_version_check).await,
+            Some(Commands::Setup(args)) => args.execute(flag_loq, no_version_check).await,
+            Some(Commands::Init(args)) => args.execute().await,
+            Some(Commands::Prune(args)) => args.execute().await,
+            Some(Commands::Completions(args)) => args.execute(),
+            Some(Commands::Version(args)) => args.execute().await,
+            // Bare `lattice`: show the branded splash and point at `--help`
+            // instead of clap's terse "missing subcommand" error.
+            None => {
+                println!("{}", lattice_output::splash(BIN_VERSION));
+                println!();
+                println!(
+                    "Run {} to see available commands.",
+                    console::style("lattice --help").bold()
+                );
+                Ok(())
+            }
         }
     }
 }
