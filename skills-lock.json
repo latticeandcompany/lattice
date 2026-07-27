@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "grilling": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grilling/SKILL.md",
+      "computedHash": "368d3dd7251247c69f3656d93dc83c8f1577792eacac2111f1e7981db2ece49b"
+    },
+    "read-the-damn-docs": {
+      "source": "builderio/skills",
+      "sourceType": "github",
+      "skillPath": "skills/read-the-damn-docs/SKILL.md",
+      "computedHash": "8c69f4c549f42e705cc999905e22f7a795f7725071c99fa826c7e166effb3e57"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
+    }
+  }
+}
