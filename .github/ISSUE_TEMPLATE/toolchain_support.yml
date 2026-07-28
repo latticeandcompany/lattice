@@ -1,0 +1,112 @@
+name: Toolchain / driver support
+description: Ask for built-in support for a language, package manager, or build tool.
+labels: ["enhancement", "area:engine"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any tool can be run today by declaring its commands yourself (`auto: false` with explicit `scripts`), or by provisioning it with an `installCmd` engine. See [Toolchains](https://latticeandcompany.github.io/lattice/docs/toolchains).
+
+        This form is for adding a tool to the **built-in driver set** so `auto` workspaces detect it with no configuration. That requires a file that appears only when the tool is in use. Fill in what you know; the fields below are what the implementation needs.
+
+  - type: input
+    id: tool
+    attributes:
+      label: Tool
+      placeholder: mise, nix, sbt, swift, zig, cabal, conan …
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Language or ecosystem
+      placeholder: Scala / Swift / Haskell / C++
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Role
+      description: |
+        Roles compose — a runtime, a build tool, and a package manager can coexist in one workspace. Two tools claiming the same role conflict until the user disambiguates.
+      options:
+        - Runtime (provides the language itself)
+        - Build tool (compiles the project)
+        - Package manager (resolves and installs dependencies)
+        - Task runner (runs named scripts/targets)
+    validations:
+      required: true
+
+  - type: textarea
+    id: fingerprint
+    attributes:
+      label: Detection evidence
+      description: |
+        Which file, committed to the repository, identifies this tool and no other? A lockfile or a tool-specific declaration file is ideal. A generic manifest shared with other tools is not usable evidence, because it could equally belong to something else.
+
+        Also note whether the file is normally committed, and whether any other tool writes it.
+      placeholder: |
+        `build.sbt` — only sbt reads it, always committed.
+        `project/build.properties` — pins the sbt version.
+        Not shared with any other tool.
+    validations:
+      required: true
+
+  - type: textarea
+    id: invoke
+    attributes:
+      label: How tasks are invoked
+      description: The literal command line for a named task, in the form Lattice would generate.
+      render: shell
+      placeholder: |
+        sbt {task}          # e.g. sbt test
+        # or, if the tool needs a subcommand:
+        sbt "runMain {task}"
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version check
+      description: The command that prints the tool's version, and a sample of its exact output.
+      render: shell
+      placeholder: |
+        $ sbt --version
+        sbt runner version: 1.10.7
+    validations:
+      required: true
+
+  - type: textarea
+    id: pinning
+    attributes:
+      label: Version pinning mechanism
+      description: How does a repository pin this tool's version, if it can? Which file and which field?
+      placeholder: "`project/build.properties` → `sbt.version=1.10.7`"
+
+  - type: textarea
+    id: install
+    attributes:
+      label: Non-interactive install command
+      description: |
+        If provisioning is possible, the command that installs the tool into a directory with no prompts and no global writes. `$LATTICE_TOOLCHAIN_DIR` is the target directory. Leave blank if the tool cannot be installed this way.
+      render: shell
+
+  - type: textarea
+    id: outputs
+    attributes:
+      label: Typical outputs and caches
+      description: Which directories does this tool write build artifacts to, and which local caches should be excluded from task inputs?
+      placeholder: "outputs: `target/**` · ignore: `~/.ivy2`, `project/target/**`"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: The detection evidence above identifies this tool unambiguously.
+          required: true
+        - label: I checked the built-in driver table in the toolchains docs and this tool is not there.
+          required: true

@@ -2,6 +2,7 @@
 // fonts register the local typefaces, Bootstrap Icons ships its own @font-face +
 // glyph classes through SASS (per the request - icons as a font, loaded via sass).
 
+@use './styles/paths' as paths;
 @use './styles/tokens';
 @use './styles/fonts';
 // Bootstrap Icons as a font, loaded through SASS. The package's default src uses a
@@ -9,13 +10,18 @@
 // /public/fonts - fully local, resolves correctly in the production build.
 @use '../node_modules/bootstrap-icons/font/bootstrap-icons.scss' with (
 	$bootstrap-icons-font-src: (
-		url('/fonts/bootstrap-icons.woff2') format('woff2'),
-		url('/fonts/bootstrap-icons.woff') format('woff')
+		url('#{paths.$base}/fonts/bootstrap-icons.woff2') format('woff2'),
+		url('#{paths.$base}/fonts/bootstrap-icons.woff') format('woff')
 	)
 );
 
 :root {
 	color-scheme: light dark;
+
+	// Tracking that reproduces the lockup wordmark (.github/assets/lockup-*.svg,
+	// where the same glyphs are outlined). Only for the `lattice` wordmark set in
+	// DM Sans Medium beside the mark — not for headings or body copy.
+	--wordmark-tracking: -0.056em;
 }
 
 html {
@@ -163,6 +169,37 @@ samp {
 
 .lang-logo:hover {
 	transform: translate(-50%, -50%) scale(1.06);
+}
+
+// The hero weave - the logos and the threads feeding them - is one unit, hidden
+// together below md: there's no room for the logos at phone widths, and threads
+// on their own would dangle from nothing. 768px is Bootstrap's md.
+.lang-logo,
+.hero__threads {
+	display: none;
+}
+
+@media (min-width: 768px) {
+	.lang-logo,
+	.hero__threads {
+		display: block;
+	}
+
+	// Node's wordmark is ink, so it ships a second light-on-dark file rather than a
+	// filter, which would wreck the green hex. Both copies sit on the same point and
+	// only the active theme's shows; light is the fallback before a theme resolves.
+	.lang-logo--dark {
+		display: none;
+	}
+
+	[data-bs-theme='dark'] {
+		.lang-logo--light {
+			display: none;
+		}
+		.lang-logo--dark {
+			display: block;
+		}
+	}
 }
 
 @keyframes logoIn {

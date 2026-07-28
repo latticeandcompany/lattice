@@ -1,9 +1,9 @@
 # Lattice Brand Guidelines
 
 
-Lattice is a monochrome-first brand. Black and white do the heavy lifting; a
-single accent color identifies each product. The discipline is the point — when
-color is rare, it means something.
+Lattice is a monochrome-first brand. Black and white carry the design; a single
+accent color identifies each product. Keeping color rare is what makes it read as
+meaningful when it appears.
 
 ---
 
@@ -23,7 +23,8 @@ Lattice Cloud      →  "Lattice" in ink/paper, "Cloud" in purple
 Lattice & Co.      →  fully neutral, no accent (the parent)
 ```
 
-**IMPORTANT TO NOTE**: lattice build should only be used when in the presence of other products that it needs to be differentiated from. If lattice build is on its own it should only be a black or white lockup.
+Use "Lattice Build" only alongside other products it needs to be distinguished
+from. On its own, the lockup is black or white with no product word.
 
 The wordmark `Lattice` never appears in an accent color. This keeps the parent
 recognizable everywhere and lets products own their color without fragmenting
@@ -38,8 +39,8 @@ the brand.
 | **Lattice Cloud** | Cloud platform                | Purple `#6622CC`  |
 | _Reserved_      | Future products               | Crimson `#CA2E55`, Orange `#FF6F00` |
 
-One product, one color, for life. Crimson and orange are held in reserve — do
-not spend them on marketing moments or one-off surfaces.
+A product keeps its color permanently. Crimson and orange are held in reserve;
+do not spend them on marketing moments or one-off surfaces.
 
 ### Donated / independent projects
 
@@ -150,7 +151,7 @@ One family across the entire brand — including donated projects.
 - **DM Mono** — code, terminal output, version numbers, technical metadata,
   keyboard shortcuts. Same family lineage, sits naturally beside DM Sans.
 
-No third typeface. If it isn't DM Sans or DM Mono, it doesn't ship.
+No third typeface. DM Sans and DM Mono only.
 
 ### Weights
 
@@ -186,13 +187,47 @@ A modular scale (~1.25). Adjust per surface, but keep the ratio.
 
 ## 4. Voice & Tone
 
-**Precise and confident.** Terse, technical, understated. We let the product
-speak and trust the reader to be smart. Vercel / Linear register — never hype.
+**Precise and confident.** Terse, technical, understated. Vercel / Linear
+register, never hype. This applies to every string we write: marketing copy, docs
+prose, CLI help, error messages, and code comments.
 
-Important note:
-While local first, turborepo interop, devloper choice are all core pillars of this project, we try to avoid talking about them. They are expected, not something to brag about
+### The official tagline is exempt
 
-**We are:**
+**A high-performance, local toolchain for managing monorepos.**
+
+This string is fixed in `MESSAGING.md` and overrides everything below. It uses a
+performance adjective and names local execution on purpose. Do not rewrite it to
+satisfy the rules in this section, and do not flag it in a copy review. Every
+*other* string follows the rules that follow.
+
+### Don't sell the pillars
+
+Local execution, interop with other task runners, and leaving tool choice to the
+developer are core to the project. Outside the tagline, do not write copy about
+them. They are expected, not achievements, and naming them is the fastest way to
+sound like we are compensating for something.
+
+Concretely, these phrases do not ship: *local-first*, *never prescribe*, *declare
+or detect*, *zero-config*, *nothing global*, *no account required*, *never
+guesses*. Neither does a value prop, heading, or feature bullet named after one.
+
+Describe the benefit instead. "The cache is on your disk, so nothing leaves your
+machine" is three restatements of a pillar; "Change one file and only what depends
+on it runs again" is the thing the user actually wanted.
+
+### Never name another task runner in prose
+
+We are inspired by the tools in this space and we interoperate with them. We do
+not position against them by name. Copy describes the capability — "a project that
+already has its own task runner becomes one workspace" — and never the competitor.
+A real tool name inside a code sample is fine, because a fake command in a config
+example is worse.
+
+### Banned words
+
+*polyglot* — say "any language" or name the languages.
+
+### We are
 
 - **Direct.** Short sentences. Say the thing. "Builds in parallel. Caches
   everything."
@@ -200,22 +235,39 @@ While local first, turborepo interop, devloper choice are all core pillars of th
 - **Understated.** Claims are measurable, not superlative. "Fast" is shown, not
   shouted.
 
-**We avoid:**
+### We avoid
 
 - Hype and exclamation ("🚀 Blazingly fast revolutionary!!!").
 - Hedging ("we think maybe this could possibly help").
 - Marketing throat-clearing ("In today's fast-paced world...").
+- **Unmeasurable comparatives.** "Builds finish sooner" and "spend less time
+  waiting" name no baseline. Say what the mechanism does. (The tagline's
+  "high-performance" is the sanctioned exception.)
+- **Invented numbers.** We have no published benchmarks. Never write a figure we
+  have not measured — not in copy, not as an illustration.
+- **The bolded-lead-in bullet list.** `**Thing** — explanation`, repeated six
+  times under a "## Features" heading, is the house tic. One list per document at
+  most; prefer prose.
+- **Rhythmic triads.** "Fast, simple, and reliable." "No detection, no plugin, no
+  engines." The third item is almost always there for the cadence.
+- **The em-dash dramatic pause.** Use it to bracket a genuine aside, not to land a
+  beat. If the sentence works with a period, use the period.
+- **Aphorisms about ourselves.** "The discipline is the point." "Space is a
+  feature." "That split is the whole trade." Cut them.
 
-**Examples**
+### Examples
 
-| Instead of                                   | Write                          |
-| -------------------------------------------- | ------------------------------ |
-| "The most powerful build tool ever created!" | "A build system for polyglot monorepos." |
-| "We're super excited to announce…"          | "New: remote caching in Lattice Cloud." |
-| "It's really really fast"                    | "Cold builds in 4s. Cached in 90ms." |
+| Instead of | Write |
+| --- | --- |
+| "The most powerful build tool ever created!" | "A high-performance, local toolchain for managing monorepos." |
+| "We're super excited to announce…" | "New: remote caching in Lattice Cloud." |
+| "It's really really fast" | "Runs tasks in parallel and caches results by content." |
+| "Blazingly fast builds." | "Change one file and only what depends on it runs again." |
+| "Local-first and zero-config." | "Reads the tools already in each directory." |
+| "Builds that finish sooner." | "Unchanged work comes back from cache." |
 
-The ❤️ in the endorsement footer is the one sanctioned moment of warmth — a nod
-to the community, not a shift in register.
+The ❤️ in the endorsement footer is the one sanctioned moment of warmth. It is a
+nod to the community, not a shift in register.
 
 ---
 
@@ -223,23 +275,26 @@ to the community, not a shift in register.
 
 Vercel-inspired: high contrast, generous whitespace, sharp structure.
 
-- **Space is a feature.** Let elements breathe. Whitespace signals confidence.
-- **Sharp, subtle depth.** Thin `gray-300` borders over heavy shadows. Radii
-  small and consistent (4–8px). Elevation via subtle surface shifts, not drop
-  shadows.
-- **Monochrome dominant.** Screens read black-and-white at a glance; the accent
-  is the one thing your eye lands on.
-- **Dark and light both first-class.** `--ink` and `--paper` swap cleanly; the
-  accent holds its meaning in both.
+Give elements room. Spacing is deliberate, not incidental.
+
+Depth is sharp and subtle: thin `gray-300` borders rather than heavy shadows,
+radii small and consistent (4–8px), elevation from a surface shift rather than a
+drop shadow.
+
+Screens read black-and-white at a glance, with the accent as the one thing the eye
+lands on.
+
+Dark and light both ship. `--ink` and `--paper` swap cleanly, and the accent holds
+its meaning in both.
 
 ---
 
 ## 6. Logo & Wordmark
 
-The Lattice mark is a **woven-sphere rosette** (we call it the pie (specifically apple pie)) — eight overlapping ellipses
-rotated evenly around a shared center, forming an interlaced lattice with a
-clean polygonal aperture at its core. It reads at once as a dependency graph, a
-woven structure, and a node — exactly what a build system is.
+The Lattice mark is a **woven-sphere rosette** — internally, the pie, specifically
+apple pie. Eight overlapping ellipses rotated evenly around a shared center form
+an interlaced lattice with a clean polygonal aperture at its core. It reads as a
+dependency graph and as a woven structure.
 
 ### Assets
 

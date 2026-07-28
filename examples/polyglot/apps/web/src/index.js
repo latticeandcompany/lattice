@@ -3,7 +3,7 @@ const express = require('express');
 const app = express();
 
 app.get('/', (req, res) => {
-  res.send('Hello from the Lattice polyglot example!');
+  res.send('Hello from the Lattice web example!');
 });
 
 app.listen(3000, () => {

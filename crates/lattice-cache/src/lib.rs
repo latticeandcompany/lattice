@@ -2,9 +2,8 @@
 //!
 //! This crate owns cache *identity* (hashing the inputs that define a task's
 //! result) and cache *storage* (storing/restoring task outputs as content-
-//! addressed tarballs). Correctness is the priority: a cache hit is only ever
-//! reported when the stored artifact actually exists and its bytes match the
-//! digest recorded when it was written.
+//! addressed tarballs). A cache hit is reported only when the stored artifact
+//! exists and its bytes match the digest recorded when it was written.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -15,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use lattice_config::PipelineTask;
 
-/// Tool-unique lockfiles that participate in a task's cache identity. Their
-/// presence and contents affect build outputs, so they are hashed when present.
+/// Lockfiles hashed into a task's cache key when present in the workspace,
+/// since their contents change what a build produces.
 const LOCKFILES: &[&str] = &[
     "package-lock.json",
     "yarn.lock",
@@ -34,13 +33,10 @@ const LOCKFILES: &[&str] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CacheMeta {
-    /// The cache key (also the artifact/meta filename stem).
+    /// Also the artifact and meta filename stem.
     pub key: String,
-    /// The task name that produced this artifact.
     pub task: String,
-    /// The workspace that produced this artifact.
     pub workspace: String,
-    /// How long the producing task took, in milliseconds.
     pub duration_ms: u64,
     /// Last time this entry was written or read; drives LRU pruning.
     pub last_used: DateTime<Utc>,
@@ -58,25 +54,22 @@ pub struct CacheEntry {
 }
 
 impl CacheEntry {
-    /// The environment map captured with this entry, for the runner to re-export.
     pub fn env(&self) -> &HashMap<String, String> {
         &self.meta.env
     }
 }
 
-/// What a [`CacheStore::prune`] pass removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PruneReport {
     pub removed: usize,
     pub bytes_freed: u64,
 }
 
-/// A swappable cache backend. [`LocalStore`] is the v1 on-disk implementation;
-/// this trait is the seam a future Lattice Cloud backend would slot into.
+/// A swappable cache backend. [`LocalStore`] is the on-disk implementation.
 pub trait CacheStore: Send + Sync {
-    /// Look up a key. Returns `Some` ONLY if the meta file parses AND the
-    /// artifact tarball opens AND its sha256 == `meta.output_digest`. A missing
-    /// or corrupt tarball is a MISS, not a hit.
+    /// Look up a key. Returns `Some` only if the meta file parses, the artifact
+    /// tarball opens, and its sha256 matches `meta.output_digest`. A missing or
+    /// corrupt tarball is a miss, not a hit.
     fn lookup(&self, key: &str) -> Result<Option<CacheEntry>>;
     /// Store outputs (globbed under `workspace_path`) as `<key>.tar.gz` plus
     /// `<key>.meta.json`. Computes and records `output_digest` = sha256 of the
@@ -172,7 +165,7 @@ impl CacheStore for LocalStore {
                 key: key.to_string(),
                 meta,
             })),
-            // Unreadable or digest mismatch => corrupt => MISS.
+            // Unreadable or a digest mismatch means the artifact is corrupt.
             _ => Ok(None),
         }
     }
@@ -342,9 +335,8 @@ pub struct HashInputs<'a> {
 
 /// Write one domain-separated, length-prefixed field into the hasher.
 ///
-/// Both the tag and the payload are length-prefixed (u64 LE), so no combination
-/// of adjacent fields can be confused for another — field boundaries are
-/// unambiguous regardless of the bytes involved.
+/// Both the tag and the payload are length-prefixed (u64 LE), so field
+/// boundaries are unambiguous regardless of the bytes involved.
 fn hash_field(hasher: &mut Sha256, tag: &str, bytes: &[u8]) {
     hasher.update((tag.len() as u64).to_le_bytes());
     hasher.update(tag.as_bytes());
@@ -357,8 +349,7 @@ fn hash_field(hasher: &mut Sha256, tag: &str, bytes: &[u8]) {
 /// The key incorporates the task name, command, resolved input files (globbed
 /// from `pipeline_task.inputs`, honoring `pipeline_task.ignore`), tool-unique
 /// lockfiles present in the workspace, resolved env values, toolchain identity,
-/// and the Lattice version. All fields are domain-separated and
-/// length-prefixed, and every list is ordered deterministically.
+/// and the Lattice version. Every list is sorted before hashing.
 pub fn compute_key(inputs: &HashInputs) -> Result<String> {
     let mut hasher = Sha256::new();
 
@@ -416,16 +407,13 @@ pub fn compute_key(inputs: &HashInputs) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Resolve input globs under `base` into a list of files, dropping any whose
-/// path (relative to `base`) matches one of `ignore_patterns`.
 /// Collect files under `base` whose `base`-relative path matches any of
 /// `include_patterns` and none of `ignore_patterns`.
 ///
-/// Uses `globset` for matching (its `**` correctly spans path segments and
-/// files, unlike the `glob` crate, whose `dist/**` misses top-level files), and
-/// walks only the literal-prefix subtree of each pattern so unrelated sibling
-/// trees (node_modules, target, …) are never traversed for a scoped pattern
-/// like `src/**/*`.
+/// Uses `globset` for matching, whose `**` spans both path segments and files,
+/// and walks only the literal-prefix subtree of each pattern so unrelated
+/// sibling trees (node_modules, target, …) are never traversed for a scoped
+/// pattern like `src/**/*`.
 fn collect_matching_files(
     base: &Path,
     include_patterns: &[String],
@@ -548,13 +536,10 @@ mod tests {
         }
     }
 
-    // ---- directory-glob output capture ---------------------------------------
-
     #[test]
     fn directory_glob_output_captures_files_recursively() {
         // A `dist/**` output pattern matches the directory; the store must still
-        // capture the files beneath it (the old code only kept `is_file()` glob
-        // matches, so `dist/**` archived an empty tarball).
+        // capture the files beneath it.
         let dir = TempDir::new().unwrap();
         let ws = dir.path();
         write(&ws.join("dist/out.txt"), "hello");
@@ -580,8 +565,6 @@ mod tests {
             "deep"
         );
     }
-
-    // ---- hashing --------------------------------------------------------------
 
     #[test]
     fn keys_are_full_width_hex() {
@@ -674,8 +657,6 @@ mod tests {
         assert_eq!(before, after, "ignored files must not affect the key");
     }
 
-    // ---- store / lookup / restore ---------------------------------------------
-
     #[test]
     fn store_lookup_restore_round_trip() {
         let cache = TempDir::new().unwrap();
@@ -729,10 +710,10 @@ mod tests {
             .store("k", ws.path(), &["out.txt".to_string()], meta_for("k"))
             .unwrap();
 
-        // Sanity: it's a hit while intact.
+        // It is a hit while intact.
         assert!(store.lookup("k").unwrap().is_some());
 
-        // Corrupt the tarball bytes: digest mismatch => MISS.
+        // Corrupt the tarball bytes so the recorded digest no longer matches.
         std::fs::write(store.tar_path("k"), b"garbage").unwrap();
         assert!(
             store.lookup("k").unwrap().is_none(),
@@ -777,8 +758,6 @@ mod tests {
             "touch must advance last_used"
         );
     }
-
-    // ---- prune ----------------------------------------------------------------
 
     #[test]
     fn prune_evicts_oldest_first_under_budget() {

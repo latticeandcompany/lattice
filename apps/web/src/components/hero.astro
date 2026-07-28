@@ -1,7 +1,9 @@
 ---
 import { Image } from 'astro:assets';
+import { withBase } from '../lib/base';
 import go from '../assets/languages/go.png';
 import node from '../assets/languages/node.png';
+import nodeDark from '../assets/languages/node-dark.png';
 import java from '../assets/languages/java.png';
 import ruby from '../assets/languages/ruby.png';
 import python from '../assets/languages/python.png';
@@ -9,6 +11,8 @@ import dotnet from '../assets/languages/dotnet.png';
 
 interface Lang {
 	src: ImageMetadata;
+	/** Light-on-dark version, for logos whose default reads as ink on the dark surface. */
+	srcDark?: ImageMetadata;
 	name: string;
 	x: number; // % across the field
 	y: number; // % down the field
@@ -19,9 +23,11 @@ interface Lang {
 
 // Positions are percentages of the bounded field, so the logos, the threads, and
 // the rosette all share one coordinate space and stay aligned at every width.
+// Logos and threads are a pair — globals.scss hides both below md, where there
+// isn't room for the logos and the bare threads would dangle from nothing.
 const langs: Lang[] = [
 	{ src: go, name: 'Go', x: 15, y: 25, w: 94, feedX: 45, feedY: 78 },
-	{ src: node, name: 'Node.js', x: 9, y: 52, w: 84, feedX: 42, feedY: 83 },
+	{ src: node, srcDark: nodeDark, name: 'Node.js', x: 9, y: 52, w: 84, feedX: 42, feedY: 83 },
 	{ src: java, name: 'Java', x: 16, y: 79, w: 42, feedX: 46, feedY: 86 },
 	{ src: ruby, name: 'Ruby', x: 85, y: 23, w: 62, feedX: 55, feedY: 78 },
 	{ src: python, name: 'Python', x: 91, y: 50, w: 58, feedX: 58, feedY: 83 },
@@ -64,27 +70,32 @@ const thread = (l: Lang) => {
 		</div>
 
 		{
-			langs.map((l, i) => (
-				<Image
-					src={l.src}
-					alt={l.name}
-					width={l.w * 2}
-					class="lang-logo d-none d-md-block"
-					style={`left:${l.x}%; top:${l.y}%; width:${l.w}px; animation-delay:${0.15 + i * 0.09}s`}
-				/>
-			))
+			langs.flatMap((l, i) => {
+				const style = `left:${l.x}%; top:${l.y}%; width:${l.w}px; animation-delay:${0.15 + i * 0.09}s`;
+				// A logo with a light-on-dark twin renders both copies stacked on the same
+				// point; CSS reveals only the one matching the active theme.
+				const variants: [ImageMetadata, string | false][] = l.srcDark
+					? [
+							[l.src, 'lang-logo--light'],
+							[l.srcDark, 'lang-logo--dark'],
+						]
+					: [[l.src, false]];
+				return variants.map(([src, variant]) => (
+					<Image src={src} alt={l.name} width={l.w * 2} class:list={['lang-logo', variant]} style={style} />
+				));
+			})
 		}
 	</div>
 
 	<div class="hero__copy position-relative mx-auto text-center px-3">
 		<h1 class="hero__title fw-bold mb-3">Weave it all together</h1>
 		<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 34rem;">
-			A fast, local toolchain for managing monorepos. Build every language in your repo with
+			A high-performance, local toolchain for managing monorepos. Build every language in your repo with
 			one command, and skip the work that hasn't changed.
 		</p>
 		<div class="d-flex flex-wrap gap-2 justify-content-center">
-			<a href="/docs" class="btn btn-secondary px-4">Read the docs</a>
-			<a href="/docs/getting-started" class="btn btn-contrast px-4">Get started</a>
+			<a href={withBase('/docs')} class="btn btn-secondary px-4">Read the docs</a>
+			<a href={withBase('/docs/getting-started')} class="btn btn-contrast px-4">Get started</a>
 		</div>
 	</div>
 </section>

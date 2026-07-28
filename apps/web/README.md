@@ -1,28 +1,34 @@
 # @lattice/web
 
 The Lattice marketing site and documentation, built as one Astro site. The landing
-page and the docs share a single brand system, layout language, and component set.
+page and the docs share the same components and styles.
 
 ## Stack
 
-- **Astro** — static-first, one site for landing + docs.
-- **React** — interactive islands (nav, hero animation, docs sidebar/TOC, copy button).
-- **Bootstrap** — components and structure, customized entirely through variable
-  overrides (`src/styles/bootstrap.scss`). Bootstrap Icons load as a font through SASS.
-- **Tailwind** — available for utility gaps; Bootstrap stays primary.
-- **SCSS** — tokens, `@font-face`, keyframes, and prose styling.
+- Astro: static-first, one site for landing + docs.
+- React: the interactive islands (nav, hero animation, docs sidebar/TOC, copy button).
+- Bootstrap: components and structure, customized through variable overrides in
+  `src/styles/bootstrap.scss`. Bootstrap Icons load as a font through SASS.
+- Tailwind: utility gaps only, with every utility prefixed `tw:` so it cannot collide
+  with a Bootstrap class. Bootstrap stays primary.
+- SCSS: tokens, `@font-face`, keyframes, and prose styling.
+- Pagefind: docs search, indexed from the built HTML and served as static files.
 
-All typefaces (DM Sans, DM Mono) and icon fonts are self-hosted in `public/fonts` —
-no CDN, no external font service.
+Typefaces (DM Sans, DM Mono) and icon fonts are self-hosted in `public/fonts`, with
+no CDN.
 
 ## Develop
 
 ```sh
 npm install
 npm run dev      # http://localhost:4321
-npm run build    # static output in dist/
+npm run build    # static output in dist/, then the Pagefind index
 npm run preview
 ```
+
+Search is indexed from built HTML, so it only works against a build: run
+`npm run build && npm run preview`. Under `npm run dev` the palette opens and says
+the index is missing.
 
 ## Where things live
 
@@ -31,6 +37,7 @@ npm run preview
 | `src/pages/index.astro` | Landing page composition |
 | `src/pages/docs/[...slug].astro` | Docs route (renders the content collection) |
 | `src/content/docs/*.md` | Docs content — add a file with `title`/`group`/`order` and it appears in the sidebar |
+| `src/components/docsSearch.tsx` | Search palette (⌘K), talking to the Pagefind index |
 | `src/components/` | Components (React `.tsx`, Astro `.astro`) |
 | `src/styles/` | Bootstrap overrides, tokens, fonts, docs prose |
 | `src/lib/` | Data: nav, languages, docs nav builder |
@@ -42,15 +49,8 @@ npm run preview
 Monochrome-first: ink `#020D0C` / paper `#FBF8FF` and a derived gray ramp, with a
 restrained teal accent (per `marketing/BRAND.md`) on a few icons, the active nav
 item, and focus rings. Copy speaks only to the end-user benefit; the product is
-described as "a fast, local toolchain for managing monorepos." See
+described as "A high-performance, local toolchain for managing monorepos." See
 `marketing/BRAND.md` and `marketing/MESSAGING.md` for the full system.
-
-## Design signatures
-
-- **Weaving hero.** The rosette mark draws itself stroke by stroke on load, with
-  threads running in from each supported language logo.
-- **Post-footer pattern band.** The left half of the mark on black, then a run of
-  pattern rectangles beside it, so the logo reads as the first tile in the series.
 
 ## Dogfood
 
@@ -60,4 +60,11 @@ The site is a workspace in the repo's `lattice.json`. Build it through Lattice w
 lattice run build --filter web
 ```
 
-Docs content is intentionally minimal; the shell is ready for another agent to fill in.
+## Deploy
+
+`.github/workflows/docs.yml` builds on every pull request touching `apps/web/**`
+and deploys to GitHub Pages on push to `mega`. The build fails if the Pagefind
+index is missing.
+
+The workflow runs plain `npm` rather than `lattice run build`, so a docs deploy
+does not depend on compiling the CLI first.

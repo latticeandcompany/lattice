@@ -1,0 +1,39 @@
+name: Documentation issue
+description: Something in the docs is wrong, missing, or misleading.
+labels: ["documentation"]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The page URL, or the file path in this repository.
+      placeholder: https://latticeandcompany.github.io/lattice/docs/caching, or docs/toolchains.md
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem
+      options:
+        - Wrong — the docs describe behavior Lattice does not have
+        - Missing — something real is undocumented
+        - Unclear — accurate but hard to follow
+        - Broken — dead link, bad code sample, rendering issue
+        - Stale — describes an older version
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's wrong
+      description: Quote the passage if you can, and say what you expected it to tell you.
+    validations:
+      required: true
+
+  - type: textarea
+    id: fix
+    attributes:
+      label: Suggested wording
+      description: Optional. Replacement text we can apply directly is easiest to act on.

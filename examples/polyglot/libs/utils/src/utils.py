@@ -1,4 +1,4 @@
-"""Shared utility functions for the polyglot monorepo."""
+"""Shared utility functions for the example monorepo."""
 
 
 def greet(name: str) -> str:

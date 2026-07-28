@@ -1,0 +1,11 @@
+{
+  "name": "@nested/ui",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('src/index.js','dist/index.js');console.log('ui built')\"",
+    "test": "node -e \"const {button}=require('./dist/index.js');if(!button)process.exit(1);console.log('ui test ok')\"",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});console.log('ui clean')\""
+  }
+}

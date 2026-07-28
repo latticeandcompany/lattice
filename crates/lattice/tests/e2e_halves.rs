@@ -11,7 +11,7 @@ use predicates::prelude::*;
 fn build_only_repo_needs_no_toolchain_machinery() {
     let fx = Fixture::new();
     fx.mkdir("app");
-    // Workspaces + tasks, but NO `engines`: runs on the host PATH.
+    // Workspaces + tasks, but no `engines`: runs on the host PATH.
     fx.config(
         r#"{
   "latticeVersion": "0.1.0",

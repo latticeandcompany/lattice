@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { withBase } from '../lib/base';
 import { navLinks } from '../lib/nav';
 import Rosette from './rosette';
 import ThemeControl from './themeControl';
@@ -27,9 +28,9 @@ const Navbar = () => {
 			}}
 		>
 			<div className="container" style={{ maxWidth: '72rem' }}>
-				<a className="navbar-brand d-inline-flex align-items-center gap-2" href="/" style={{ color: 'var(--text)' }}>
+				<a className="navbar-brand d-inline-flex align-items-center gap-2" href={withBase('/')} style={{ color: 'var(--text)' }}>
 					<Rosette size="1.75rem" />
-					<span className="fw-medium" style={{ letterSpacing: '-0.01em' }}>lattice</span>
+					<span className="fw-medium" style={{ letterSpacing: 'var(--wordmark-tracking)' }}>lattice</span>
 				</a>
 
 				<button
@@ -61,7 +62,7 @@ const Navbar = () => {
 							<ThemeControl />
 						</li>
 						<li className="nav-item mt-2 mt-md-0 ms-md-1">
-							<a href="/docs/getting-started" className="btn btn-contrast btn-sm px-3 py-2" onClick={() => setOpen(false)}>
+							<a href={withBase('/docs/getting-started')} className="btn btn-contrast btn-sm px-3 py-2" onClick={() => setOpen(false)}>
 								Get started
 							</a>
 						</li>

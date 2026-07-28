@@ -15,10 +15,10 @@ pub const BIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Parser, Debug)]
 #[command(
     name = "lattice",
-    about = "A fast, local toolchain for managing monorepos.",
+    about = "A high-performance, local toolchain for managing monorepos.",
     version = BIN_VERSION,
     long_about = "Lattice runs tasks across the workspaces of a monorepo in dependency \
-order, with pinned toolchains and a content-addressed cache for reproducible builds.\n\n\
+order, with pinned toolchains and a cache that skips tasks whose inputs have not changed.\n\n\
 Declare workspaces and tasks in lattice.json, then `lattice run <task>`. Toolchains are \
 provisioned under .lattice.",
     help_template = "\u{2756} {name} {version}\n{about}\n\n\
@@ -63,7 +63,7 @@ pub enum Commands {
 }
 
 impl Cli {
-    /// The effective loquacious flag from CLI flags alone (`-l` OR hidden `-v`).
+    /// The effective loquacious flag from CLI flags alone (`-l` or hidden `-v`).
     pub fn flag_loquacious(&self) -> bool {
         self.loquacious || self.verbose
     }
@@ -93,13 +93,9 @@ impl Cli {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shared, testable helpers
-// ---------------------------------------------------------------------------
-
-/// Effective loquacious: a CLI flag OR the `settings.loquacious` config setting.
-/// (Precedence is moot for a boolean OR, but keeping it explicit documents the
-/// flag > env > setting > default order the CLI honors overall.)
+/// Effective loquacious: a CLI flag or the `settings.loquacious` config setting.
+/// Precedence does not matter for a boolean disjunction, but the CLI honors
+/// flag > env > setting > default overall.
 pub fn effective_loquacious(flag_loq: bool, setting_loq: bool) -> bool {
     flag_loq || setting_loq
 }
@@ -112,11 +108,11 @@ pub fn detect_output_mode(effective_loq: bool) -> OutputMode {
     lattice_output::detect_mode(tty, effective_loq, ci)
 }
 
-/// Pure gating logic for the one-line version-drift nag.
+/// Gating logic for the one-line version-drift nag.
 ///
-/// The nag shows ONLY in an interactive session, when the repo opts into the
+/// The nag shows only in an interactive session, when the repo opts into the
 /// check, no suppression flag/env is set, and the pinned version differs from
-/// the running binary. Advisory only — never an error.
+/// the running binary. It is advisory and never an error.
 pub fn should_nag(
     mode: OutputMode,
     version_check_setting: bool,

@@ -2,7 +2,9 @@ use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
-use dagger::{build_execution_graph_multi, dry_run_order, includes_persistent_task, ExecutionGraph};
+use dagger::{
+    build_execution_graph_multi, dry_run_order, includes_persistent_task, ExecutionGraph,
+};
 use lattice_config::find_root;
 use lattice_output::{banner_line, make_reporter, paint_teal, OutputMode};
 use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure};
@@ -13,11 +15,9 @@ use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_na
 #[derive(Args, Debug)]
 #[command(long_about = "Run one or more tasks across your workspaces.\n\n\
 Lattice resolves each task's dependency graph from the `tasks` map in lattice.json \
-and runs it in dependency order across your workspaces. Stack tasks to run them as \
-one combined graph — a shared dependency runs once and independent tasks parallelize, \
-or pass --sequentially to run each task's graph to completion before the next. \
-Scope with --filter, tune parallelism with --concurrency, and choose whether a failure \
-stops the run (default) or lets independent tasks finish with --continue.\n\n\
+and runs it in dependency order. Stacked tasks are merged into one graph, so a \
+dependency they share runs once. Pass --sequentially to run each task's graph to \
+completion before starting the next.\n\n\
 Examples:\n  \
 lattice run build\n  \
 lattice run lint test build\n  \
@@ -64,8 +64,8 @@ impl RunArgs {
         let cwd = std::env::current_dir()?;
         let root = find_root(&cwd).ok_or_else(|| {
             anyhow::anyhow!(
-                "No lattice.json found in this directory or any parent. \
-                 Run `lattice init` to create one."
+                "no lattice.json found in this directory or any parent; \
+                 run `lattice init` to create one"
             )
         })?;
 
@@ -82,7 +82,7 @@ impl RunArgs {
                     available.join(", ")
                 };
                 bail!(
-                    "Task '{}' is not defined in lattice.json. Available tasks: {}",
+                    "task '{}' is not defined in lattice.json; available tasks: {}",
                     task,
                     listed
                 );
@@ -107,18 +107,17 @@ impl RunArgs {
         if let Some(filter) = &self.filter {
             workspaces.retain(|ws| ws.name.contains(filter.as_str()));
             if workspaces.is_empty() {
-                // Nothing to run is not a failure — report and exit cleanly so a
-                // filtered no-op never breaks a pipeline.
+                // A filtered no-op is not a failure; report and exit cleanly.
                 println!("lattice: no workspaces matched filter '{}'.", filter);
                 return Ok(());
             }
         }
 
         if workspaces.is_empty() {
-            // A freshly-scaffolded repo (empty `workspaces`) has nothing to run
-            // yet — show the shape and exit 0 rather than erroring.
+            // A freshly-scaffolded repo has an empty `workspaces` array; exit 0
+            // rather than erroring.
             println!(
-                "lattice: no workspaces declared yet — add them to the \
+                "lattice: no workspaces declared. Add them to the \
                  `workspaces` array in lattice.json to run `{}`.",
                 self.tasks.join(" ")
             );
@@ -131,7 +130,8 @@ impl RunArgs {
             if self.sequentially {
                 // Each phase is its own graph; list them in order.
                 for task in &self.tasks {
-                    let graph = build_execution_graph_multi(&workspaces, &[task.as_str()], &config)?;
+                    let graph =
+                        build_execution_graph_multi(&workspaces, &[task.as_str()], &config)?;
                     print_dry_run(&format!("dry run · {} (phase)", task), &graph);
                 }
             } else {
@@ -153,7 +153,9 @@ impl RunArgs {
             Some(Box::pin(async {
                 let _ = tokio::signal::ctrl_c().await;
             })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>)
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = ()> + Send>,
+                >)
         };
 
         if self.sequentially {
@@ -214,8 +216,6 @@ impl RunArgs {
                 // The runner already printed the run summary (including for a
                 // keep-going RunFailure); just propagate a non-zero exit.
                 if err.downcast_ref::<RunFailure>().is_some() {
-                    // Non-zero exit without an extra error line: the reporter
-                    // has already surfaced everything.
                     std::process::exit(1);
                 }
                 Err(err)

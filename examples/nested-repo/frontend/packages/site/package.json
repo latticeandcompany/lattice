@@ -1,0 +1,13 @@
+{
+  "name": "@nested/site",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@nested/ui": "*"
+  },
+  "scripts": {
+    "build": "node -e \"const fs=require('fs');const {button}=require('@nested/ui');const page=require('./src/index.js');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/bundle.js','module.exports = '+JSON.stringify({...page,button})+';\\n');console.log('site built')\"",
+    "test": "node -e \"const b=require('./dist/bundle.js');if(!b.button)process.exit(1);console.log('site test ok')\"",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});console.log('site clean')\""
+  }
+}

@@ -32,7 +32,6 @@ use lattice_workspace::Workspace;
 /// buffered, bounding memory for pathological tasks.
 const MAX_CAPTURED_LINES: usize = 5000;
 
-/// The tallies a completed run reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunResult {
     pub total: usize,
@@ -67,13 +66,13 @@ impl std::fmt::Display for RunFailure {
                 if self.skipped == 1 { "" } else { "s" }
             )?;
         }
-        write!(f, ".")
+        Ok(())
     }
 }
 
 impl std::error::Error for RunFailure {}
 
-/// Struct-of-args for [`execute_tasks`], replacing the old positional soup.
+/// Arguments for [`execute_tasks`].
 pub struct ExecuteOptions<'a> {
     pub graph: &'a ExecutionGraph,
     pub workspaces: &'a [Workspace],
@@ -159,7 +158,6 @@ enum RunnerMsg {
     Note(String),
 }
 
-/// The outcome of executing a single node.
 enum TaskOutcome {
     /// Ran to success (counts toward `total`).
     Ran,
@@ -174,7 +172,6 @@ enum TaskOutcome {
     Noop,
 }
 
-/// Forward one [`RunnerMsg`] to the reporter.
 fn forward(reporter: &dyn Reporter, msg: RunnerMsg) {
     match msg {
         RunnerMsg::Event(ev) => reporter.event(ev),
@@ -259,7 +256,6 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
     let global_start = Instant::now();
 
-    // --- Toolchain resolution (before the scheduler) -----------------------
     // For each workspace, merge root + workspace engines and provision/resolve
     // them into a PATH-prepend + identity. Memoize by the merged spec so
     // identical toolchains are only resolved (and installed) once.
@@ -282,7 +278,6 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
         ws_identity.insert(ws.name.clone(), id);
     }
 
-    // --- Schedule + specs ---------------------------------------------------
     let ws_map: HashMap<&str, &Workspace> =
         workspaces.iter().map(|w| (w.name.as_str(), w)).collect();
 
@@ -334,7 +329,6 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<RunnerMsg>();
 
-    // --- In-degree scheduler ------------------------------------------------
     let mut remaining_indegree = schedule.indegree.clone();
     let mut completed = vec![false; n];
     let mut in_flight = 0usize;
@@ -349,7 +343,6 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
     let mut ready: Vec<usize> = schedule.initial_ready();
 
     loop {
-        // Spawn every ready node (bounded by the semaphore inside each task).
         // Stop spawning new work once an abort has been signalled (fail-fast).
         if !abort.load(Ordering::SeqCst) {
             while let Some(pos) = ready.pop() {
@@ -397,7 +390,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
                         // it as fatal even in keep-going mode.
                         abort.store(true, Ordering::SeqCst);
                         if first_failure.is_none() {
-                            first_failure = Some(format!("Task runner panicked: {e}"));
+                            first_failure = Some(format!("task runner panicked: {e}"));
                         }
                         failed += 1;
                         in_flight -= 1;
@@ -432,7 +425,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
                             abort.store(true, Ordering::SeqCst);
                             if first_failure.is_none() {
                                 first_failure = Some(format!(
-                                    "Task '{workspace}:{task}' failed. Stopping pipeline."
+                                    "task '{workspace}:{task}' failed, stopping pipeline"
                                 ));
                             }
                         }
@@ -445,7 +438,6 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
         }
     }
 
-    // --- Persistent teardown ------------------------------------------------
     // If persistent children are still running, wait for the shutdown signal
     // (streaming their output meanwhile), then tear them all down.
     let had_persistent = !persistent_children.lock().unwrap().is_empty();
@@ -549,15 +541,13 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
         &key[..key.len().min(16)]
     )));
 
-    // --- Cache lookup (never for persistent / cache:false tasks) ------------
     if !ctx.no_cache && pt.is_cacheable() {
         match ctx.store.lookup(&key) {
             Ok(Some(entry)) => {
                 match ctx.store.restore(&entry, &spec.ws_path) {
                     Ok(()) => {
                         let _ = ctx.store.touch(&key);
-                        // Round-trip the cached env (fixes the old "written but
-                        // never read" bug); at minimum we read it here.
+                        // The cached env is read back with the entry.
                         let _cached_env = entry.env();
                         let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::CacheHit {
                             workspace: ws.clone(),
@@ -587,7 +577,6 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
         }
     }
 
-    // --- Run path -----------------------------------------------------------
     let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::Started {
         workspace: ws.clone(),
         task: task.clone(),
@@ -597,7 +586,6 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
     let mut cmd = build_shell_command(&spec.command);
     cmd.current_dir(&spec.ws_path);
     apply_path_prepend(&mut cmd, &spec.path_prepend);
-    // Re-export the resolved env into the child for consistency.
     for (k, v) in &env_values {
         cmd.env(k, v);
     }
@@ -625,7 +613,6 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
         }
     };
 
-    // --- Persistent: detach, release the permit, do NOT wait ----------------
     if spec.is_persistent {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -651,7 +638,6 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
         return TaskOutcome::Persistent;
     }
 
-    // --- Normal: stream, capture, and wait ----------------------------------
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let (out_lines, err_lines, status) = tokio::join!(
@@ -710,7 +696,6 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
     }
 }
 
-/// Emit a `Failed` event plus the captured output for the expand-on-fail surface.
 fn emit_failure(
     tx: &UnboundedSender<RunnerMsg>,
     ws: &str,
@@ -728,7 +713,6 @@ fn emit_failure(
     });
 }
 
-/// The platform shell program name, for diagnostics.
 fn shell_program() -> &'static str {
     if cfg!(windows) {
         "cmd"
@@ -751,8 +735,7 @@ fn build_shell_command(command: &str) -> tokio::process::Command {
     }
 }
 
-/// Prepend `prepend` dirs to the child's `PATH`, cloning the parent env for that
-/// child only (no global mutation).
+/// Prepend `prepend` dirs to the child's `PATH`, affecting that child only.
 fn apply_path_prepend(cmd: &mut tokio::process::Command, prepend: &[PathBuf]) {
     if prepend.is_empty() {
         return;
@@ -803,8 +786,6 @@ mod tests {
     use lattice_output::TaskEvent;
     use std::sync::Mutex;
     use std::time::Duration;
-
-    // ---- recording reporter ---------------------------------------------------
 
     #[derive(Default)]
     struct RecordingReporter {
@@ -882,8 +863,6 @@ mod tests {
         fn finish(&self) {}
     }
 
-    // ---- helpers --------------------------------------------------------------
-
     fn ws(name: &str, root: &std::path::Path, commands: &[(&str, &str)]) -> Workspace {
         let path = root.join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -940,8 +919,6 @@ mod tests {
         }
     }
 
-    // ---- basic scheduling -----------------------------------------------------
-
     #[tokio::test]
     async fn all_tasks_run_with_correct_counts() {
         let tmp = tempfile::tempdir().unwrap();
@@ -961,7 +938,6 @@ mod tests {
         assert_eq!(result.total, 2);
         assert_eq!(result.cached, 0);
         assert_eq!(result.failed, 0);
-        // Summary was reported exactly once with matching numbers.
         let s = r.summaries.lock().unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!((s[0].0, s[0].1, s[0].2), (2, 0, 0));
@@ -1021,11 +997,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(std::fs::read_to_string(&order).unwrap(), "ab");
-        // And the events reflect a before b.
         assert!(r.index_of("finished:wa:a").unwrap() < r.index_of("started:wa:b").unwrap());
     }
-
-    // ---- failure handling -----------------------------------------------------
 
     #[tokio::test]
     async fn fail_fast_stops_pipeline_and_blocks_downstream() {
@@ -1047,7 +1020,7 @@ mod tests {
 
         let msg = err.to_string();
         assert!(
-            msg.contains("wa:build") && msg.contains("Stopping pipeline"),
+            msg.contains("wa:build") && msg.contains("stopping pipeline"),
             "unexpected error: {msg}"
         );
         assert!(!marker.exists(), "downstream task ran despite failure");
@@ -1093,8 +1066,6 @@ mod tests {
         assert!(r.has("skipped:wa:test"));
     }
 
-    // ---- reporter event sequence ----------------------------------------------
-
     #[tokio::test]
     async fn passing_task_emits_started_then_finished() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1113,8 +1084,6 @@ mod tests {
         assert!(started < finished);
     }
 
-    // ---- cache round-trip -----------------------------------------------------
-
     #[tokio::test]
     async fn cache_round_trip_hits_and_restores_then_corruption_misses() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1129,7 +1098,7 @@ mod tests {
         let config = config_with(&[("build", build)]);
         let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
 
-        // First run: cache disabled? No — caching ON (no_cache=false) so it stores.
+        // First run with caching enabled (no_cache=false), so it stores.
         let r1 = RecordingReporter::new();
         let mut o1 = opts(&graph, &workspaces, &config, root, &r1);
         o1.no_cache = false;
@@ -1151,7 +1120,7 @@ mod tests {
         assert!(!r2.has("started:app:build"));
         assert!(out_file.exists(), "cache hit must restore outputs");
 
-        // Corrupt the stored tarball → digest mismatch → MISS → re-runs.
+        // Corrupt the stored tarball: the digest mismatch is a miss, so it re-runs.
         let cache_dir = root.join(config.settings.cache_dir());
         let tarball = std::fs::read_dir(&cache_dir)
             .unwrap()
@@ -1169,8 +1138,6 @@ mod tests {
         assert!(r3.has("started:app:build"));
         assert!(!r3.has("cachehit:app:build"));
     }
-
-    // ---- persistent task must not hang ---------------------------------------
 
     #[tokio::test]
     async fn persistent_task_does_not_block_the_graph() {
@@ -1219,21 +1186,16 @@ mod tests {
             .expect("execute_tasks must finish well before the 5s timeout")
             .unwrap();
 
-        // The normal task completed; the persistent child was torn down.
         assert!(marker.exists(), "normal task did not complete");
         assert!(r.has("finished:app:build"));
         assert!(r.has("started:app:dev"));
         assert_eq!(result.failed, 0);
     }
 
-    // ---- PATH injection via a provisioned toolchain --------------------------
-
     #[tokio::test]
     async fn path_injection_makes_provisioned_tool_available() {
-        // An object-form engine whose installCmd drops a `faketool` script into
-        // $LATTICE_TOOLCHAIN_DIR/bin. The workspace command is the bare tool
-        // name, which only resolves if the toolchain bin dir was prepended to
-        // PATH for the task.
+        // The workspace command is the bare tool name, which resolves only if
+        // the provisioned toolchain bin dir was prepended to PATH for the task.
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let engines: EngineMap = serde_json::from_value(serde_json::json!({

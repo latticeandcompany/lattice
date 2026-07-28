@@ -10,8 +10,8 @@ mod common;
 use common::Fixture;
 use predicates::prelude::*;
 
-/// The object-form `faketool` engine: its `installCmd` writes a tiny shell
-/// script into `$LATTICE_TOOLCHAIN_DIR/bin` that prints a satisfying version.
+/// An object-form engine whose `installCmd` writes a fake `faketool` that
+/// prints a version satisfying the constraint.
 const FAKETOOL_ENGINE: &str = r#"{
   "version": ">=1.2.0",
   "versionCmd": "faketool --version",
@@ -60,7 +60,7 @@ fn setup_provisions_toolchain_only_repo() {
 fn path_injection_makes_provisioned_tool_available_during_run() {
     let fx = Fixture::new();
     fx.mkdir("app");
-    // `faketool` is NOT on the host PATH; the build command is the bare tool
+    // `faketool` is not on the host PATH; the build command is the bare tool
     // name, which only resolves because its provisioned bin dir is prepended to
     // PATH for the task.
     fx.config(&format!(

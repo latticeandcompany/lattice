@@ -1,16 +1,16 @@
 ---
 title: Configuration
 description: What goes in lattice.json.
-group: Guides
-order: 2
+group: Reference
+order: 1
 ---
 
 # Configuration
 
-Everything Lattice needs lives in a single `lattice.json` at the repo root.
+Lattice reads one `lattice.json` at the repo root. [Getting started](/lattice/docs/getting-started)
+has a working example.
 
-> This page is being written. For now, see [Getting started](/docs/getting-started)
-> for a working `lattice.json` example.
+> This page is being written.
 
 ## Workspaces
 
@@ -18,5 +18,5 @@ A workspace is a single project directory. It's the unit Lattice builds and cach
 
 ## Tasks
 
-Tasks describe how each project builds, tests, and runs, and which tasks depend on
-which.
+A task is a named command Lattice can run in a workspace, plus the tasks it depends
+on.

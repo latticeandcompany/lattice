@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a capability Lattice does not have.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with the problem, not the solution. Describe the workflow you are trying to complete rather than the API you would like to see.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and where does Lattice get in the way today?
+      placeholder: |
+        My repo has a workspace whose tests need a database container running first, and I have no way to express that…
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Lattice do? Show the `lattice.json` or CLI shape you have in mind, if you have one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Can you do this today?
+      description: |
+        Most things are already possible by declaring the commands yourself (`auto: false` with explicit `scripts`), or by shelling out to a tool you already have. Tell us what you tried and why it was not enough.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other designs, and why you prefer yours.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This works from a tool the user declared or a file that identifies one, not from a tool Lattice would have to pick.
+          required: true
+        - label: This does not require a hosted service, an account, or telemetry.
+          required: true
+        - label: I searched existing issues.
+          required: true

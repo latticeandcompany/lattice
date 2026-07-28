@@ -1,0 +1,51 @@
+{
+  "$schema": ".lattice/schema.json",
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    {
+      "name": "frontend",
+      "path": "frontend",
+      "auto": false,
+      "scripts": {
+        "build": "sh -c 'if [ -x node_modules/.bin/turbo ]; then node_modules/.bin/turbo run build; else echo \"[frontend] turbo is not installed — run: (cd frontend && npm install)\" >&2; exit 1; fi'",
+        "test": "sh -c 'if [ -x node_modules/.bin/turbo ]; then node_modules/.bin/turbo run test; else echo \"[frontend] turbo is not installed — run: (cd frontend && npm install)\" >&2; exit 1; fi'",
+        "clean": "sh -c 'rm -rf .turbo packages/*/dist && echo \"frontend clean complete\"'"
+      }
+    },
+    {
+      "name": "api",
+      "path": "services/api",
+      "auto": false,
+      "dependsOn": ["frontend"],
+      "scripts": {
+        "build": "mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh && echo 'api built'",
+        "test": "sh -c 'test -x dist/serve.sh && echo \"api test ok\"'",
+        "serve": "sh dist/serve.sh",
+        "clean": "sh -c 'rm -rf dist && echo \"api clean complete\"'"
+      }
+    }
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["**/*"],
+      "ignore": ["**/node_modules/**", "**/.turbo/**", "**/dist/**"],
+      "outputs": ["dist/**", "packages/*/dist/**"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "inputs": ["**/*"],
+      "ignore": ["**/node_modules/**", "**/.turbo/**", "**/dist/**"]
+    },
+    "serve": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
+    "clean": {
+      "cache": false
+    }
+  },
+  "settings": {
+    "maxCacheSize": "1GB"
+  }
+}

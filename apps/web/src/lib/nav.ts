@@ -1,3 +1,5 @@
+import { withBase } from './base';
+
 export interface NavLink {
 	name: string;
 	href: string;
@@ -5,9 +7,9 @@ export interface NavLink {
 }
 
 export const navLinks: NavLink[] = [
-	{ name: 'Docs', href: '/docs' },
-	{ name: 'Why Lattice', href: '/#why' },
-	{ name: 'GitHub', href: 'https://github.com/lattice-and-co', external: true },
+	{ name: 'Docs', href: withBase('/docs') },
+	{ name: 'Why Lattice', href: withBase('/#why') },
+	{ name: 'GitHub', href: 'https://github.com/latticeandcompany/lattice', external: true },
 ];
 
-export const githubUrl = 'https://github.com/lattice-and-co';
+export const githubUrl = 'https://github.com/latticeandcompany/lattice';

@@ -1,4 +1,5 @@
 import type { CollectionEntry } from 'astro:content';
+import { withBase } from './base';
 
 export interface DocLink {
 	title: string;
@@ -12,9 +13,9 @@ export interface DocGroup {
 }
 
 // Groups render in this order; anything else is appended alphabetically after.
-const GROUP_ORDER = ['Overview', 'Guides', 'Reference'];
+const GROUP_ORDER = ['Overview', 'Guides', 'Concepts', 'Reference'];
 
-export const docHref = (id: string) => (id === 'index' ? '/docs' : `/docs/${id}`);
+export const docHref = (id: string) => withBase(id === 'index' ? '/docs' : `/docs/${id}`);
 
 export const buildDocsNav = (entries: CollectionEntry<'docs'>[]): DocGroup[] => {
 	const byGroup = new Map<string, DocLink[]>();

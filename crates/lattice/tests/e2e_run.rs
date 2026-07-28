@@ -1,5 +1,5 @@
-//! E2E tests for `lattice run`: caching, artifact verification, filtering,
-//! dry-run, keep-going, and clean failure on an undefined task.
+//! E2E tests for `lattice run`: caching, filtering, dry-run, stacked and
+//! sequential phases, keep-going, and an undefined task.
 
 mod common;
 
@@ -49,7 +49,7 @@ fn cold_then_cached_then_restores_outputs() {
         .stdout(predicate::str::contains("1 cached"))
         .stdout(predicate::str::contains("app:build: running").not());
 
-    // Delete the outputs, then a third run must RESTORE them from cache.
+    // Delete the outputs, then a third run must restore them from cache.
     std::fs::remove_dir_all(fx.join("app/dist")).unwrap();
     assert!(!fx.exists("app/dist/out.txt"));
     fx.lattice()
@@ -79,7 +79,7 @@ fn corrupt_tarball_is_a_miss_not_a_false_hit() {
         std::fs::write(t, b"garbage").unwrap();
     }
 
-    // The next run must NOT report a hit: it re-runs the task.
+    // The next run must not report a hit: it re-runs the task.
     fx.lattice()
         .args(["run", "build", "-l"])
         .assert()
@@ -349,9 +349,9 @@ fn undefined_task_fails_cleanly() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("not defined"))
-        .stderr(predicate::str::contains("Available tasks"))
+        .stderr(predicate::str::contains("available tasks"))
         .stderr(predicate::str::contains("build"))
-        // A clean, actionable error — never a panic/backtrace.
+        // An error, not a panic or backtrace.
         .stderr(predicate::str::contains("panicked").not())
         .stderr(predicate::str::contains("RUST_BACKTRACE").not());
 }

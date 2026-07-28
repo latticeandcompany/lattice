@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dev-unlink.sh — restore the pinned release binary (PRD §13).
+# dev-unlink.sh — restore the pinned release binary.
 #
-# Repo-local tooling (NOT a lattice subcommand). Restores the stable
+# Repo-local tooling, not a lattice subcommand. Restores the stable
 # ./.lattice/bin/lattice symlink to the pinned release binary (lattice-<latticeVersion>),
 # reading the version from the repo's lattice.json.
 # Non-destructive: if the pinned release binary is not installed, nothing is changed.
@@ -59,7 +59,7 @@ if [[ ! -e "$RELEASE_BINARY" ]]; then
 fi
 
 mkdir -p "$ROOT/.lattice/bin"
-# Use a relative target to mirror the bootstrap install layout (PRD §9).
+# Relative target, to mirror the bootstrap install layout.
 ln -sf "$RELEASE_NAME" "$ROOT/.lattice/bin/lattice"
 
 echo "✓ linked .lattice/bin/lattice → release $VERSION"

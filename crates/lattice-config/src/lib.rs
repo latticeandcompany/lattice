@@ -8,14 +8,13 @@ use std::str::FromStr;
 pub const CONFIG_FILE: &str = "lattice.json";
 
 /// The canonical list of engine names Lattice knows how to version-check with a
-/// built-in rule. A STRING-form engine whose name is not in this set is rejected
-/// (decision #11) — it must use the object form with an explicit `versionCmd`.
+/// built-in rule. A string-form engine whose name is not in this set is rejected;
+/// it must use the object form with an explicit `versionCmd`.
 pub const WELL_KNOWN_ENGINES: &[&str] = &[
     "node", "deno", "bun", "pnpm", "yarn", "npm", "rust", "cargo", "go", "python", "python3",
     "ruby", "bundler", "java", "gradle", "maven", "dotnet",
 ];
 
-/// Returns true if `name` is a well-known engine with a built-in version-check rule.
 pub fn is_well_known_engine(name: &str) -> bool {
     WELL_KNOWN_ENGINES.contains(&name)
 }
@@ -39,7 +38,6 @@ pub enum EngineSpec {
 }
 
 impl EngineSpec {
-    /// The version constraint string, if any.
     pub fn version(&self) -> Option<&str> {
         match self {
             EngineSpec::Version(v) => Some(v.as_str()),
@@ -47,7 +45,6 @@ impl EngineSpec {
         }
     }
 
-    /// The explicit command that prints the tool's version, if any.
     pub fn version_cmd(&self) -> Option<&str> {
         match self {
             EngineSpec::Version(_) => None,
@@ -55,7 +52,6 @@ impl EngineSpec {
         }
     }
 
-    /// The explicit install command, if any.
     pub fn install_cmd(&self) -> Option<&str> {
         match self {
             EngineSpec::Version(_) => None,
@@ -71,7 +67,6 @@ impl EngineSpec {
         }
     }
 
-    /// Whether this spec is in the detailed object form.
     pub fn is_detailed(&self) -> bool {
         matches!(self, EngineSpec::Detailed(_))
     }
@@ -88,11 +83,10 @@ pub struct EngineSpecObject {
 }
 
 /// One workspace: a single project directory that is the unit of task running
-/// and caching. Declared explicitly — no globs (PRD §2.1).
+/// and caching. Declared explicitly; never a glob.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceConfig {
-    /// Workspace name (required).
     pub name: String,
     /// Literal directory path (relative to repo root). Never a glob.
     pub path: String,
@@ -140,7 +134,6 @@ impl PipelineTask {
 pub struct CacheSize(pub u64);
 
 impl CacheSize {
-    /// The size in bytes.
     pub fn as_bytes(&self) -> u64 {
         self.0
     }
@@ -280,13 +273,10 @@ pub struct LatticeConfig {
 }
 
 impl LatticeConfig {
-    /// Validate a parsed config.
-    ///
-    /// Enforces decision #11: any engine (root or per-workspace) declared in
-    /// STRING form whose key is not a well-known engine is an error. Also
-    /// enforces unique workspace names and non-empty workspace paths.
+    /// Any engine (root or per-workspace) declared in string form whose key is
+    /// not a well-known engine is an error. Workspace names must be unique and
+    /// workspace paths must be non-empty.
     pub fn validate(&self) -> Result<()> {
-        // Decision #11: string-form engines must be well-known.
         check_string_engines(&self.engines, "root")?;
         for ws in &self.workspaces {
             check_string_engines(&ws.engines, &format!("workspace '{}'", ws.name))?;
@@ -318,7 +308,7 @@ fn check_string_engines(engines: &EngineMap, scope: &str) -> Result<()> {
                 "engine '{name}' in {scope} uses the string (version-only) form, but '{name}' is \
                  not a well-known engine Lattice can version-check on its own. Use the object form \
                  with an explicit `versionCmd`, e.g. \"{name}\": {{ \"version\": \">=1.0.0\", \
-                 \"versionCmd\": \"{name} --version\" }}."
+                 \"versionCmd\": \"{name} --version\" }}"
             ));
         }
     }
@@ -338,9 +328,9 @@ pub fn resolve_engines(root: &EngineMap, workspace: &EngineMap) -> EngineMap {
 pub fn load_config(root: &Path) -> Result<LatticeConfig> {
     let config_path = root.join(CONFIG_FILE);
     let content = std::fs::read_to_string(&config_path)
-        .with_context(|| format!("Failed to read {} from {}", CONFIG_FILE, root.display()))?;
+        .with_context(|| format!("failed to read {} from {}", CONFIG_FILE, root.display()))?;
     let config: LatticeConfig =
-        serde_json::from_str(&content).with_context(|| "Failed to parse lattice.json")?;
+        serde_json::from_str(&content).with_context(|| "failed to parse lattice.json")?;
     config.validate()?;
     Ok(config)
 }
@@ -388,8 +378,6 @@ mod tests {
         );
         jsonschema::validator_for(&schema).expect("schema.json must be a valid JSON Schema")
     }
-
-    // ---- schema tests (ported) ------------------------------------------------
 
     #[test]
     fn schema_validates_repo_config() {
@@ -497,14 +485,11 @@ mod tests {
         );
     }
 
-    // ---- load / validate tests -----------------------------------------------
-
     #[test]
     fn shipped_configs_load_and_validate() {
         for dir in [repo_root(), repo_root().join("examples").join("polyglot")] {
             let config = load_config(&dir)
                 .unwrap_or_else(|e| panic!("load_config failed for {}: {e:#}", dir.display()));
-            // Round-trip through serde.
             let serialized =
                 serde_json::to_string(&config).expect("LatticeConfig must serialize back to JSON");
             let reparsed: LatticeConfig = serde_json::from_str(&serialized)
@@ -515,7 +500,6 @@ mod tests {
                 "config from {} must round-trip through serde without loss",
                 dir.display()
             );
-            // Both shipped configs must validate against the live schema too.
             let validator = compiled_schema();
             let raw = read_json(&dir.join(CONFIG_FILE));
             assert!(
@@ -525,8 +509,6 @@ mod tests {
             );
         }
     }
-
-    // ---- engine spec tests ----------------------------------------------------
 
     #[test]
     fn engine_string_form_parses_to_version() {
@@ -630,8 +612,6 @@ mod tests {
         );
     }
 
-    // ---- CacheSize tests ------------------------------------------------------
-
     #[test]
     fn cache_size_parses_units() {
         assert_eq!(
@@ -658,8 +638,6 @@ mod tests {
         assert_eq!(back, cs);
     }
 
-    // ---- Settings tests -------------------------------------------------------
-
     #[test]
     fn settings_defaults() {
         let s: Settings = serde_json::from_value(json!({})).unwrap();
@@ -677,8 +655,6 @@ mod tests {
         assert!(!s.version_check);
     }
 
-    // ---- tasks ordering -------------------------------------------------------
-
     #[test]
     fn tasks_preserve_declaration_order() {
         let config: LatticeConfig =
@@ -686,8 +662,6 @@ mod tests {
         let keys: Vec<&str> = config.tasks.keys().map(|s| s.as_str()).collect();
         assert_eq!(keys, vec!["build", "test", "dev"]);
     }
-
-    // ---- PipelineTask helper tests --------------------------------------------
 
     #[test]
     fn pipeline_task_cacheability() {

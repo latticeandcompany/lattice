@@ -1,13 +1,9 @@
 //! The engine gradient: host / validate / provision.
 //!
-//! There are NO hardcoded per-language downloaders and NO wrapping of
-//! mise/proto. The developer declares an `installCmd`; Lattice runs it into a
-//! content-addressed toolchain directory, version-checks the result, pins it,
-//! and hands the runner a `PATH` prefix to activate it PER TASK (it never
-//! mutates global env or sources shells).
-//!
-//! Everything lives under `./.lattice/toolchains/`, so `rm -rf .lattice` fully
-//! uninstalls.
+//! The developer declares an `installCmd`; Lattice runs it into a
+//! content-addressed toolchain directory under `./.lattice/toolchains/`,
+//! version-checks the result, pins it, and hands the runner a `PATH` prefix
+//! that activates it for the duration of a single task.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -226,7 +222,7 @@ fn find_verified_pin(
         if !bin_dir.is_dir() {
             continue;
         }
-        // Re-verify the version if we can; this does NOT reinstall.
+        // Re-verify the version if we can; this does not reinstall.
         if let (Some(vc), Some(cons)) = (version_cmd, constraint) {
             if let Ok((ok, out)) = run_capture(vc, Some(&bin_dir), &[]) {
                 if !ok {
@@ -279,13 +275,13 @@ pub fn provision_and_resolve(
                 } else {
                     bail!(
                         "engine '{name}' has a version constraint but no way to check it \
-                         (not a well-known engine and no `versionCmd`)."
+                         (not a well-known engine and no `versionCmd`)"
                     );
                 };
                 if let Some(cons) = &constraint {
                     if !satisfies(&version, cons) {
                         bail!(
-                            "engine '{name}' {version} on PATH does not satisfy constraint '{cons}'."
+                            "engine '{name}' {version} on PATH does not satisfy constraint '{cons}'"
                         );
                     }
                 }
@@ -326,7 +322,7 @@ pub fn provision_and_resolve(
                     target.display()
                 ));
 
-                // $LATTICE_TOOLCHAIN_DIR: set as env AND literal-substituted so
+                // $LATTICE_TOOLCHAIN_DIR: set as env and literal-substituted so
                 // both `... $LATTICE_TOOLCHAIN_DIR ...` and env-var reads work.
                 let target_str = target.to_string_lossy().into_owned();
                 let substituted = install_cmd.replace("$LATTICE_TOOLCHAIN_DIR", &target_str);
@@ -352,7 +348,7 @@ pub fn provision_and_resolve(
                             if let Some(cons) = &constraint {
                                 if !satisfies(&v, cons) {
                                     bail!(
-                                        "engine '{name}' provisioned {v} does not satisfy '{cons}'."
+                                        "engine '{name}' provisioned {v} does not satisfy '{cons}'"
                                     );
                                 }
                             }
@@ -411,8 +407,6 @@ mod tests {
         serde_json::from_value(v).unwrap()
     }
 
-    // ---- classify() gradient ------------------------------------------------
-
     #[test]
     fn classify_host_validate_provision() {
         // string version-only → ValidateOnly
@@ -443,8 +437,6 @@ mod tests {
         ));
     }
 
-    // ---- parse_version ------------------------------------------------------
-
     #[test]
     fn parse_version_tolerant() {
         assert_eq!(
@@ -466,8 +458,6 @@ mod tests {
         assert!(parse_version("no digits here").is_none());
     }
 
-    // ---- satisfies ----------------------------------------------------------
-
     #[test]
     fn satisfies_matrix() {
         let v = semver::Version::new(20, 11, 1);
@@ -481,11 +471,8 @@ mod tests {
         assert!(satisfies(&g, "")); // empty == no constraint
     }
 
-    // ---- provision_and_resolve against a fake installCmd --------------------
-
     fn fake_engines() -> EngineMap {
-        // installCmd writes a fake `faketool` binary into $LATTICE_TOOLCHAIN_DIR/bin
-        // that prints its version. No network.
+        // The installCmd writes a fake `faketool` binary that prints a version.
         serde_json::from_value(json!({
             "faketool": {
                 "version": ">=1.0.0",

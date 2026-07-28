@@ -11,7 +11,6 @@ use petgraph::Direction;
 use lattice_config::LatticeConfig;
 use lattice_workspace::Workspace;
 
-/// One concrete unit of work: a task in a specific workspace.
 #[derive(Debug, Clone)]
 pub struct TaskNode {
     pub workspace_name: String,
@@ -20,7 +19,6 @@ pub struct TaskNode {
     pub is_persistent: bool,
 }
 
-/// The task DAG plus a topological ordering of its nodes.
 #[derive(Debug)]
 pub struct ExecutionGraph {
     pub graph: DiGraph<TaskNode, ()>,
@@ -101,7 +99,7 @@ pub fn build_execution_graph_multi(
     for root_task in root_tasks {
         if !config.tasks.contains_key(*root_task) {
             bail!(
-                "Task '{}' is not defined in the tasks section of lattice.json",
+                "task '{}' is not defined in the tasks section of lattice.json",
                 root_task
             );
         }
@@ -136,8 +134,8 @@ pub fn build_execution_graph_multi(
                     // tasks that don't apply to their toolchain.
                     if !ws.auto && root_tasks.contains(&task_name.as_str()) {
                         bail!(
-                            "Workspace '{}' is \"auto\": false but declares no command for \
-                             task '{}'. Add it under this workspace's \"scripts\" map in lattice.json.",
+                            "workspace '{}' is \"auto\": false but declares no command for \
+                             task '{}'; add it under this workspace's \"scripts\" map in lattice.json",
                             ws.name,
                             task_name
                         );
@@ -201,7 +199,7 @@ pub fn build_execution_graph_multi(
                 .is_some();
             if outgoing {
                 bail!(
-                    "Persistent task '{}' in workspace '{}' cannot be depended on by other tasks.",
+                    "persistent task '{}' in workspace '{}' cannot be depended on by other tasks",
                     key.1,
                     key.0
                 );
@@ -210,12 +208,11 @@ pub fn build_execution_graph_multi(
     }
 
     let topo_order = toposort(&graph, None)
-        .map_err(|_| anyhow::anyhow!("Cycle detected in task dependency graph"))?;
+        .map_err(|_| anyhow::anyhow!("cycle detected in task dependency graph"))?;
 
     Ok(ExecutionGraph { graph, topo_order })
 }
 
-/// The topologically-ordered nodes, for `--dry-run`.
 pub fn dry_run_order(graph: &ExecutionGraph) -> Vec<&TaskNode> {
     graph
         .topo_order
@@ -237,7 +234,6 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// The initially-ready nodes: those with no prerequisites.
     pub fn initial_ready(&self) -> Vec<usize> {
         (0..self.indegree.len())
             .filter(|&i| self.indegree[i] == 0)
@@ -331,7 +327,6 @@ mod tests {
         ]);
         let g = build_execution_graph(&workspaces, "test", &cfg).unwrap();
         let order = dry_run_order(&g);
-        // build must appear before test.
         let build_pos = order.iter().position(|n| n.task_name == "build").unwrap();
         let test_pos = order.iter().position(|n| n.task_name == "test").unwrap();
         assert!(build_pos < test_pos);
@@ -342,11 +337,7 @@ mod tests {
         let workspaces = vec![ws(
             "app",
             &[],
-            &[
-                ("lint", "eslint"),
-                ("build", "tsc"),
-                ("test", "vitest"),
-            ],
+            &[("lint", "eslint"), ("build", "tsc"), ("test", "vitest")],
         )];
         // test depends on build; lint is independent.
         let cfg = config(&[
@@ -357,7 +348,6 @@ mod tests {
         let g = build_execution_graph_multi(&workspaces, &["lint", "test", "build"], &cfg).unwrap();
         let order = dry_run_order(&g);
 
-        // build appears once and before test; lint is present too.
         let build_nodes = order.iter().filter(|n| n.task_name == "build").count();
         assert_eq!(build_nodes, 1, "shared dependency must not be duplicated");
         let build_pos = order.iter().position(|n| n.task_name == "build").unwrap();
@@ -404,7 +394,7 @@ mod tests {
         let workspaces = vec![ws("app", &[], &[("a", "x"), ("b", "y")])];
         let cfg = config(&[("a", task(&["b"])), ("b", task(&["a"]))]);
         let err = build_execution_graph(&workspaces, "a", &cfg).unwrap_err();
-        assert!(format!("{err}").contains("Cycle"));
+        assert!(format!("{err}").contains("cycle"));
     }
 
     #[test]
@@ -417,7 +407,7 @@ mod tests {
         };
         let cfg = config(&[("dev", dev), ("build", task(&["dev"]))]);
         let err = build_execution_graph(&workspaces, "build", &cfg).unwrap_err();
-        assert!(format!("{err}").contains("Persistent"));
+        assert!(format!("{err}").contains("persistent"));
     }
 
     #[test]

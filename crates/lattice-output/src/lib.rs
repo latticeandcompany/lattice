@@ -5,29 +5,27 @@ use std::time::Duration;
 use console::{style, Style, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
-/// The two output modes Lattice supports (PRD §6.1/§6.2).
+/// The two output modes Lattice supports.
 ///
 /// `Interactive` is the default for humans attached to a terminal: it is the
-/// mode under which a live TUI should be rendered. `Raw` is the plain,
-/// sequential, line-by-line, ANSI-free stream used for CI, pipes, redirects, or
-/// when the user explicitly asks for it via `--loquacious`/`-l`.
+/// mode under which a live TUI is rendered. `Raw` is the line-by-line,
+/// ANSI-free stream used for CI, pipes, redirects, or when the user asks for it
+/// via `--loquacious`/`-l`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
-    /// Full interactive terminal experience (TUI). Renders ONLY in this mode.
+    /// Full interactive terminal experience (TUI). The only mode that renders it.
     Interactive,
-    /// Plain, deterministic, greppable, line-by-line output. No TUI, no ANSI.
+    /// Line-by-line output with no TUI and no ANSI.
     Raw,
 }
 
-/// Pure, unit-testable mode detection (PRD §6.2).
-///
 /// Returns [`OutputMode::Raw`] whenever the output is not attached to an
 /// interactive terminal (`!stdout_is_tty`), a CI environment is detected
 /// (`ci_env`), or the user explicitly requested raw output (`loquacious`).
 /// Otherwise returns [`OutputMode::Interactive`].
 ///
 /// The two non-interactive triggers produce the same stream; `loquacious`
-/// simply forces `Raw` on a machine that would otherwise render the TUI.
+/// forces `Raw` on a machine that would otherwise render the TUI.
 pub fn detect_mode(stdout_is_tty: bool, loquacious: bool, ci_env: bool) -> OutputMode {
     if !stdout_is_tty || ci_env || loquacious {
         OutputMode::Raw
@@ -36,8 +34,6 @@ pub fn detect_mode(stdout_is_tty: bool, loquacious: bool, ci_env: bool) -> Outpu
     }
 }
 
-/// Pure, unit-testable rule for whether ANSI color should be enabled.
-///
 /// Color is disabled when `NO_COLOR` is set (see <https://no-color.org/>) or
 /// whenever we are in [`OutputMode::Raw`] (CI, pipe, redirect, or loquacious).
 /// It is only enabled for a genuine [`OutputMode::Interactive`] session with no
@@ -46,30 +42,21 @@ pub fn should_enable_color(mode: OutputMode, no_color_set: bool) -> bool {
     !no_color_set && mode == OutputMode::Interactive
 }
 
-// ---------------------------------------------------------------------------
-// Brand
-// ---------------------------------------------------------------------------
-
-/// The teal accent for **Lattice Build** (`teal-500`, BRAND.md §2). This is the
-/// ~5% accent — it rides on the rosette mark, spinners, and product words only.
+/// The teal accent for **Lattice Build** (`teal-500`). It is used on the rosette
+/// mark, spinners, and product words only.
 pub const TEAL: (u8, u8, u8) = (0x1B, 0x99, 0x8B);
 /// The teal tint (`teal-300`) used for the rosette art fill on dark terminals.
 pub const TEAL_300: (u8, u8, u8) = (0x63, 0xC4, 0xB8);
 
-/// Which terminal background the splash art should be tuned for (BRAND.md §7:
-/// "Dark and light both first-class"). The mark keeps its teal identity but
-/// swaps shade so it never washes out: the lighter `teal-300` on a dark
-/// background, the deeper `teal-500` on a light one.
+/// Which terminal background the splash art should be tuned for. The mark keeps
+/// its teal identity but swaps shade so it does not wash out: the lighter
+/// `teal-300` on a dark background, the deeper `teal-500` on a light one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
-    /// Light background (paper) — render the mark in the deeper `teal-500`.
     Light,
-    /// Dark background (ink) — render the mark in the lighter `teal-300`.
     Dark,
 }
 
-/// Pure, unit-testable theme resolution.
-///
 /// An explicit `LATTICE_THEME=light|dark` override always wins. Otherwise we
 /// consult `COLORFGBG` (set by many terminals as `fg;bg`, occasionally
 /// `fg;default;bg`) and read the trailing background field: ANSI `7`/`15`
@@ -98,7 +85,6 @@ pub fn theme_from_env(theme_override: Option<&str>, colorfgbg: Option<&str>) -> 
     Theme::Dark
 }
 
-/// Resolve the terminal theme from the real environment (see [`theme_from_env`]).
 pub fn detect_theme() -> Theme {
     theme_from_env(
         std::env::var("LATTICE_THEME").ok().as_deref(),
@@ -107,11 +93,11 @@ pub fn detect_theme() -> Theme {
 }
 
 /// The rosette (woven-sphere) mark — the Lattice logo — as compact ASCII.
-/// Rendered in teal for the `version`/splash surface (BRAND.md §6).
+/// Rendered in teal for the `version`/splash surface.
 pub const ROSETTE_ART: &str = include_str!("../assets/rosette.txt");
 
 /// The inline rosette glyph — a four-petal node that echoes the woven mark.
-/// Used as the ~5% teal accent on headers, summaries, and cache hits.
+/// Used as the teal accent on headers, summaries, and cache hits.
 pub const ROSETTE: &str = "\u{2756}"; // ❖
 
 /// Map an RGB triple to the nearest xterm-256 color-cube index.
@@ -157,8 +143,8 @@ fn paint_rgb(s: &str, (r, g, b): (u8, u8, u8)) -> String {
     }
 }
 
-/// The lowercase `lattice` wordmark, bold. Per BRAND.md §6 the wordmark stays
-/// ink/paper — it never takes the accent; only the rosette/product words do.
+/// The lowercase `lattice` wordmark, bold. The wordmark stays ink/paper; only
+/// the rosette and product words carry the teal accent.
 pub fn wordmark() -> String {
     style("lattice").bold().to_string()
 }
@@ -169,8 +155,8 @@ pub fn logo() -> String {
     logo_for(detect_theme())
 }
 
-/// The rosette logo painted for a specific [`Theme`] — a pure helper that lets
-/// callers (and tests) pick the shade without touching the environment.
+/// The rosette logo painted for a specific [`Theme`], so callers can pick the
+/// shade without consulting the environment.
 pub fn logo_for(theme: Theme) -> String {
     let fill = match theme {
         Theme::Light => TEAL,
@@ -185,8 +171,8 @@ pub fn logo_for(theme: Theme) -> String {
 
 /// The full branded splash: the teal rosette mark, the `lattice <version>
 /// (arch)` lockup, and the tagline. Shared by `version`, `init`, and the
-/// bare `lattice` invocation so the brand reads identically everywhere. The
-/// mark's teal shade adapts to the terminal background.
+/// bare `lattice` invocation. The mark's teal shade adapts to the terminal
+/// background.
 pub fn splash(version: &str) -> String {
     format!(
         "{}\n{} {}  {}  {}\n{}",
@@ -195,12 +181,12 @@ pub fn splash(version: &str) -> String {
         wordmark(),
         style(version).bold(),
         style(format!("({})", std::env::consts::ARCH)).dim(),
-        style("A fast, local toolchain for managing monorepos.").dim(),
+        style("A high-performance, local toolchain for managing monorepos.").dim(),
     )
 }
 
 /// A quiet, branded one-line header: teal rosette glyph + bold `lattice`
-/// wordmark + a dim subtitle (BRAND.md: wordmark stays ink, rosette carries teal).
+/// wordmark + a dim subtitle.
 pub fn banner_line(subtitle: &str) -> String {
     format!(
         "{} {}  {}",
@@ -213,7 +199,7 @@ pub fn banner_line(subtitle: &str) -> String {
 /// The one-line, advisory version nag (interactive only). Branded and quiet.
 pub fn version_nag(binary_version: &str, pinned_version: &str) -> String {
     format!(
-        "{} {} {} · this repo pins {} — run {}",
+        "{} {} {} · this repo pins {} · run {}",
         paint_teal(ROSETTE),
         wordmark(),
         binary_version,
@@ -221,10 +207,6 @@ pub fn version_nag(binary_version: &str, pinned_version: &str) -> String {
         style("`lattice upgrade`").dim()
     )
 }
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
 
 /// Typed events the runner emits. Reporter impls decide how to render them.
 #[derive(Clone)]
@@ -244,7 +226,7 @@ pub enum TaskEvent {
         line: String,
         stderr: bool,
         /// From a persistent task (dev server/watcher). Streamed live even
-        /// outside loquacious mode — that output is the point of the run.
+        /// outside loquacious mode.
         persistent: bool,
     },
     Finished {
@@ -297,14 +279,9 @@ fn fmt_secs(ms: u64) -> String {
     format!("{:.2}s", ms as f64 / 1000.0)
 }
 
-// ---------------------------------------------------------------------------
-// CiReporter — plain line stream, ANSI-off, deterministic, greppable
-// ---------------------------------------------------------------------------
-
-/// Plain line stream: `workspace:task: <message>`, ANSI OFF,
-/// deterministic, greppable. In loquacious mode it ALSO prints `note()` trace
-/// lines and per-task output. This is the CI-mode reporter (no-TTY OR `-l` OR
-/// `settings.loquacious`). It never styles output.
+/// Plain line stream: `workspace:task: <message>`, never styled. In loquacious
+/// mode it also prints `note()` trace lines and per-task output. This is the
+/// reporter used when there is no TTY, or `-l` or `settings.loquacious` is set.
 pub struct CiReporter {
     pub loquacious: bool,
 }
@@ -409,10 +386,6 @@ impl Reporter for CiReporter {
     fn finish(&self) {}
 }
 
-// ---------------------------------------------------------------------------
-// InteractiveReporter — branded indicatif MultiProgress
-// ---------------------------------------------------------------------------
-
 /// Branded interactive reporter: an [`indicatif::MultiProgress`] with one teal
 /// spinner per running task. Child output is collapsed (buffered by the runner)
 /// and surfaced only on failure. Finished bars settle into a static line with
@@ -442,7 +415,7 @@ impl InteractiveReporter {
     }
 
     /// The `workspace:task` label, truncated and right-padded to a fixed column
-    /// so status glyphs and durations align down the run (DM-Mono-flavored).
+    /// so status glyphs and durations align down the run.
     fn label(&self, workspace: &str, task: &str) -> String {
         const LABEL_W: usize = 28;
         let raw = format!("{}:{}", workspace, task);
@@ -521,8 +494,8 @@ impl Reporter for InteractiveReporter {
                 self.settle(&workspace, &task, line);
             }
             TaskEvent::Output { .. } => {
-                // Collapsed: child output is buffered by the runner and surfaced
-                // only on failure via `surface_failure`. Do not render live.
+                // Child output is buffered by the runner and surfaced only on
+                // failure via `surface_failure`.
             }
             TaskEvent::Finished {
                 workspace,
@@ -623,13 +596,11 @@ mod tests {
 
     #[test]
     fn ci_env_is_raw() {
-        // CI detected → Raw, even on a TTY without loquacious.
         assert_eq!(detect_mode(true, false, true), OutputMode::Raw);
     }
 
     #[test]
     fn loquacious_is_raw() {
-        // Explicit --loquacious forces Raw even on an interactive TTY.
         assert_eq!(detect_mode(true, true, false), OutputMode::Raw);
     }
 
@@ -640,7 +611,6 @@ mod tests {
 
     #[test]
     fn detect_mode_is_raw_if_any_trigger_set() {
-        // Any single trigger, or any combination, yields Raw.
         for &loq in &[true, false] {
             for &ci in &[true, false] {
                 for &tty in &[true, false] {
@@ -675,8 +645,7 @@ mod tests {
         assert!(!should_enable_color(OutputMode::Raw, true));
     }
 
-    /// A test-only reporter that records every event in order. Proves the trait
-    /// shape is usable and that impls can be `Send + Sync` via interior mut.
+    /// A test-only reporter that records every event in order.
     struct RecordingReporter {
         events: Mutex<Vec<TaskEvent>>,
     }
@@ -787,7 +756,6 @@ mod tests {
 
     #[test]
     fn make_reporter_picks_impl_by_mode() {
-        // Just exercises construction paths; both are boxed trait objects.
         let _i = make_reporter(OutputMode::Interactive, false);
         let _c = make_reporter(OutputMode::Raw, true);
     }

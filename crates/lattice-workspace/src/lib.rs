@@ -1,20 +1,19 @@
-//! Workspace discovery + the "never-prescribe" detect-or-declare driver model.
+//! Workspace discovery and task-driver resolution.
 //!
-//! Lattice detects the task *driver* (the tool that runs tasks) for each
-//! workspace by walking an EVIDENCE LADDER and stopping at the first tier that
+//! Lattice resolves the task *driver* (the tool that runs tasks) for each
+//! workspace by walking an evidence ladder and stopping at the first tier that
 //! gives an unambiguous answer:
 //!
-//! * (a) a **declaration** in `lattice.json` `engines` — always wins;
-//! * (b) a **dev-authored native declaration file** (`packageManager`,
+//! * (a) a declaration in `lattice.json` `engines`, which always wins;
+//! * (b) a dev-authored native declaration file (`packageManager`,
 //!   `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`, `./gradlew`, …);
-//! * (c) a **tool-unique lockfile/artifact** (`bun.lockb`, `pnpm-lock.yaml`,
+//! * (c) a tool-unique lockfile or artifact (`bun.lockb`, `pnpm-lock.yaml`,
 //!   `Cargo.lock`, `poetry.lock`, …);
-//! * (d) otherwise → **HALT and ask** ([`AmbiguityError`]). A bare generic
-//!   ecosystem marker (a lone `package.json`, `pom.xml`, …) is deliberately not
-//!   enough — that would be prescribing a tool the developer never chose.
+//! * (d) otherwise, stop and ask ([`AmbiguityError`]). A bare generic ecosystem
+//!   marker (a lone `package.json`, `pom.xml`, …) is not enough on its own.
 //!
-//! Tools carry a [`Role`]. Tools with *different* roles COMPOSE into a stack
-//! (a node runtime + a pnpm package-manager); only tools competing for the
+//! Tools carry a [`Role`]. Tools with *different* roles compose into a stack
+//! (a node runtime plus a pnpm package-manager); only tools competing for the
 //! *same* role are a conflict.
 
 use std::path::{Path, PathBuf};
@@ -25,8 +24,7 @@ use lattice_config::{EngineMap, LatticeConfig};
 
 pub mod toolchain;
 
-/// The kind of job a tool does. The key to multi-tool ecosystems: tools with
-/// different roles compose; tools competing for the same role conflict.
+/// The kind of job a tool does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
     Runtime,
@@ -64,14 +62,12 @@ pub struct DriverSpec {
 }
 
 impl DriverSpec {
-    /// The shell command that drives `task` through this tool.
     pub fn invoke(&self, task: &str) -> String {
         self.invoke_tpl.replace("{task}", task)
     }
 }
 
 static DRIVERS: &[DriverSpec] = &[
-    // --- JavaScript / TypeScript --------------------------------------------
     DriverSpec {
         tool: "node",
         role: Role::Runtime,
@@ -114,7 +110,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "npm --version",
         invoke_tpl: "npm run {task}",
     },
-    // --- Rust ----------------------------------------------------------------
     DriverSpec {
         tool: "cargo",
         role: Role::BuildTool,
@@ -122,7 +117,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "cargo --version",
         invoke_tpl: "cargo {task}",
     },
-    // --- Go ------------------------------------------------------------------
     DriverSpec {
         tool: "go",
         role: Role::BuildTool,
@@ -130,7 +124,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "go version",
         invoke_tpl: "go {task}",
     },
-    // --- Python --------------------------------------------------------------
     DriverSpec {
         tool: "uv",
         role: Role::PackageManager,
@@ -166,7 +159,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "python --version",
         invoke_tpl: "python -m {task}",
     },
-    // --- Ruby ----------------------------------------------------------------
     DriverSpec {
         tool: "bundler",
         role: Role::PackageManager,
@@ -188,7 +180,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "ruby --version",
         invoke_tpl: "ruby {task}",
     },
-    // --- JVM -----------------------------------------------------------------
     DriverSpec {
         tool: "gradle",
         role: Role::BuildTool,
@@ -210,7 +201,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "java -version",
         invoke_tpl: "java {task}",
     },
-    // --- .NET ----------------------------------------------------------------
     DriverSpec {
         tool: "dotnet",
         role: Role::BuildTool,
@@ -218,7 +208,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "dotnet --version",
         invoke_tpl: "dotnet {task}",
     },
-    // --- iOS -----------------------------------------------------------------
     DriverSpec {
         tool: "pod",
         role: Role::PackageManager,
@@ -226,7 +215,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "pod --version",
         invoke_tpl: "pod {task}",
     },
-    // --- PHP -----------------------------------------------------------------
     DriverSpec {
         tool: "composer",
         role: Role::PackageManager,
@@ -234,7 +222,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "composer --version",
         invoke_tpl: "composer {task}",
     },
-    // --- Elixir --------------------------------------------------------------
     DriverSpec {
         tool: "mix",
         role: Role::TaskRunner,
@@ -242,7 +229,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "mix --version",
         invoke_tpl: "mix {task}",
     },
-    // --- Dart / Flutter ------------------------------------------------------
     DriverSpec {
         tool: "dart",
         role: Role::PackageManager,
@@ -250,7 +236,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "dart --version",
         invoke_tpl: "dart pub {task}",
     },
-    // --- Swift ---------------------------------------------------------------
     DriverSpec {
         tool: "swift",
         role: Role::BuildTool,
@@ -258,7 +243,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "swift --version",
         invoke_tpl: "swift {task}",
     },
-    // --- Haskell -------------------------------------------------------------
     DriverSpec {
         tool: "stack",
         role: Role::BuildTool,
@@ -273,7 +257,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "cabal --version",
         invoke_tpl: "cabal {task}",
     },
-    // --- Cross-ecosystem task runners ----------------------------------------
     DriverSpec {
         tool: "just",
         role: Role::TaskRunner,
@@ -288,7 +271,6 @@ static DRIVERS: &[DriverSpec] = &[
         version_cmd: "task --version",
         invoke_tpl: "task {task}",
     },
-    // --- Meta task runners (Lattice can wrap a Turborepo/Nx workspace) --------
     DriverSpec {
         tool: "turbo",
         role: Role::TaskRunner,
@@ -306,12 +288,10 @@ static DRIVERS: &[DriverSpec] = &[
 ];
 
 impl DriverRegistry {
-    /// Look up a known driver spec by tool name.
     pub fn get(tool: &str) -> Option<&'static DriverSpec> {
         DRIVERS.iter().find(|d| d.tool == tool)
     }
 
-    /// All built-in driver specs.
     pub fn known() -> &'static [DriverSpec] {
         DRIVERS
     }
@@ -347,7 +327,7 @@ pub struct DriverResolution {
     pub via: Evidence,
 }
 
-/// A resolved workspace: discovered, validated, with commands materialized.
+/// A discovered workspace with its engines, driver, and commands resolved.
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub name: String,
@@ -363,7 +343,6 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// The resolved shell command for `task`, if this workspace has one.
     pub fn command_for(&self, task: &str) -> Option<&str> {
         self.commands.get(task).map(|s| s.as_str())
     }
@@ -383,7 +362,7 @@ impl std::fmt::Display for AmbiguityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Workspace '{}' has an ambiguous or undeclared task driver.",
+            "workspace '{}' has an ambiguous or undeclared task driver.",
             self.workspace
         )?;
         if self.candidates.is_empty() {
@@ -479,14 +458,14 @@ pub fn detect_drivers(
 
     let mut cands: IndexMap<String, Evidence> = IndexMap::new();
 
-    // (a) Declarations in lattice.json — always the strongest evidence.
+    // (a) Declarations in lattice.json.
     for name in declared.keys() {
         if DriverRegistry::get(name).is_some() {
             add_candidate(&mut cands, name, Evidence::Declaration);
         }
     }
 
-    // (b) Dev-authored native declaration files — the developer's stated intent.
+    // (b) Dev-authored native declaration files.
     if path.join(".nvmrc").exists() {
         add_candidate(&mut cands, "node", Evidence::NativeFile(".nvmrc".into()));
     }
@@ -579,7 +558,7 @@ pub fn detect_drivers(
         }
     }
 
-    // A pure runtime cannot drive named tasks — that's still ambiguity.
+    // A pure runtime cannot drive named tasks, so this is still ambiguity.
     if top_rank == Role::Runtime.drive_rank() {
         return Err(bare_marker_error(&ws_name, path));
     }
@@ -757,22 +736,19 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 
         if !path.is_dir() {
             bail!(
-                "Workspace path '{}' does not point to a directory. \
-                 Workspace paths are literal directories, not globs.",
+                "workspace path '{}' does not point to a directory; workspace \
+                 paths are literal directories, not globs",
                 ws_cfg.path
             );
         }
 
         let name = ws_cfg.name.clone();
         if !seen_names.insert(name.clone()) {
-            bail!("Duplicate workspace name '{}' in lattice.json.", name);
+            bail!("duplicate workspace name '{}' in lattice.json", name);
         }
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         if !seen_paths.insert(canonical) {
-            bail!(
-                "Duplicate workspace path '{}' in lattice.json.",
-                ws_cfg.path
-            );
+            bail!("duplicate workspace path '{}' in lattice.json", ws_cfg.path);
         }
 
         let engines = lattice_config::resolve_engines(&config.engines, &ws_cfg.engines);
@@ -843,8 +819,6 @@ mod tests {
     fn write(dir: &Path, name: &str, contents: &str) {
         fs::write(dir.join(name), contents).unwrap();
     }
-
-    // ---- evidence ladder ----------------------------------------------------
 
     #[test]
     fn tier_a_declaration_overrides_lockfile() {
@@ -1111,8 +1085,6 @@ mod tests {
         assert!(format!("{err:#}").contains("app"));
     }
 
-    // ---- role composition (different roles -> a stack, not a conflict) -------
-
     #[test]
     fn role_composition_python_runtime_plus_uv_resolves_to_uv() {
         // python runtime (.python-version) + uv package-manager (lockfile) → uv
@@ -1139,8 +1111,6 @@ mod tests {
         assert_eq!(d.role, Role::TaskRunner);
         assert_eq!(d.via, Evidence::Lockfile("turbo.json".into()));
     }
-
-    // ---- same-role conflict (two of one role -> AmbiguityError) -------------
 
     #[test]
     fn same_role_conflict_two_python_package_managers() {
@@ -1178,8 +1148,6 @@ mod tests {
         assert_eq!(d.tool, "pdm");
         assert_eq!(d.via, Evidence::Declaration);
     }
-
-    // ---- new-tool lockfiles resolve via the Lockfile rung -------------------
 
     #[test]
     fn tier_c_new_tool_lockfiles_select_their_driver() {

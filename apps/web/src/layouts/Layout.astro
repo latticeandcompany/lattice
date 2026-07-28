@@ -7,6 +7,7 @@ import '../globals.scss';
 import Navbar from '../components/navbar';
 import Footer from '../components/footer.astro';
 import PatternBand from '../components/patternBand.astro';
+import { withBase } from '../lib/base';
 
 interface Props {
 	title?: string;
@@ -14,9 +15,13 @@ interface Props {
 }
 
 const {
-	title = 'Lattice: A fast, local toolchain for managing monorepos',
-	description = 'A fast, local toolchain for managing monorepos.',
+	title = 'Lattice: A high-performance, local toolchain for managing monorepos',
+	description = 'A high-performance, local toolchain for managing monorepos.',
 } = Astro.props;
+
+const favicon = withBase('/brand/favicon.svg');
+// Crawlers won't resolve a root-relative og:image, so make it absolute against `site`.
+const ogImage = new URL(favicon, Astro.site).href;
 ---
 
 <!doctype html>
@@ -24,14 +29,14 @@ const {
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+		<link rel="icon" type="image/svg+xml" href={favicon} />
 		<meta name="generator" content={Astro.generator} />
 		<ClientRouter />
 		<SEO
 			title={title}
 			description={description}
 			openGraph={{
-				basic: { title, type: 'website', image: '/brand/favicon.svg', url: Astro.url.href },
+				basic: { title, type: 'website', image: ogImage, url: Astro.url.href },
 				optional: { description, siteName: 'Lattice' },
 			}}
 		/>

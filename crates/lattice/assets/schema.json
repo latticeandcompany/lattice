@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://lattice.build/schema.json",
+  "$id": "https://latticeandcompany.github.io/lattice/schema.json",
   "title": "Lattice Configuration",
-  "description": "Schema for lattice.json — the root configuration of a Lattice polyglot monorepo (PRD §11). Uses a no-globs, per-workspace-object model.",
+  "description": "Schema for lattice.json, the root configuration file of a Lattice monorepo. Workspaces are declared as objects with literal paths; globs are not accepted.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

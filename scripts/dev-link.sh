@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dev-link.sh — dev-binary hotswap for contributors working ON Lattice (PRD §13).
+# dev-link.sh — dev-binary hotswap for contributors working on Lattice itself.
 #
-# Repo-local tooling (NOT a lattice subcommand). Builds the dev binary and points the
+# Repo-local tooling, not a lattice subcommand. Builds the dev binary and points the
 # stable ./.lattice/bin/lattice symlink at the freshly compiled ./target/debug/lattice.
 # Non-destructive: only the `lattice` symlink is replaced; the versioned release binary
 # (lattice-<version>) is never touched.

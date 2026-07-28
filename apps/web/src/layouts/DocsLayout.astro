@@ -8,17 +8,20 @@ import '../styles/docs.scss';
 import Navbar from '../components/navbar';
 import DocsSidebar from '../components/docsSidebar';
 import DocsToc from '../components/docsToc';
+import DocsSearch from '../components/docsSearch';
 import type { DocGroup } from '../lib/docs';
 import type { Heading } from '../components/docsToc';
+import { withBase } from '../lib/base';
 
 interface Props {
 	title: string;
 	description?: string;
+	group: string;
 	nav: DocGroup[];
 	headings: Heading[];
 }
 
-const { title, description, nav, headings } = Astro.props;
+const { title, description, group, nav, headings } = Astro.props;
 const path = Astro.url.pathname;
 ---
 
@@ -27,7 +30,7 @@ const path = Astro.url.pathname;
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+		<link rel="icon" type="image/svg+xml" href={withBase('/brand/favicon.svg')} />
 		<meta name="generator" content={Astro.generator} />
 		<ClientRouter />
 		<SEO title={`${title} · Lattice docs`} description={description} />
@@ -54,12 +57,24 @@ const path = Astro.url.pathname;
 			<div class="docs-grid">
 				<aside class="docs-grid__side pt-4">
 					<div class="docs-sticky">
+						<DocsSearch client:load />
 						<DocsSidebar client:load nav={nav} path={path} />
 					</div>
 				</aside>
 
 				<main class="docs-grid__main py-4 py-lg-5">
-					<article class="doc-prose">
+					{/*
+					`data-pagefind-body` scopes the search index to the docs prose alone — because
+					it appears here, Pagefind indexes only pages that carry it, so the landing page
+					and 404 stay out of results. Title and section come from the collection
+					frontmatter rather than being scraped out of the rendered heading.
+					*/}
+					<article
+						class="doc-prose"
+						data-pagefind-body
+						data-pagefind-meta={`title:${title}`}
+						data-pagefind-filter={`section:${group}`}
+					>
 						<slot />
 					</article>
 				</main>

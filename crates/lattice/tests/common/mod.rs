@@ -2,9 +2,9 @@
 //!
 //! Every test builds a fully self-contained repo inside its own
 //! [`tempfile::TempDir`] and drives the compiled `lattice` binary through
-//! `assert_cmd`. Nothing touches the real repo, `$HOME`, or global state, so the
-//! suite is hermetic and parallel-safe. Task bodies are plain `sh`/`echo`/
-//! `printf` commands, so no real language toolchains are required.
+//! `assert_cmd`. Nothing touches the real repo, `$HOME`, or global state. Task
+//! bodies are plain `sh`/`echo`/`printf` commands, so no real language
+//! toolchains are required.
 
 // Each integration-test binary pulls in this module but uses only a subset of
 // the helpers; silence the resulting per-binary dead-code warnings so the suite
@@ -16,40 +16,33 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-/// A throwaway repo rooted at a unique temp directory.
 pub struct Fixture {
     dir: TempDir,
 }
 
 impl Fixture {
-    /// Create an empty fixture repo in a fresh temp dir.
     pub fn new() -> Self {
         Fixture {
             dir: TempDir::new().expect("create temp dir"),
         }
     }
 
-    /// The repo root path.
     pub fn root(&self) -> &Path {
         self.dir.path()
     }
 
-    /// Absolute path to a repo-relative entry.
     pub fn join(&self, rel: &str) -> PathBuf {
         self.dir.path().join(rel)
     }
 
-    /// Whether a repo-relative path exists.
     pub fn exists(&self, rel: &str) -> bool {
         self.join(rel).exists()
     }
 
-    /// Create a directory (and parents) at a repo-relative path.
     pub fn mkdir(&self, rel: &str) {
         std::fs::create_dir_all(self.join(rel)).expect("mkdir");
     }
 
-    /// Write a file (creating parents) at a repo-relative path.
     pub fn write(&self, rel: &str, contents: &str) {
         let path = self.join(rel);
         if let Some(parent) = path.parent() {
@@ -58,12 +51,22 @@ impl Fixture {
         std::fs::write(&path, contents).expect("write file");
     }
 
-    /// Write `lattice.json` at the repo root.
+    /// Write an executable file (creating parents) at a repo-relative path.
+    /// Used to drop stand-in tools that a task resolves off `PATH`.
+    #[cfg(unix)]
+    pub fn write_exec(&self, rel: &str, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        self.write(rel, contents);
+        let path = self.join(rel);
+        let mut perms = std::fs::metadata(&path).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod");
+    }
+
     pub fn config(&self, json: &str) {
         self.write("lattice.json", json);
     }
 
-    /// Read a repo-relative file to a string.
     pub fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.join(rel)).expect("read file")
     }

@@ -9,17 +9,32 @@ order: 1
 
 ## Install
 
+Lattice is pre-release. Install it from source, which needs Rust 1.75 or newer:
+
 ```sh
-cargo install lattice
+cargo install --git https://github.com/latticeandcompany/lattice lattice
+```
+
+Or clone and build:
+
+```sh
+git clone https://github.com/latticeandcompany/lattice
+cd lattice
+cargo build --release
 ```
 
 Verify the install:
 
 ```sh
-lattice --version
+lattice version
 ```
 
-## Point it at your repo
+A `curl | sh` installer that places a target-matched binary in `./.lattice/bin/`
+ships with the first tagged release. Once it exists, a repo that already has a
+`lattice.json` will get the exact version pinned by `latticeVersion`, so everyone on
+the project runs the same build, and `rm -rf .lattice` will remove it.
+
+## Describe your repo
 
 From the root of a monorepo, create a `lattice.json` that declares your workspaces
 and tasks:
@@ -43,6 +58,6 @@ and tasks:
 lattice run build
 ```
 
-Lattice builds the projects in the right order, runs independent ones at the same
-time, and caches each result. Run it again and the parts that didn't change come
-back from cache instead of rebuilding, so you get your terminal back sooner.
+Lattice builds the projects in dependency order and runs independent ones at the
+same time. Each result is recorded; see [Caching](/lattice/docs/caching) for what a
+second run skips.

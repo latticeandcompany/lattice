@@ -1,0 +1,105 @@
+name: Bug report
+description: Lattice did something wrong — a wrong command, a bad cache result, a crash.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fill in what you can. A `lattice.json` that reproduces the problem is the most useful thing you can include.
+
+        Security vulnerabilities do not go here — see [SECURITY.md](https://github.com/latticeandcompany/lattice/blob/mega/.github/SECURITY.md).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: What you expected, and what Lattice did instead.
+      placeholder: |
+        Expected: `lattice run build` rebuilds api after I edited api/src/main.go
+        Actual: it reported a cache hit and skipped the task
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact invocation, including flags.
+      render: shell
+      placeholder: lattice run build --filter api
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: Output of `lattice version --json`.
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+      placeholder: macOS 15.3 (aarch64) / Ubuntu 24.04 (x86_64) / Windows 11 (x86_64)
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant lattice.json
+      description: The workspace and task definitions involved. Trim anything unrelated; redact secrets.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: Run it again with `-l` (`--loquacious`) for the plain line-by-line log and paste that here.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Lattice
+      description: Best guess is fine.
+      options:
+        - Not sure
+        - Task running / scheduling
+        - Caching (wrong hit, missed invalidation, restore)
+        - Tool detection (wrong or no driver found)
+        - Toolchain / engine resolution or provisioning
+        - lattice.json parsing or validation
+        - CLI output / interactive UI
+        - Docs site
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal repository or a numbered list. Note whether it reproduces from a clean `.lattice/cache`.
+      placeholder: |
+        1. Clone https://github.com/…/repro
+        2. rm -rf .lattice/cache
+        3. lattice run build
+        4. Edit apps/api/src/main.go
+        5. lattice run build → reports cache hit
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I am on the latest release, or I have stated the version above and it is older.
+          required: true

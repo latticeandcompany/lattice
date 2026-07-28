@@ -13,7 +13,6 @@ fn init_scaffolds_a_repo_and_runs_cleanly() {
 
     fx.lattice().args(["init", "-y"]).assert().success();
 
-    // The three artifacts are written.
     assert!(fx.exists("lattice.json"), "lattice.json written");
     assert!(
         fx.exists(".lattice/schema.json"),
@@ -22,8 +21,7 @@ fn init_scaffolds_a_repo_and_runs_cleanly() {
     assert!(fx.exists(".gitignore"), ".gitignore written");
 
     // The skeleton declares zero workspaces, so `run build` has nothing to do:
-    // it must exit 0 (a fresh scaffold is not a failure) with a clean, actionable
-    // notice and NEVER a panic. (The scaffolded config is valid and loads fine.)
+    // it must exit 0 with an actionable notice and no panic.
     fx.lattice()
         .args(["run", "build", "-l"])
         .assert()
@@ -37,7 +35,6 @@ fn init_scaffolds_a_repo_and_runs_cleanly() {
 fn init_force_guard() {
     let fx = Fixture::new();
 
-    // First init succeeds.
     fx.lattice().args(["init", "-y"]).assert().success();
 
     // Second init without --force is rejected.

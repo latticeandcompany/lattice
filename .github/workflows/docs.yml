@@ -1,0 +1,73 @@
+name: Docs site
+
+on:
+  push:
+    branches: [mega]
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize Pages deploys, but never cancel one mid-flight — a cancelled deploy can
+# leave the live site on a partial upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: apps/web
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The search index is generated post-build by Pagefind. If it goes missing the
+      # site still renders, so assert it here rather than shipping a dead search box.
+      - name: Verify search index
+        run: test -f dist/pagefind/pagefind.js
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/mega' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    name: deploy
+    needs: build
+    if: github.ref == 'refs/heads/mega' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

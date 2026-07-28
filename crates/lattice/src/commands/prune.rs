@@ -22,7 +22,7 @@ impl PruneArgs {
     pub async fn execute(&self) -> Result<()> {
         let cwd = std::env::current_dir()?;
         let root = find_root(&cwd).ok_or_else(|| {
-            anyhow::anyhow!("No lattice.json found in this directory or any parent.")
+            anyhow::anyhow!("no lattice.json found in this directory or any parent")
         })?;
         crate::schema::ensure_schema(&root);
         let config = lattice_config::load_config(&root)?;

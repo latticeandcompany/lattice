@@ -2,7 +2,7 @@ use std::path::Path;
 
 /// The canonical JSON Schema for `lattice.json`, bundled into the binary. It is
 /// written to `<root>/.lattice/schema.json` so the config self-validates in
-/// editors — the config's `$schema` points at that local file. The copy is
+/// editors. The config's `$schema` points at that local file. The copy is
 /// committed and kept present by [`ensure_schema`].
 pub const SCHEMA_JSON: &str = include_str!("../assets/schema.json");
 

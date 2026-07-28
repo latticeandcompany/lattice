@@ -17,7 +17,7 @@ target/
 #.idea/
 
 # Claude Code agent worktrees (ephemeral, machine-specific).
-.claude/
+.claude/worktrees/
 
 # Lattice local-first runtime artifacts — never commit these (machine-specific, ephemeral).
 # The schema (.lattice/schema.json) IS meant to be checked in.
@@ -27,3 +27,19 @@ target/
 .lattice-setup-marker
 
 apps/web/node_modules/
+
+# Astro build output and generated content types for the site.
+apps/web/dist/
+apps/web/.astro/
+
+# Nested-repo example: the inner runner's dependency tree, its own cache, and
+# everything either runner builds.
+examples/nested-repo/frontend/node_modules/
+examples/nested-repo/**/.turbo/
+examples/nested-repo/**/dist/
+
+# Running the examples (README/CONTRIBUTING tell contributors to) leaves the same
+# ephemeral runtime artifacts there as at the repo root.
+examples/**/.lattice/cache/
+examples/**/.lattice/toolchains/
+examples/**/.lattice/bin/

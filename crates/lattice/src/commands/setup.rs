@@ -18,7 +18,7 @@ use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_na
     long_about = "Provision pinned toolchains and install native dependencies.\n\n\
 Toolchains declared under `engines` are provisioned first (into .lattice/toolchains), so \
 dependency installers see the pinned PATH. Then each workspace's package manager installs \
-its dependencies. Works on a toolchain-only repo with no workspaces, too."
+its dependencies. A repo with no workspaces still has its `engines` provisioned."
 )]
 pub struct SetupArgs {
     /// Only set up specific workspaces (by name).
@@ -34,8 +34,8 @@ impl SetupArgs {
         let cwd = std::env::current_dir()?;
         let root = find_root(&cwd).ok_or_else(|| {
             anyhow::anyhow!(
-                "No lattice.json found in this directory or any parent. \
-                 Run `lattice init` to create one."
+                "no lattice.json found in this directory or any parent; \
+                 run `lattice init` to create one"
             )
         })?;
 
@@ -49,7 +49,6 @@ impl SetupArgs {
 
         println!("{}", banner_line("setup"));
 
-        // --- Step 1: provision toolchains FIRST -----------------------------
         // Root engines, so dependency installers see the pinned PATH. Memoize
         // by the merged engine spec so identical toolchains install once.
         let mut memo: HashMap<String, Vec<PathBuf>> = HashMap::new();
@@ -68,7 +67,6 @@ impl SetupArgs {
                 .collect()
         };
 
-        // Provision each workspace's toolchains and remember its PATH prefix.
         let mut ws_prepend: HashMap<String, Vec<PathBuf>> = HashMap::new();
         for ws in &selected {
             let merged = resolve_engines(&config.engines, &ws.engines);
@@ -85,7 +83,6 @@ impl SetupArgs {
             ws_prepend.insert(ws.name.clone(), pp);
         }
 
-        // --- Step 2: native dependency installers ---------------------------
         let mut any_failed = false;
         let mut installed_any = false;
 
@@ -112,7 +109,7 @@ impl SetupArgs {
                 Some(cmd) => cmd,
                 None => {
                     reporter.note(&format!(
-                        "{}: no known dependency installer for '{}' — skipping",
+                        "{}: no known dependency installer for '{}'; skipping",
                         ws.name, driver.tool
                     ));
                     continue;
@@ -133,7 +130,7 @@ impl SetupArgs {
             installed_any = true;
             println!(
                 "{} {} {}",
-                paint_teal(ROSETTE),
+                paint_teal("●"),
                 style(&ws.name).bold(),
                 style(&install_cmd).dim()
             );
@@ -155,7 +152,7 @@ impl SetupArgs {
         }
 
         if any_failed {
-            bail!("one or more workspaces failed setup.");
+            bail!("one or more workspaces failed setup");
         }
 
         let _ = installed_any;
@@ -204,7 +201,8 @@ pub fn install_command_for(tool: &str, has_wrapper: bool) -> Option<String> {
     Some(cmd.to_string())
 }
 
-/// The lockfiles whose mtime (vs the setup marker) decides whether deps changed.
+/// Lockfiles whose mtime is compared against the setup marker to decide whether
+/// dependencies need reinstalling.
 const LOCKFILES: &[&str] = &[
     "package-lock.json",
     "yarn.lock",

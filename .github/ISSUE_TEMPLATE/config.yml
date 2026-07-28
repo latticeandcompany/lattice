@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/latticeandcompany/lattice/discussions
+    about: Usage questions, configuration help, and open-ended ideas belong in Discussions.
+  - name: Documentation
+    url: https://latticeandcompany.github.io/lattice/docs
+    about: Getting started, configuration reference, toolchains, and caching.
+  - name: Report a security vulnerability
+    url: https://github.com/latticeandcompany/lattice/security/advisories/new
+    about: Never report a vulnerability in a public issue. Open a private advisory instead.
+  - name: Code of Conduct
+    url: https://github.com/latticeandcompany/lattice/blob/mega/.github/CODE_OF_CONDUCT.md
+    about: Expected behavior, prohibited conduct, and how to report a violation.

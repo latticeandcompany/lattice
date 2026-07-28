@@ -3,8 +3,8 @@
 # stress-test.sh — exhaustive, self-contained stress test for the `lattice` CLI.
 #
 # It builds the binary, spins up a throwaway environment containing a
-# production-shaped polyglot monorepo (plus a battery of focused sub-repos),
-# exercises EVERY command, flag, and code path the tool exposes, asserts the
+# production-shaped monorepo spanning several languages, plus focused sub-repos,
+# exercises every command, flag, and code path the tool exposes, asserts the
 # observable behavior of each, and then tears the environment down.
 #
 # It is deterministic and hermetic: it needs no network and no language
@@ -275,7 +275,7 @@ sed "s#LATTICE_VERSION#$VERSION#" "$PROD/lattice.json" > "$PROD/lattice.json.tmp
 # Sanity: config must load.
 lat "$PROD" run definitely-not-a-task ; t_bad "prod config loads (unknown task still parses config)"
 t_has "unknown task names the task"     "definitely-not-a-task"
-t_has "unknown task lists available"    "Available tasks:"
+t_has "unknown task lists available"    "available tasks:"
 
 # =========================================================================
 # 4. setup / toolchain gradient (host / validate / provision).
@@ -467,8 +467,8 @@ sect "driver detection (never-prescribe) — all ecosystems"
 
 DET="$ENVROOT/detect"
 PKG='{ "scripts": { "build": "tsc" } }'
-# npm also declares a `dev` script, so a persistent `dev` task resolves here —
-# but must NOT be fabricated for the direct-invoke drivers (cargo/go/…).
+# npm also declares a `dev` script, so a persistent `dev` task resolves here,
+# but must not be fabricated for the direct-invoke drivers (cargo/go/…).
 PKG_DEV='{ "scripts": { "build": "tsc", "dev": "vite" } }'
 mkdir -p "$DET"
 w "$DET/pkgs/npm/package-lock.json" "";      w "$DET/pkgs/npm/package.json" "$PKG_DEV"
@@ -548,7 +548,7 @@ sect "error paths & guardrails"
 # No config anywhere.
 mkdir -p "$ENVROOT/empty"
 lat "$ENVROOT/empty" run build ; t_bad "run without lattice.json fails"
-t_has "missing-config message" "No lattice.json found"
+t_has "missing-config message" "no lattice.json found"
 
 mkerr() { # mkerr <name> ; sets ERR to the repo dir and creates it
   ERR="$ENVROOT/err/$1"; mkdir -p "$ERR"
@@ -585,7 +585,7 @@ cat > "$ERR/lattice.json" <<'JSON'
   "tasks": { "x": { "dependsOn": ["y"] }, "y": { "dependsOn": ["x"] } } }
 JSON
 lat "$ERR" run x ; t_bad "task cycle is rejected"
-t_has "cycle message" "Cycle detected"
+t_has "cycle message" "cycle detected"
 
 # Persistent task depended upon.
 mkerr persist_dep; mkdir -p "$ERR/a"
@@ -613,7 +613,7 @@ cat > "$ERR/lattice.json" <<'JSON'
   ], "tasks": { "build": {} } }
 JSON
 lat "$ERR" run build ; t_bad "duplicate workspace path is rejected"
-t_has "dup-path message" "Duplicate workspace path"
+t_has "dup-path message" "duplicate workspace path"
 
 # Unknown string-form engine.
 mkerr badengine
@@ -676,6 +676,83 @@ t_has "prune under limit removes nothing" "removed 0 artifacts"
 # Prune with neither flag nor setting.
 lat "$DET" prune ; t_bad "prune with no size and no setting fails"
 t_has "prune-no-size message" "no max cache size"
+
+# =========================================================================
+# 13. Passthrough: a nested repo driven by its own runner.
+# =========================================================================
+sect "passthrough — nested repo with its own runner"
+
+# A manual workspace whose script shells out to a nested repo's own runner. The
+# runner is a stub on PATH that fans a task over the nested packages and leaves a
+# nondeterministic marker in its own cache dir — which the `ignore` set must keep
+# out of Lattice's key.
+NEST="$ENVROOT/nested"
+mkdir -p "$NEST/bin" "$NEST/frontend/packages/ui/src" "$NEST/frontend/packages/site/src" "$NEST/api/src"
+cat > "$NEST/bin/turbo" <<'SH'
+#!/bin/sh
+set -e
+[ "$1" = "run" ] || { echo "turbo-stub: expected 'run', got '$*'" >&2; exit 2; }
+mkdir -p .turbo
+echo "$$ $(date +%s)" > .turbo/last-run
+for pkg in packages/*; do
+  mkdir -p "$pkg/dist"
+  cat "$pkg/src/index.js" > "$pkg/dist/bundle.js"
+done
+echo "turbo-stub: $2 complete"
+SH
+chmod +x "$NEST/bin/turbo"
+w "$NEST/frontend/package.json" '{ "name": "frontend", "private": true }'
+w "$NEST/frontend/turbo.json"   '{ "tasks": { "build": {} } }'
+w "$NEST/frontend/packages/ui/src/index.js"   "ui v1
+"
+w "$NEST/frontend/packages/site/src/index.js" "site v1
+"
+w "$NEST/api/src/main.txt" "api v1
+"
+cat > "$NEST/lattice.json" <<'JSON'
+{
+  "workspaces": [
+    { "name": "frontend", "path": "frontend", "auto": false,
+      "scripts": { "build": "turbo run build" } },
+    { "name": "api", "path": "api", "auto": false, "dependsOn": ["frontend"],
+      "scripts": { "build": "mkdir -p dist && cp ../frontend/packages/site/dist/bundle.js dist/site.js && echo api-built" } }
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["**/*"],
+      "ignore": ["**/node_modules/**", "**/.turbo/**", "**/dist/**"],
+      "outputs": ["dist/**", "packages/*/dist/**"]
+    },
+    "lint": {}
+  }
+}
+JSON
+
+NESTPATH="PATH=$NEST/bin:$PATH"
+late "$NESTPATH" "$NEST" run build -l ; t_ok "passthrough cold run exits 0"
+t_has "inner runner was invoked"        "turbo-stub: build complete"
+t_has "downstream ran after the nested repo" "api-built"
+t_file "$NEST/frontend/packages/site/dist/bundle.js" "inner runner produced its artifacts"
+t_nofile "$NEST/.lattice/toolchains" "passthrough repo provisions no toolchains"
+
+late "$NESTPATH" "$NEST" run build -l ; t_ok "passthrough warm run exits 0"
+t_has "nested repo caches as one unit" "frontend:build: cache hit"
+t_hasnt "a hit never invokes the inner runner" "turbo-stub"
+
+rm -rf "$NEST/frontend/packages/ui/dist" "$NEST/frontend/packages/site/dist"
+late "$NESTPATH" "$NEST" run build ; t_ok "passthrough restore run exits 0"
+t_file "$NEST/frontend/packages/ui/dist/bundle.js" "hit restored the inner artifacts"
+
+w "$NEST/frontend/packages/ui/src/index.js" "ui v2 CHANGED
+"
+late "$NESTPATH" "$NEST" run build -l ; t_ok "passthrough run after inner edit exits 0"
+t_hasnt "an inner source edit busts the nested key" "frontend:build: cache hit"
+t_has   "the busted key re-invokes the inner runner" "turbo-stub: build complete"
+
+# A manual workspace must declare any task invoked directly.
+late "$NESTPATH" "$NEST" run lint ; t_bad "root task missing from a manual workspace fails"
+t_has "missing-script message names the workspace" "declares no command for task"
 
 # =========================================================================
 # Summary.

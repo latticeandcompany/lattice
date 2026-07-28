@@ -14,13 +14,13 @@ use crate::schema::SCHEMA_JSON;
 
 /// Lines that init ensures are present in `.gitignore` (cache + provisioned
 /// toolchains are local artifacts). The committed `.lattice/schema.json` stays
-/// tracked and is deliberately NOT ignored.
+/// tracked and is not ignored.
 const GITIGNORE_LINES: &[&str] = &[".lattice/cache/", ".lattice/toolchains/"];
 
 #[derive(Args, Debug)]
 #[command(long_about = "Scaffold a lattice.json in the current directory.\n\n\
 With --yes (or no TTY) writes a minimal default skeleton without prompting. On an \
-interactive terminal, a short wizard tailors the config to your repo. Also writes a \
+interactive terminal it prompts for your workspaces and engines. Also writes a \
 committed .lattice/schema.json and ensures .gitignore covers local artifacts.")]
 pub struct InitArgs {
     /// Overwrite an existing lattice.json.
@@ -40,11 +40,12 @@ impl InitArgs {
             bail!("lattice.json already exists (use --force to overwrite)");
         }
 
-        // Never hang a pipeline: no-TTY OR `-y/--yes` writes the skeleton.
+        // Never hang a pipeline: with no TTY, or with `-y`/`--yes`, write the
+        // skeleton instead of prompting.
         let tty = console::user_attended();
 
-        // Lead an interactive init with the branded mark (BRAND.md §6/§7); skip
-        // it for pipes/CI so scripted `init --yes` output stays clean.
+        // Lead an interactive init with the branded mark; skip it for pipes/CI
+        // so scripted `init --yes` output stays clean.
         if tty {
             println!("{}", logo());
             println!();
@@ -62,7 +63,7 @@ impl InitArgs {
     }
 }
 
-/// The default no-prompt skeleton (decisions #22/#23).
+/// The default no-prompt skeleton.
 pub fn default_skeleton(version: &str) -> Value {
     json!({
         "$schema": ".lattice/schema.json",
@@ -130,10 +131,6 @@ fn print_success(config: &Value) {
         println!("next: {}", style("lattice setup").bold());
     }
 }
-
-// ---------------------------------------------------------------------------
-// Interactive wizard (TTY only; not unit-tested)
-// ---------------------------------------------------------------------------
 
 fn interactive_wizard() -> Result<Value> {
     let theme = ColorfulTheme::default();
@@ -220,8 +217,8 @@ fn interactive_wizard() -> Result<Value> {
         println!(
             "{}",
             style(
-                "note: add bespoke engines (versionCmd/installCmd) by hand-editing \
-                 lattice.json afterwards (see .lattice/schema.json)."
+                "note: engines that need a versionCmd or installCmd must be added \
+                 by editing lattice.json; see .lattice/schema.json"
             )
             .dim()
         );
@@ -239,7 +236,7 @@ fn interactive_wizard() -> Result<Value> {
 }
 
 /// Prompt for a well-known engine name + a version constraint. The wizard only
-/// ever emits well-known, string-form engines (decision #11).
+/// emits well-known, string-form engines.
 fn pick_engine(theme: &ColorfulTheme) -> Result<(String, String)> {
     let engines = lattice_config::WELL_KNOWN_ENGINES;
     let idx = Select::with_theme(theme)
@@ -281,7 +278,6 @@ mod tests {
         let once = ensure_gitignore_lines("", GITIGNORE_LINES);
         let twice = ensure_gitignore_lines(&once, GITIGNORE_LINES);
         assert_eq!(once, twice, "appending twice must not duplicate lines");
-        // Exactly one occurrence of each line.
         assert_eq!(twice.matches(".lattice/cache/").count(), 1);
         assert_eq!(twice.matches(".lattice/toolchains/").count(), 1);
     }
