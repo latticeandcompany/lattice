@@ -189,6 +189,9 @@ A modular scale (~1.25). Adjust per surface, but keep the ratio.
 **Precise and confident.** Terse, technical, understated. We let the product
 speak and trust the reader to be smart. Vercel / Linear register — never hype.
 
+Important note:
+While local first, turborepo interop, devloper choice are all core pillars of this project, we try to avoid talking about them. They are expected, not something to brag about
+
 **We are:**
 
 - **Direct.** Short sentences. Say the thing. "Builds in parallel. Caches

@@ -9,7 +9,7 @@
     { "name": "dagger", "path": "crates/dagger", "dependsOn": ["lattice-config", "lattice-workspace"] },
     { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
     { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } }
+    { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } }
   ],
   "engines": {
     "cargo": ">=1.75.0"
