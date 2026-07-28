@@ -286,28 +286,6 @@ If yes, commit sooner.
 
 ---
 
-## Branch Strategy
-
-```
-mega
-↑
-dev
-↑
-feature/*
-fix/*
-refactor/*
-```
-
-Required flow:
-
-```
-feature/* → dev → mega
-```
-
-Never merge directly into `mega`.
-
----
-
 # Testing, Linting & Accessibility
 
 Humans should not be burdened with tooling friction.
