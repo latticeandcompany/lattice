@@ -3,8 +3,14 @@
 #
 #   curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
 #
-# Everything lands in ./.lattice/bin — no global paths, no package manager, no
-# PATH edits. To remove it: rm -rf .lattice
+# Everything lands in ./.lattice/bin — no global paths, no package manager. That
+# directory is then added to PATH in your shell config, so `lattice` in this repo
+# means the version this repo pins. To skip that edit:
+#
+#   curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh -s -- --no-modify-path
+#
+# or set LATTICE_NO_PATH=1. To remove it: rm -rf .lattice, and delete the lattice
+# line from the shell config named at the end of the install.
 #
 # Which version it installs, in order:
 #   1. $LATTICE_VERSION, if set
@@ -27,6 +33,16 @@ fi
 
 say() { printf '%s\n' "$*"; }
 die() { printf '%serror:%s %s\n' "$RED" "$RST" "$1" >&2; exit 1; }
+
+# --- options -----------------------------------------------------------------
+MODIFY_PATH=1
+[ -z "${LATTICE_NO_PATH:-}" ] || MODIFY_PATH=0
+for arg in "$@"; do
+	case "$arg" in
+		--no-modify-path) MODIFY_PATH=0 ;;
+		*) die "unknown option: $arg" ;;
+	esac
+done
 
 # --- fetchers ----------------------------------------------------------------
 if command -v curl >/dev/null 2>&1; then
@@ -173,13 +189,101 @@ if [ -f .gitignore ] && ! grep -q '^\.lattice/bin/$' .gitignore; then
 	say "${DIM}added .lattice/bin/ to .gitignore${RST}"
 fi
 
+# --- PATH --------------------------------------------------------------------
+# Absolute, because a line in a shell config cannot be relative to whatever
+# directory you happen to be standing in when the shell starts.
+BIN_ABS="$PWD/$BIN_DIR"
+
+# The line is written single-quoted, which a path containing a single quote would
+# break. Rare enough to hand back rather than escape around.
+case "$BIN_ABS" in
+	*\'*) MODIFY_PATH=0 ;;
+esac
+
+# Which files the user's shell will actually read.
+rc_files() {
+	case "${SHELL##*/}" in
+		zsh) printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+		bash)
+			printf '%s\n' "$HOME/.bashrc"
+			# A macOS Terminal tab is a login shell: it reads .bash_profile and
+			# never .bashrc unless .bash_profile says to.
+			if [ -f "$HOME/.bash_profile" ] && ! grep -q 'bashrc' "$HOME/.bash_profile"; then
+				printf '%s\n' "$HOME/.bash_profile"
+			fi
+			;;
+		fish) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
+		*) printf '%s\n' "$HOME/.profile" ;;
+	esac
+}
+
+# fish keeps PATH in its own list and has its own syntax for prepending to it.
+path_line() {
+	case "$1" in
+		fish | *.fish) printf "fish_add_path '%s'\n" "$BIN_ABS" ;;
+		*) printf "export PATH='%s':\"\$PATH\"\n" "$BIN_ABS" ;;
+	esac
+}
+
+ON_PATH=0
+case ":$PATH:" in
+	*":$BIN_ABS:"*) ON_PATH=1 ;;
+esac
+
+if [ "$ON_PATH" -eq 1 ]; then
+	PATH_NOTE="${DIM}already on PATH${RST}"
+elif [ "$MODIFY_PATH" -eq 0 ]; then
+	PATH_NOTE="  to put it on PATH:  $(path_line "${SHELL##*/}")"
+else
+	# Newline-split the list so a $HOME with a space in it survives.
+	RC_LIST="$(rc_files)"
+	RC_IFS="$IFS"
+	IFS='
+'
+	set -f
+	EDITED=''
+	FOUND=''
+	for rc in $RC_LIST; do
+		if [ -f "$rc" ] && grep -qF "$BIN_ABS" "$rc"; then
+			FOUND="$FOUND $rc"
+			continue
+		fi
+		mkdir -p "$(dirname "$rc")" 2>/dev/null || true
+		# The subshell is what makes 2>/dev/null cover a failed redirection too:
+		# that error is reported by the shell opening the file, not by printf.
+		if ( { printf '\n# lattice (%s)\n' "$PWD"; path_line "$rc"; } >>"$rc" ) 2>/dev/null; then
+			EDITED="$EDITED $rc"
+		else
+			say "${DIM}could not write $rc${RST}"
+		fi
+	done
+	set +f
+	IFS="$RC_IFS"
+
+	if [ -n "$EDITED" ]; then
+		PATH_NOTE="${DIM}added .lattice/bin to PATH in${RST}${EDITED} ${DIM}— open a new shell to use it${RST}"
+	elif [ -n "$FOUND" ]; then
+		PATH_NOTE="${DIM}already in${RST}${FOUND} ${DIM}— open a new shell to use it${RST}"
+	else
+		PATH_NOTE="  to put it on PATH:  $(path_line "${SHELL##*/}")"
+	fi
+fi
+
+# Only a shell that has already picked the line up can run the bare name.
+if [ "$ON_PATH" -eq 1 ]; then
+	RUN='lattice'
+else
+	RUN='./.lattice/bin/lattice'
+fi
+
 say ''
 say "✓ ${BOLD}lattice $VERSION${RST} installed at $VERSIONED"
+say "$PATH_NOTE"
 say ''
-say "  run       ${BOLD}./.lattice/bin/lattice run build${RST}"
-say "  commands  ./.lattice/bin/lattice --help"
+say "  run       ${BOLD}$RUN run build${RST}"
+say "  commands  $RUN --help"
 say "  remove    rm -rf .lattice"
 if [ ! -f lattice.json ]; then
 	say ''
-	say "  This directory has no lattice.json yet. ./.lattice/bin/lattice init writes one."
+	say "  This directory has no lattice.json yet. $RUN init writes one."
 fi

@@ -11,7 +11,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0-beta-1"
+version = "1.0.0-beta-2"
 edition = "2021"
 # The floor comes from the dev tree: jsonschema -> idna -> idna_adapter -> icu_*.
 # Verify with `cargo +<msrv> check --workspace --all-targets` before changing it.

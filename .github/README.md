@@ -86,7 +86,7 @@ One file at the root. Every command is visible, and you can run any of them by h
 
 ```json
 {
-  "latticeVersion": "1.0.0-beta-1",
+  "latticeVersion": "1.0.0-beta-2",
   "workspaces": [
     { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } },
     { "name": "api", "path": "services/api", "engines": { "go": ">=1.22" } },

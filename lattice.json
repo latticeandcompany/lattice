@@ -1,6 +1,6 @@
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0-beta-1",
+  "latticeVersion": "1.0.0-beta-2",
   "workspaces": [
     { "name": "lattice-config", "path": "crates/lattice-config" },
     { "name": "lattice-output", "path": "crates/lattice-output" },

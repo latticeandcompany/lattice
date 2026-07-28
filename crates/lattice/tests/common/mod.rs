@@ -124,6 +124,7 @@ impl Fixture {
 		// it is killed.
 		std::fs::remove_file(&versioned).ok();
 		std::fs::copy(&source, &versioned).expect("copy the built binary");
+		wait_until_executable(&versioned);
 		let link = bin_dir.join(format!("lattice{}", std::env::consts::EXE_SUFFIX));
 		std::fs::remove_file(&link).ok();
 		#[cfg(unix)]
@@ -156,6 +157,26 @@ impl Fixture {
 			.display()
 			.to_string()
 	}
+}
+
+/// Block until an exec of `bin` stops failing with `ETXTBSY`.
+///
+/// The copy above holds a write handle on the new binary for as long as it takes.
+/// Tests run as threads of one process, so a `fork` from a sibling test during
+/// that window leaves the child holding a reference to that handle too, and the
+/// kernel refuses to exec a file anyone can still write to. Waiting for the
+/// sibling to get out of the way here keeps that race out of every test that
+/// installs a managed binary and immediately runs it.
+fn wait_until_executable(bin: &Path) {
+	for _ in 0..100 {
+		match std::process::Command::new(bin).arg("--version").output() {
+			Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+				std::thread::sleep(std::time::Duration::from_millis(20));
+			}
+			_ => return,
+		}
+	}
+	panic!("{} was still busy after 2s", bin.display());
 }
 
 /// A release, published to a directory and served over `file://`.
