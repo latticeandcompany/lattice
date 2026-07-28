@@ -12,11 +12,11 @@
 		"astro": "astro"
 	},
 	"dependencies": {
-		"@astrojs/mdx": "^7.0.4",
-		"@astrojs/react": "^6.0.1",
+		"@astrojs/mdx": "^7.0.5",
+		"@astrojs/react": "^6.0.2",
 		"@astrojs/sitemap": "^3.7.3",
 		"@tailwindcss/vite": "^4.3.3",
-		"astro": "^7.1.4",
+		"astro": "^7.1.5",
 		"astro-seo": "^1.1.0",
 		"bootstrap": "^5.3.8",
 		"bootstrap-icons": "^1.13.1",
