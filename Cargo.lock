@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "dagger"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "lattice"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-cache"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-config"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-output"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "console",
  "indicatif",
@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-runner"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-workspace"
-version = "0.1.0"
+version = "1.0.0-beta-1"
 dependencies = [
  "anyhow",
  "indexmap",

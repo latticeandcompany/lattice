@@ -9,6 +9,12 @@
 #
 # Usage: scripts/sync-version.sh <version>
 # Example: scripts/sync-version.sh 0.2.0
+#          scripts/sync-version.sh 0.2.0-beta.1
+#
+# Pre-releases are allowed: Cargo, npm and `semver::Version::parse` all take them,
+# and GitHub's /releases/latest skips a release marked pre-release, so a beta tag
+# does not become what a bare `install.sh` or `lattice upgrade` picks up. Build
+# metadata (`+sha`) is not allowed — see below.
 #
 # Finishes by running check-versions.sh, which is the same gate release.yml uses.
 set -euo pipefail
@@ -16,13 +22,32 @@ set -euo pipefail
 if [ -z "${1-}" ]; then
 	echo "Usage: $0 <version>"
 	echo "Example: $0 0.2.0"
+	echo "         $0 0.2.0-beta.1"
 	exit 1
 fi
 
-version="$1"
+version="${1#v}"
 
-if ! echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-	echo "Error: version must be in semver format (e.g. 0.2.0)"
+# The semver.org regex, minus build metadata. A pre-release suffix reaches an
+# asset filename and a URL unharmed, but GitHub rewrites every character outside
+# [A-Za-z0-9._-] in an uploaded asset's name, so a `+` in the version would make
+# release.yml publish `lattice-0.2.0.sha-<target>.tar.gz` while the installer and
+# `lattice upgrade` both go looking for the `+` spelling. Refuse it here rather
+# than at the end of a six-target build.
+semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+semver="$semver"'(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+semver="$semver"'(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+
+case "$version" in
+	*+*)
+		echo "Error: build metadata ('+...') cannot be released — GitHub rewrites '+'"
+		echo "       in asset names, so the installer would not find the archive."
+		exit 1
+		;;
+esac
+
+if ! echo "$version" | grep -qE "$semver"; then
+	echo "Error: version must be semver (e.g. 0.2.0, 0.2.0-beta.1, 1.0.0-rc.2)"
 	exit 1
 fi
 

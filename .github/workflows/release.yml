@@ -171,11 +171,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag='${{ needs.version.outputs.tag }}'
+          version='${{ needs.version.outputs.version }}'
+
+          # A semver pre-release (0.2.0-beta.1) ships as a GitHub pre-release, so
+          # /releases/latest keeps naming the last stable build — that endpoint is
+          # what install.sh and `lattice upgrade` read when nothing pins a version.
+          prerelease=()
+          case "$version" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" assets/* --clobber
           else
             gh release create "$tag" assets/* \
               --title "$tag" \
               --generate-notes \
-              --verify-tag
+              --verify-tag \
+              "${prerelease[@]}"
           fi

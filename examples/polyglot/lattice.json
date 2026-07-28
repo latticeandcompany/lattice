@@ -1,6 +1,6 @@
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "0.1.0",
+  "latticeVersion": "1.0.0-beta-1",
   "workspaces": [
     { "name": "web", "path": "apps/web" },
     { "name": "api", "path": "apps/api" },
