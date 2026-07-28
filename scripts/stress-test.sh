@@ -56,7 +56,10 @@ if [ ! -x "$BIN" ]; then
 fi
 
 VERSION="$("$BIN" version --json 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
-[ -n "$VERSION" ] || VERSION="0.1.0"
+if [ -z "$VERSION" ]; then
+  say "${RED}\`version --json\` produced no version field${RST}"
+  exit 1
+fi
 say "binary: $BIN"
 say "version: $VERSION"
 
@@ -148,6 +151,8 @@ t_has "\`version\` splash shows version"      "$VERSION"
 lat "$ENVROOT" version --json ; t_ok "\`version --json\` exits 0"
 t_has "version json has version field" "\"version\":\"$VERSION\""
 t_has "version json has target field"  "\"target\""
+# A bare arch ("aarch64") is not a target triple; the installer needs the triple.
+t_hasE "version json target is a triple" '"target":"[a-z0-9_]+-[a-z0-9_-]+"'
 
 lat "$ENVROOT" run --help ; t_ok "\`run --help\` exits 0"
 t_has "run help documents --filter"   "--filter"

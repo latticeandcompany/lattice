@@ -2,7 +2,7 @@
 title: Nested repos
 description: Wrapping a repo that already has its own task runner.
 group: Guides
-order: 3
+order: 2
 ---
 
 # Nested repos

@@ -11,7 +11,7 @@
 
 <br />
 
-![Rust](https://img.shields.io/badge/Rust-1.75+-000000?logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.86+-000000?logo=rust&logoColor=white)
 ![Cargo](https://img.shields.io/badge/Cargo-workspace-000000?logo=rust&logoColor=white)
 ![Astro](https://img.shields.io/badge/Astro-7-BC52EE?logo=astro&logoColor=white)
 ![Bootstrap](https://img.shields.io/badge/Bootstrap-5-7952B3?logo=bootstrap&logoColor=white)
@@ -32,6 +32,8 @@
 Lattice runs the tasks in your monorepo in dependency order and in parallel, then caches every result by content so unchanged work is skipped. It reads the tools each project already declares, across JavaScript, Rust, Python, Go, Ruby, the JVM and .NET, and pins those versions so everyone builds against the same ones.
 
 ## Install
+
+macOS and Linux. On Windows, use WSL2.
 
 Lattice is pre-release, so install it from source:
 
@@ -123,7 +125,7 @@ Full documentation: **[latticeandcompany.github.io/lattice/docs](https://lattice
 
 ## Development
 
-**Requires:** Rust 1.75+ with `rustfmt` and `clippy`. Node 26+ only for the docs site.
+**Requires:** Rust 1.86+ with `rustfmt` and `clippy`. Node 26+ only for the docs site.
 
 ```bash
 git clone https://github.com/latticeandcompany/lattice

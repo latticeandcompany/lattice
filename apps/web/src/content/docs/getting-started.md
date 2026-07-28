@@ -9,7 +9,9 @@ order: 1
 
 ## Install
 
-Lattice is pre-release. Install it from source, which needs Rust 1.75 or newer:
+Lattice runs on macOS and Linux. On Windows, use it inside WSL2.
+
+Lattice is pre-release. Install it from source, which needs Rust 1.86 or newer:
 
 ```sh
 cargo install --git https://github.com/latticeandcompany/lattice lattice

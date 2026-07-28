@@ -2,8 +2,15 @@
 name = "lattice"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "A high-performance, local toolchain for managing monorepos"
 
 [[bin]]

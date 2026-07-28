@@ -106,7 +106,7 @@ Hotfix authority remains with maintainers.
 
 ### Prerequisites
 
-- Rust stable (1.75+), with `rustfmt` and `clippy`
+- Rust stable (1.86+), with `rustfmt` and `clippy`
 - Node 26+ and npm — only if you are touching `apps/web`
 - A POSIX shell for the stress test
 - No global installs unless unavoidable
