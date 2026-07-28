@@ -249,9 +249,12 @@ else
 			continue
 		fi
 		mkdir -p "$(dirname "$rc")" 2>/dev/null || true
+		# Pick the syntax before the redirection, not inside it: naming $rc within
+		# a block that appends to $rc reads as writing a file being read (SC2094).
+		RC_LINE="$(path_line "$rc")"
 		# The subshell is what makes 2>/dev/null cover a failed redirection too:
 		# that error is reported by the shell opening the file, not by printf.
-		if ( { printf '\n# lattice (%s)\n' "$PWD"; path_line "$rc"; } >>"$rc" ) 2>/dev/null; then
+		if ( { printf '\n# lattice (%s)\n' "$PWD"; printf '%s\n' "$RC_LINE"; } >>"$rc" ) 2>/dev/null; then
 			EDITED="$EDITED $rc"
 		else
 			say "${DIM}could not write $rc${RST}"

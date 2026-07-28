@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
         with:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 
@@ -42,7 +42,7 @@ jobs:
           fi
 
       - name: Update PR title and body
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -106,7 +106,7 @@ jobs:
 
       - name: Add review labels
         if: steps.check-auto-merge.outputs.should_merge == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

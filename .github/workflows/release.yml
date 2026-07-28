@@ -27,7 +27,7 @@ jobs:
       version: ${{ steps.pick.outputs.version }}
       tag: ${{ steps.pick.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -46,7 +46,7 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -64,7 +64,7 @@ jobs:
             ./target/release/lattice completions "$shell" >"completions/lattice.$shell"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: completions
           path: completions/
@@ -90,7 +90,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -109,7 +109,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked --bin lattice --target ${{ matrix.target }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: completions
           path: completions
@@ -131,7 +131,7 @@ jobs:
           cp -r completions "dist/$stem/completions"
           tar -czf "$stem.tar.gz" -C dist "$stem"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.target }}
           path: lattice-*.tar.gz
@@ -143,11 +143,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: archive-*
           path: assets
