@@ -1,6 +1,6 @@
 ---
 import CopyCommand from './copyCommand';
-import { githubUrl } from '../lib/nav';
+import { githubUrl, installCommand } from '../lib/nav';
 import { withBase } from '../lib/base';
 ---
 
@@ -11,10 +11,10 @@ import { withBase } from '../lib/base';
 				Install and run
 			</h2>
 			<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 34rem;">
-				Install Lattice, run <code>lattice init</code> in your repo, then run a task.
+				Run this in your repo, then <code>./.lattice/bin/lattice init</code> and a task.
 			</p>
 			<div class="d-flex justify-content-center mb-4">
-				<CopyCommand client:visible command="cargo install --git https://github.com/latticeandcompany/lattice lattice" />
+				<CopyCommand client:visible command={installCommand} />
 			</div>
 			<div class="d-flex flex-wrap gap-2 justify-content-center">
 				<a href={withBase('/docs/getting-started')} class="btn btn-contrast px-4">Get started</a>

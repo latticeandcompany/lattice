@@ -138,6 +138,7 @@ t_has "help lists run"         "Run one or more tasks"
 t_has "help lists setup"       "Provision"
 t_has "help lists init"        "Scaffold"
 t_has "help lists prune"       "Evict cache"
+t_has "help lists upgrade"     "another version of Lattice"
 t_has "help lists completions" "completion"
 t_has "help lists version"     "version information"
 
@@ -184,6 +185,7 @@ t_grepfile "$INITDIR/lattice.json" "\"build\"" "skeleton has a build task"
 t_grepfile "$INITDIR/lattice.json" "$VERSION"  "skeleton pins current version"
 t_grepfile "$INITDIR/.gitignore" ".lattice/cache/"      "gitignore has cache/"
 t_grepfile "$INITDIR/.gitignore" ".lattice/toolchains/" "gitignore has toolchains/"
+t_grepfile "$INITDIR/.gitignore" ".lattice/bin/"        "gitignore has bin/"
 t_grepfile "$INITDIR/.gitignore" "node_modules/"        "gitignore preserves existing lines"
 if python3 -c "import json,sys; json.load(open('$INITDIR/.lattice/schema.json'))" 2>/dev/null; then
   pass "schema.json is valid JSON (python3 check)"
@@ -758,6 +760,239 @@ t_has   "the busted key re-invokes the inner runner" "turbo-stub: build complete
 # A manual workspace must declare any task invoked directly.
 late "$NESTPATH" "$NEST" run lint ; t_bad "root task missing from a manual workspace fails"
 t_has "missing-script message names the workspace" "declares no command for task"
+
+# =========================================================================
+# 14. Distribution: the installer, `upgrade`, and the pinned-version handover.
+# =========================================================================
+sect "install, upgrade & version pinning"
+
+# The installer lives in the docs site's public/ directory, which is what serves
+# it at latticeandcompany.github.io/lattice/install.sh.
+INSTALLER="$REPO_ROOT/apps/web/public/install.sh"
+t_file "$INSTALLER" "the installer is where the docs site publishes it"
+
+# A release published to a directory and served over file://. Nothing here
+# reaches the network: the URL scheme is the only difference from GitHub, and the
+# download, checksum, extract and link path is otherwise identical.
+FAKEVER="9.9.9"
+TRIPLE="$("$BIN" version --json | sed -n 's/.*"target":"\([^"]*\)".*/\1/p')"
+REL="$ENVROOT/release"
+STEM="lattice-$FAKEVER-$TRIPLE"
+mkdir -p "$REL/v$FAKEVER" "$ENVROOT/relbuild/$STEM/completions"
+
+# The published "binary" identifies itself and echoes its arguments, so a
+# handover is observable rather than inferred.
+cat > "$ENVROOT/relbuild/$STEM/lattice" <<'SH'
+#!/bin/sh
+echo "fake-lattice 9.9.9 args: $*"
+SH
+chmod +x "$ENVROOT/relbuild/$STEM/lattice"
+echo "ISC" > "$ENVROOT/relbuild/$STEM/LICENSE"
+"$BIN" completions bash > "$ENVROOT/relbuild/$STEM/completions/lattice.bash"
+tar -czf "$REL/v$FAKEVER/$STEM.tar.gz" -C "$ENVROOT/relbuild" "$STEM"
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+printf '%s  %s\n' "$(sha256_of "$REL/v$FAKEVER/$STEM.tar.gz")" "$STEM.tar.gz" \
+  > "$REL/v$FAKEVER/lattice-$FAKEVER-checksums.txt"
+printf '{"tag_name":"v%s"}\n' "$FAKEVER" > "$REL/latest.json"
+
+RELENV="LATTICE_RELEASE_BASE_URL=file://$REL"
+LATESTENV="LATTICE_RELEASE_LATEST_URL=file://$REL/latest.json"
+
+# curl built without the file:// protocol cannot serve a local release; the rest
+# of the section is meaningless without it.
+if curl -V 2>/dev/null | grep -q file; then
+  CAN_FETCH=1
+else
+  CAN_FETCH=0
+  say "  ${YEL}skipping local-release checks: curl has no file:// support${RST}"
+fi
+
+# --- the installer -------------------------------------------------------
+if [ "$CAN_FETCH" = "1" ]; then
+  INST="$ENVROOT/installed"
+  mkdir -p "$INST"
+  w "$INST/.gitignore" "node_modules/
+"
+  cat > "$INST/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [], "tasks": { "build": {} } }
+JSON
+  OUTPUT="$(cd "$INST" && env $RELENV sh "$INSTALLER" 2>&1)"; RC=$?
+  t_ok    "installer exits 0"
+  t_has   "installer names the target triple" "$TRIPLE"
+  t_has   "installer verifies the checksum"   "checksum verified"
+  t_file  "$INST/.lattice/bin/lattice-$FAKEVER" "installer writes a version-stamped binary"
+  t_file  "$INST/.lattice/bin/lattice"          "installer creates the stable path"
+  t_grepfile "$INST/.gitignore" ".lattice/bin/" "installer ignores the binaries"
+  t_grepfile "$INST/.gitignore" "node_modules/" "installer preserves existing ignores"
+  if [ -L "$INST/.lattice/bin/lattice" ] &&
+     [ "$(readlink "$INST/.lattice/bin/lattice")" = "lattice-$FAKEVER" ]; then
+    pass "stable path is a relative symlink to the versioned binary"
+  else
+    fail "stable path is a relative symlink to the versioned binary" \
+      "$(readlink "$INST/.lattice/bin/lattice" 2>/dev/null)"
+  fi
+  OUTPUT="$("$INST/.lattice/bin/lattice" run build 2>&1)"; RC=$?
+  t_ok  "the installed binary runs"
+  t_has "the installed binary is the published one" "fake-lattice 9.9.9"
+
+  # Nothing global: the whole install is one removable directory.
+  t_nofile "$INST/lattice" "installer leaves nothing outside .lattice"
+  rm -rf "$INST/.lattice"
+  t_nofile "$INST/.lattice" "rm -rf .lattice uninstalls completely"
+
+  # Re-running with the version already downloaded must not fetch again.
+  cd "$INST" && env $RELENV sh "$INSTALLER" >/dev/null 2>&1
+  rm -rf "$REL/v$FAKEVER"
+  OUTPUT="$(cd "$INST" && env $RELENV sh "$INSTALLER" 2>&1)"; RC=$?
+  t_ok  "installer re-run with the version on disk exits 0"
+  t_has "installer reuses the downloaded binary" "already downloaded"
+  # Put the release back for the remaining checks.
+  mkdir -p "$REL/v$FAKEVER"
+  tar -czf "$REL/v$FAKEVER/$STEM.tar.gz" -C "$ENVROOT/relbuild" "$STEM"
+  printf '%s  %s\n' "$(sha256_of "$REL/v$FAKEVER/$STEM.tar.gz")" "$STEM.tar.gz" \
+    > "$REL/v$FAKEVER/lattice-$FAKEVER-checksums.txt"
+fi
+
+# The installer refuses to guess, and refuses to trust.
+NOPIN="$ENVROOT/nopin"; mkdir -p "$NOPIN"
+w "$NOPIN/lattice.json" '{ "workspaces": [] }'
+OUTPUT="$(cd "$NOPIN" && env $RELENV sh "$INSTALLER" 2>&1)"; RC=$?
+t_bad "installer fails when lattice.json pins nothing"
+t_has "missing-pin message names latticeVersion" "latticeVersion"
+
+if [ "$CAN_FETCH" = "1" ]; then
+  BADSUM="$ENVROOT/badsum"; mkdir -p "$BADSUM"
+  cp -R "$REL" "$ENVROOT/release-bad"
+  printf '%064d  %s\n' 0 "$STEM.tar.gz" \
+    > "$ENVROOT/release-bad/v$FAKEVER/lattice-$FAKEVER-checksums.txt"
+  cat > "$BADSUM/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [] }
+JSON
+  OUTPUT="$(cd "$BADSUM" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/release-bad" \
+    sh "$INSTALLER" 2>&1)"; RC=$?
+  t_bad    "installer fails on a checksum mismatch"
+  t_has    "checksum-mismatch message is explicit" "checksum mismatch"
+  t_nofile "$BADSUM/.lattice/bin/lattice-$FAKEVER" "a failed checksum installs nothing"
+fi
+
+# --- upgrade -------------------------------------------------------------
+lat "$ENVROOT" upgrade --help ; t_ok "\`upgrade --help\` exits 0"
+t_has "upgrade help documents the version argument" "VERSION"
+
+lat "$DET" upgrade ; t_bad "upgrade requires a version"
+lat "$DET" upgrade "../../etc/passwd" ; t_bad "upgrade rejects a path as a version"
+t_has "bad-version message" "not a version"
+
+UPG="$ENVROOT/upgrade"; mkdir -p "$UPG"
+cat > "$UPG/lattice.json" <<JSON
+{
+  "\$schema": ".lattice/schema.json",
+  "latticeVersion": "$VERSION",
+  "workspaces": [],
+  "tasks": { "build": {} }
+}
+JSON
+if [ "$CAN_FETCH" = "1" ]; then
+  late "$RELENV" "$UPG" upgrade "$FAKEVER" ; t_ok "upgrade to a published version exits 0"
+  t_has  "upgrade reports the move" "$VERSION"
+  t_file "$UPG/.lattice/bin/lattice-$FAKEVER" "upgrade installs the version-stamped binary"
+  t_grepfile "$UPG/lattice.json" "\"latticeVersion\": \"$FAKEVER\"" "upgrade rewrites the pin"
+  t_grepfile "$UPG/lattice.json" "\"\$schema\"" "upgrade leaves the rest of the config alone"
+  t_grepfile "$UPG/lattice.json" "\"build\""    "upgrade leaves the task map alone"
+
+  late "$RELENV" "$UPG" upgrade "$FAKEVER" ; t_ok "upgrade is idempotent"
+  t_has "upgrade reports an unchanged pin" "already on $FAKEVER"
+
+  late "$RELENV $LATESTENV" "$UPG" upgrade latest ; t_ok "\`upgrade latest\` exits 0"
+  t_has "\`upgrade latest\` resolves a version" "$FAKEVER"
+fi
+
+# --- the handover --------------------------------------------------------
+# A binary Lattice installed for the repo, running in a repo that pins a
+# different version, must switch rather than run.
+PINNED="$ENVROOT/pinned"; mkdir -p "$PINNED/.lattice/bin"
+cat > "$PINNED/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [], "tasks": { "build": {} } }
+JSON
+cp "$BIN" "$PINNED/.lattice/bin/lattice-$VERSION"
+ln -sf "lattice-$VERSION" "$PINNED/.lattice/bin/lattice"
+MANAGED="$PINNED/.lattice/bin/lattice-$VERSION"
+
+if [ "$CAN_FETCH" = "1" ]; then
+  OUTPUT="$(cd "$PINNED" && env $RELENV "$MANAGED" run build 2>&1)"; RC=$?
+  t_ok  "a managed binary in a repo pinned elsewhere exits 0"
+  t_has "the handover says which version the repo pins" "this repo pins"
+  t_has "the handover says it is switching"             "switching"
+  t_has "the pinned version ran, with the arguments"    "fake-lattice 9.9.9 args: run build"
+  t_file "$PINNED/.lattice/bin/lattice-$FAKEVER" "the handover installed the pinned version"
+  if [ "$(readlink "$PINNED/.lattice/bin/lattice")" = "lattice-$FAKEVER" ]; then
+    pass "the handover repointed the stable path"
+  else
+    fail "the handover repointed the stable path" "$(readlink "$PINNED/.lattice/bin/lattice")"
+  fi
+
+  # Already on disk: a switch is a symlink swap, so it works with no release at
+  # all to fetch from.
+  ln -sf "lattice-$VERSION" "$PINNED/.lattice/bin/lattice"
+  mv "$REL/v$FAKEVER" "$REL/v$FAKEVER.away"
+  OUTPUT="$(cd "$PINNED" && env $RELENV "$MANAGED" run build 2>&1)"; RC=$?
+  t_ok  "switching to a version already on disk exits 0"
+  t_has "it is the pinned version that runs" "fake-lattice 9.9.9"
+  mv "$REL/v$FAKEVER.away" "$REL/v$FAKEVER"
+fi
+
+# Every opt-out leaves the invoked binary running.
+OUTPUT="$(cd "$PINNED" && "$MANAGED" --no-version-check run build 2>&1)"; RC=$?
+t_ok    "--no-version-check runs the invoked binary"
+t_hasnt "--no-version-check prints no notice" "switching"
+OUTPUT="$(cd "$PINNED" && env LATTICE_NO_VERSION_CHECK=1 "$MANAGED" run build 2>&1)"; RC=$?
+t_ok    "LATTICE_NO_VERSION_CHECK runs the invoked binary"
+t_hasnt "LATTICE_NO_VERSION_CHECK prints no notice" "switching"
+
+OFF="$ENVROOT/checkoff"; mkdir -p "$OFF/.lattice/bin"
+cat > "$OFF/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [], "tasks": { "build": {} },
+  "settings": { "versionCheck": false } }
+JSON
+cp "$BIN" "$OFF/.lattice/bin/lattice-$VERSION"
+OUTPUT="$(cd "$OFF" && "$OFF/.lattice/bin/lattice-$VERSION" run build 2>&1)"; RC=$?
+t_ok    "settings.versionCheck false runs the invoked binary"
+t_hasnt "settings.versionCheck false prints no notice" "switching"
+
+# A binary Lattice did not install is never replaced: the drift is advice, not an
+# action taken on someone else's install.
+lat "$PINNED" run build ; t_ok "an unmanaged binary runs in a repo pinned elsewhere"
+t_hasnt "an unmanaged binary is never switched" "switching"
+
+# `upgrade`, `version` and `completions` answer for the binary that was invoked,
+# so they must not be handed off — with no release published, a handover would
+# fail outright.
+NOREL="$ENVROOT/norelease"; mkdir -p "$NOREL/.lattice/bin"
+cat > "$NOREL/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [], "tasks": { "build": {} } }
+JSON
+cp "$BIN" "$NOREL/.lattice/bin/lattice-$VERSION"
+NOREL_BIN="$NOREL/.lattice/bin/lattice-$VERSION"
+OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" \
+  "$NOREL_BIN" version --json 2>&1)"; RC=$?
+t_ok  "\`version\` is never handed off"
+t_has "\`version\` reports the binary that ran" "\"version\":\"$VERSION\""
+OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" \
+  "$NOREL_BIN" completions bash 2>&1)"; RC=$?
+t_ok    "\`completions\` is never handed off"
+t_hasnt "completions output stays clean" "switching"
+
+# A pinned version that cannot be fetched is a hard failure: running the wrong
+# build silently is the thing this check exists to prevent.
+OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" \
+  "$NOREL_BIN" run build 2>&1)"; RC=$?
+t_bad "an unfetchable pinned version fails loudly"
+t_has "the failure names the pinned version" "$FAKEVER"
+t_has "the failure names the way out"        "--no-version-check"
 
 # =========================================================================
 # Summary.

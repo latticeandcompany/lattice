@@ -128,6 +128,7 @@ cargo test --workspace
 | `cargo fmt --all --check` | Formatting gate (CI runs this) |
 | `cargo clippy --all-targets --all-features -- -D warnings` | Lint gate (CI runs this) |
 | `scripts/stress-test.sh` | Full hermetic end-to-end suite |
+| `scripts/check-versions.sh` | Version and MSRV agree everywhere (CI runs this; the release gate) |
 | `scripts/dev-link.sh` | Point `./.lattice/bin/lattice` at your dev build |
 | `scripts/dev-unlink.sh` | Restore the pinned release binary |
 

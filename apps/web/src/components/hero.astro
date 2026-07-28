@@ -1,6 +1,8 @@
 ---
 import { Image } from 'astro:assets';
+import CopyCommand from './copyCommand';
 import { withBase } from '../lib/base';
+import { installCommand } from '../lib/nav';
 import go from '../assets/languages/go.png';
 import node from '../assets/languages/node.png';
 import nodeDark from '../assets/languages/node-dark.png';
@@ -93,9 +95,12 @@ const thread = (l: Lang) => {
 			A high-performance, local toolchain for managing monorepos. Build every language in your repo with
 			one command, and skip the work that hasn't changed.
 		</p>
-		<div class="d-flex flex-wrap gap-2 justify-content-center">
+		<div class="d-flex flex-wrap gap-2 justify-content-center mb-4">
 			<a href={withBase('/docs')} class="btn btn-secondary px-4">Read the docs</a>
 			<a href={withBase('/docs/getting-started')} class="btn btn-contrast px-4">Get started</a>
+		</div>
+		<div class="d-flex justify-content-center">
+			<CopyCommand client:load command={installCommand} size="sm" />
 		</div>
 	</div>
 </section>

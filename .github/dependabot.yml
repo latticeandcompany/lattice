@@ -53,7 +53,9 @@ updates:
         update-types:
           - 'minor'
           - 'patch'
-    versioning-strategy: 'increase'
+    # Cargo accepts only 'lockfile-only' or 'auto' here — 'increase' is an npm-ism
+    # and makes Dependabot reject this entire file, not just this block.
+    versioning-strategy: 'auto'
 
   # The docs site. Its lockfile lives in apps/web, not at the root.
   - package-ecosystem: 'npm'

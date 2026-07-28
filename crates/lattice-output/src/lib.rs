@@ -197,6 +197,8 @@ pub fn banner_line(subtitle: &str) -> String {
 }
 
 /// The one-line, advisory version nag (interactive only). Branded and quiet.
+/// Shown for a binary Lattice did not install, where switching is the reader's
+/// call rather than something to do behind their back.
 pub fn version_nag(binary_version: &str, pinned_version: &str) -> String {
 	format!(
 		"{} {} {} · this repo pins {} · run {}",
@@ -204,7 +206,19 @@ pub fn version_nag(binary_version: &str, pinned_version: &str) -> String {
 		wordmark(),
 		binary_version,
 		style(pinned_version).bold(),
-		style("`lattice upgrade`").dim()
+		style(format!("`lattice upgrade {pinned_version}`")).dim()
+	)
+}
+
+/// The one-line notice printed when an invocation is handed to the version the
+/// repo pins. Not advisory: by the time this prints, the switch is happening.
+pub fn switching_notice(binary_version: &str, pinned_version: &str) -> String {
+	format!(
+		"{} {} {} · this repo pins {} · switching",
+		paint_teal(ROSETTE),
+		wordmark(),
+		binary_version,
+		style(pinned_version).bold(),
 	)
 }
 
@@ -784,6 +798,17 @@ mod tests {
 	fn version_nag_contains_both_versions() {
 		let n = version_nag("1.0.0", "1.2.0");
 		assert!(!n.is_empty());
+		assert!(n.contains("lattice"));
+		assert!(n.contains("1.0.0"));
+		assert!(n.contains("1.2.0"));
+		// The suggested command has to be runnable as printed; `upgrade` requires
+		// a version.
+		assert!(n.contains("lattice upgrade 1.2.0"));
+	}
+
+	#[test]
+	fn switching_notice_contains_both_versions() {
+		let n = switching_notice("1.0.0", "1.2.0");
 		assert!(n.contains("lattice"));
 		assert!(n.contains("1.0.0"));
 		assert!(n.contains("1.2.0"));

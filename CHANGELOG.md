@@ -10,6 +10,93 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### Installing, upgrading, and running the version a repo pins — 2026-07-28
+
+Lattice can now be installed without a Rust toolchain, and a repo's
+`latticeVersion` is enforced rather than merely announced.
+
+#### `curl | sh` installs a target-matched binary into the repo
+- `apps/web/public/install.sh` detects the OS, architecture and libc, resolves a version,
+  downloads the matching release archive, verifies its SHA256 against the release's
+  checksums file, and installs `./.lattice/bin/lattice-<version>` with
+  `./.lattice/bin/lattice` symlinked to it. Nothing is written outside `.lattice`,
+  so `rm -rf .lattice` is the uninstall
+- Version resolution, in order: `$LATTICE_VERSION`, then `latticeVersion` from
+  `./lattice.json`, then the newest release when the directory has no config at
+  all. The pin is read by the installer because it has to be known before a binary
+  exists to read it. A `lattice.json` that exists but pins nothing is an error
+- It fails loudly, before installing anything, on an unsupported platform, a
+  missing pin, a missing asset, a missing checksums entry, or a digest that does
+  not match
+- It sits in the docs site's `public/`, so the site serves it verbatim at
+  `latticeandcompany.github.io/lattice/install.sh` with no build step of its own,
+  and the release workflow publishes that same file as a release asset. One copy,
+  two homes
+- Keeping versioned binaries on disk is what makes a branch switch cheap, so
+  `.lattice/bin/` is now in the `.gitignore` lines `lattice init` maintains
+
+#### Every invocation runs the version the repo pins
+- A binary under `.lattice/bin` whose version differs from `latticeVersion` now
+  prints one line naming both versions, installs the pinned version if it is not
+  already on disk, repoints the symlink, and hands the invocation over to it with
+  the arguments untouched. Switching between two branches that pin versions you
+  already have is a symlink swap and touches no network
+- The pin is read straight out of the JSON rather than through the config loader.
+  A config written against a newer schema has to be able to say which version can
+  read it, so the handover happens before anything that could reject it
+- A binary Lattice did not install — `cargo install`, a distro package,
+  `scripts/dev-link.sh` — is never replaced. Those keep the advisory one-line nag
+  from #45, which now prints a runnable `lattice upgrade <version>`
+- `--no-version-check`, `LATTICE_NO_VERSION_CHECK` and
+  `settings.versionCheck: false` each skip the whole thing. `upgrade`, `version`
+  and `completions` are never handed off: they answer for the binary that was
+  invoked, and a completion script has to be the only thing on stdout
+- A pinned version that cannot be installed is a hard failure naming the version
+  and the way past it. Running a build the repo did not ask for is the outcome
+  this exists to prevent
+
+#### `lattice upgrade <version|latest>`
+- Installs the version, points `.lattice/bin/lattice` at it, and rewrites
+  `latticeVersion`. `latest` resolves the newest release; a bare version pins it
+  exactly, with or without a leading `v`
+- The config is edited as text, so key order, indentation and the rest of the file
+  survive a bump. A version that is not a version is rejected before it can reach
+  a URL or a filename
+- Re-running for a version already pinned and installed reports that and repoints
+  the symlink, which is the one case where doing nothing would leave the repo on
+  the wrong binary
+
+#### Releases are built and published by tag
+- `.github/workflows/release.yml` builds `v*` tags for six targets — macOS
+  x86_64/aarch64, Linux x86_64 gnu and musl, Linux aarch64, Windows x86_64 — and
+  publishes `lattice-<version>-<target>.tar.gz` archives carrying the binary, the
+  license and completion scripts, plus one `lattice-<version>-checksums.txt` and
+  the installer
+- Completions are generated once on a native runner, because a cross-compiled
+  binary cannot be run to print its own
+- The tag has to agree with the tree: `scripts/check-versions.sh <version>` gates
+  the build, and CI now runs it on every push, along with `shellcheck` over the
+  installer
+
+#### `check-versions.sh` never actually passed
+- Both value extractions were `gsub(/.*"|".*/, "")`, whose first alternative is
+  greedy enough to match through the closing quote and delete the value along with
+  the key. Every version read came back empty. It now splits on `"` and takes the
+  field, which is what that line was reaching for
+- The same script compared `name = "lattice"` against lines checked out CRLF by
+  `.gitattributes`, so all seven `Cargo.lock` assertions failed on a fresh clone.
+  Every read now strips the carriage return first
+- With it running, its own README rule had something to say: the hardcoded
+  `badge/version-0.1.0` shield is replaced by `github/v/release`, which cannot go
+  stale between releases
+
+### The endorsement footer pointed at a placeholder org — 2026-07-28
+
+- `marketing/BRAND.md` still shipped `https://github.com/<org>` in the donated-project
+  endorsement footer, in both the prose form and the copy-paste HTML. Any project that
+  followed the spec would have published a dead link. All three now point at
+  `https://github.com/latticeandcompany`, matching the `repository` in `Cargo.toml`
+
 ### Four documented promises the code did not keep — 2026-07-28
 
 Groundwork for the first tagged release. Each item here was a statement in the README,

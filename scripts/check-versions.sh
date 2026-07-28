@@ -26,24 +26,32 @@ bad() { printf '%s✗%s %s\n' "$RED" "$RST" "$1"; fails=$((fails + 1)); }
 good() { printf '%s✓%s %s\n' "$GRN" "$RST" "$1"; }
 
 # --- read the source of truth ------------------------------------------------
+# .gitattributes checks these files out CRLF, so every read strips the carriage
+# return first: a trailing \r turns an exact match into a silent mismatch and
+# leaves an extracted value looking empty.
+text() { tr -d '\r' <"$1"; }
+
 # Only the [workspace.package] block, so a dependency's `version = ` cannot match.
-CARGO_VERSION="$(
-	awk '/^\[workspace\.package\]/ { inblock = 1; next }
-	     /^\[/ { inblock = 0 }
-	     inblock && /^version[[:space:]]*=/ { gsub(/.*"|".*/, ""); print; exit }' Cargo.toml
-)"
-MSRV="$(
-	awk '/^\[workspace\.package\]/ { inblock = 1; next }
-	     /^\[/ { inblock = 0 }
-	     inblock && /^rust-version[[:space:]]*=/ { gsub(/.*"|".*/, ""); print; exit }' Cargo.toml
-)"
+# `-F'"'` puts the quoted value in $2; a `gsub` of everything up to a quote is
+# greedy enough to swallow the value along with the key.
+toml_field() {
+	text Cargo.toml | awk -F'"' -v key="$1" '
+		/^\[workspace\.package\]/ { inblock = 1; next }
+		/^\[/ { inblock = 0 }
+		inblock && $0 ~ "^" key "[[:space:]]*=" { print $2; exit }'
+}
+
+CARGO_VERSION="$(toml_field version)"
+MSRV="$(toml_field rust-version)"
 
 [ -n "$CARGO_VERSION" ] || { printf 'no version in [workspace.package]\n' >&2; exit 2; }
 [ -n "$MSRV" ] || { printf 'no rust-version in [workspace.package]\n' >&2; exit 2; }
 
 printf 'Cargo.toml: version %s, rust-version %s\n\n' "$CARGO_VERSION" "$MSRV"
 
-json_field() { sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n1; }
+json_field() {
+	text "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
+}
 
 # --- 1. versions agree -------------------------------------------------------
 v="$(json_field lattice.json latticeVersion)"
@@ -58,10 +66,11 @@ else bad "apps/web/package.json version is $v, want $CARGO_VERSION"; fi
 # A forgotten `cargo update -w` after a bump makes --locked release builds fail.
 missing=''
 for crate in lattice lattice-cache lattice-config dagger lattice-output lattice-runner lattice-workspace; do
-	grep -q "^name = \"$crate\"\$" Cargo.lock || { missing="$missing $crate(absent)"; continue; }
-	awk -v c="$crate" -v want="$CARGO_VERSION" '
-		$0 == "name = \"" c "\"" { getline; gsub(/.*"|".*/, ""); if ($0 != want) exit 1; exit 0 }
-	' Cargo.lock || missing="$missing $crate"
+	text Cargo.lock | grep -q "^name = \"$crate\"\$" ||
+		{ missing="$missing $crate(absent)"; continue; }
+	text Cargo.lock | awk -F'"' -v c="$crate" -v want="$CARGO_VERSION" '
+		$0 == "name = \"" c "\"" { getline; if ($2 != want) exit 1; exit 0 }
+	' || missing="$missing $crate"
 done
 if [ -z "$missing" ]; then good "Cargo.lock agrees for all 7 crates"
 else bad "Cargo.lock disagrees for:$missing — run \`cargo update -w\`"; fi

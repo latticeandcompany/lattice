@@ -50,6 +50,11 @@ jobs:
       - name: Verify search index
         run: test -f dist/pagefind/pagefind.js
 
+      # The install one-liner in the README and the docs points here, so a build
+      # that dropped the script would break the front door.
+      - name: Verify the installer is published
+        run: test -f dist/install.sh
+
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/mega' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3

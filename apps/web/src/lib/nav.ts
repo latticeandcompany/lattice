@@ -13,3 +13,6 @@ export const navLinks: NavLink[] = [
 ];
 
 export const githubUrl = 'https://github.com/latticeandcompany/lattice';
+
+/** Shown in the hero and the install card, so it lives in one place. */
+export const installCommand = 'curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh';
