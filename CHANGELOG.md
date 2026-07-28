@@ -10,6 +10,18 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### Dependency bumps, and auto-merge that can actually merge — 2026-07-28
+
+- `displaydoc` 0.2.6 → 0.2.7
+- The docs site's Astro stack moves to `astro` 7.1.5, `@astrojs/mdx` 7.0.5 and
+  `@astrojs/react` 6.0.2, with `sharp` 0.35.3 and the usual transitive patches
+  underneath
+- The Dependabot workflow asked for `gh pr merge --auto --squash`, which this
+  repo does not allow, so every auto-merge attempt failed and nothing was ever
+  merged automatically. It now asks for a merge commit
+- Dependabot writes `package.json` with CRLF, which `.gitattributes` normalizes
+  away on checkout and leaves the file permanently modified. Renormalized
+
 ### Installing, upgrading, and running the version a repo pins — 2026-07-28
 
 Lattice can now be installed without a Rust toolchain, and a repo's
