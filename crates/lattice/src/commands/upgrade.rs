@@ -42,7 +42,14 @@ impl UpgradeArgs {
 		let target = if self.version.eq_ignore_ascii_case("latest") {
 			println!("{}", banner_line("upgrade"));
 			println!("  resolving the newest release ...");
-			release::resolve_latest()?
+			let latest = release::resolve_latest()?;
+			if latest.prerelease {
+				println!(
+					"  {} is a pre-release — no stable release yet",
+					style(&latest.version).bold()
+				);
+			}
+			latest.version
 		} else {
 			let target = release::normalize_version(&self.version)?;
 			println!("{}", banner_line("upgrade"));

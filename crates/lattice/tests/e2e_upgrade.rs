@@ -6,6 +6,8 @@
 
 mod common;
 
+use predicates::prelude::PredicateBooleanExt;
+
 use common::{curl_supports_file, FakeRelease, Fixture};
 
 const CONFIG: &str = r#"{
@@ -114,6 +116,68 @@ fn upgrade_latest_resolves_the_newest_release() {
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("9.9.9"));
+
+	assert!(fx
+		.read("lattice.json")
+		.contains(r#""latticeVersion": "9.9.9""#));
+}
+
+/// `/releases/latest` is the newest *stable* release, so it 404s while every
+/// release is a pre-release — and `upgrade latest` has to keep going rather than
+/// report that there is nothing to install.
+#[test]
+fn upgrade_latest_falls_back_to_the_newest_pre_release() {
+	if !curl_supports_file() {
+		return;
+	}
+	let fx = fixture();
+	let release = FakeRelease::new();
+	release.publish("9.9.9-beta-2", "beta-binary");
+
+	fx.lattice()
+		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
+		.env("LATTICE_RELEASE_LATEST_URL", release.missing_latest_url())
+		.env(
+			"LATTICE_RELEASE_LIST_URL",
+			release.list_url(&[("9.9.9-beta-2", true), ("9.9.9-beta-1", true)]),
+		)
+		.args(["upgrade", "latest"])
+		.assert()
+		.success()
+		.stdout(predicates::str::contains("9.9.9-beta-2"))
+		// Nobody who typed "latest" should have to notice it was a beta afterwards.
+		.stdout(predicates::str::contains("pre-release"));
+
+	assert!(fx
+		.read("lattice.json")
+		.contains(r#""latticeVersion": "9.9.9-beta-2""#));
+}
+
+/// The other half of that: once a stable release exists, a newer pre-release must
+/// not start winning. Only 9.9.9 is published, so picking the beta also fails to
+/// download.
+#[test]
+fn upgrade_latest_prefers_a_stable_release_over_a_newer_pre_release() {
+	if !curl_supports_file() {
+		return;
+	}
+	let fx = fixture();
+	let release = FakeRelease::new();
+	release.publish("9.9.9", "stable-binary");
+
+	fx.lattice()
+		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
+		.env("LATTICE_RELEASE_LATEST_URL", release.latest_url("9.9.9"))
+		.env(
+			"LATTICE_RELEASE_LIST_URL",
+			release.list_url(&[("9.9.10-beta-1", true), ("9.9.9", false)]),
+		)
+		.args(["upgrade", "latest"])
+		.assert()
+		.success()
+		.stdout(predicates::str::contains("9.9.9"))
+		.stdout(predicates::str::contains("9.9.10-beta-1").not())
+		.stdout(predicates::str::contains("pre-release").not());
 
 	assert!(fx
 		.read("lattice.json")

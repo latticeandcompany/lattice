@@ -21,9 +21,15 @@ use sha2::{Digest, Sha256};
 /// Where release assets live, minus the `/v<version>/<asset>` tail.
 const DEFAULT_BASE_URL: &str = "https://github.com/latticeandcompany/lattice/releases/download";
 
-/// The API endpoint naming the newest release.
+/// The API endpoint naming the newest release. It means the newest *stable* one,
+/// so it 404s until a project has shipped something that is not a pre-release.
 const DEFAULT_LATEST_URL: &str =
 	"https://api.github.com/repos/latticeandcompany/lattice/releases/latest";
+
+/// Every release, newest first — the fallback for when `DEFAULT_LATEST_URL` has
+/// nothing to name.
+const DEFAULT_LIST_URL: &str =
+	"https://api.github.com/repos/latticeandcompany/lattice/releases?per_page=20";
 
 /// Overrides `DEFAULT_BASE_URL`. A `file://` base makes the whole install path
 /// testable without a network.
@@ -31,6 +37,9 @@ const BASE_URL_ENV: &str = "LATTICE_RELEASE_BASE_URL";
 
 /// Overrides `DEFAULT_LATEST_URL`.
 const LATEST_URL_ENV: &str = "LATTICE_RELEASE_LATEST_URL";
+
+/// Overrides `DEFAULT_LIST_URL`.
+const LIST_URL_ENV: &str = "LATTICE_RELEASE_LIST_URL";
 
 #[cfg(windows)]
 const BIN_FILE: &str = "lattice.exe";
@@ -64,11 +73,16 @@ fn host_target() -> &'static str {
 	env!("LATTICE_TARGET")
 }
 
-fn base_url() -> String {
-	std::env::var(BASE_URL_ENV)
+/// An endpoint, with an environment override that an empty value does not count as.
+fn env_url(name: &str, default: &str) -> String {
+	std::env::var(name)
 		.ok()
 		.filter(|v| !v.trim().is_empty())
-		.unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+		.unwrap_or_else(|| default.to_string())
+}
+
+fn base_url() -> String {
+	env_url(BASE_URL_ENV, DEFAULT_BASE_URL)
 }
 
 fn asset_url(version: &str, asset: &str) -> String {
@@ -221,16 +235,40 @@ pub fn link_stable(root: &Path, version: &str) -> Result<()> {
 	Ok(())
 }
 
-/// The version of the newest published release.
-pub fn resolve_latest() -> Result<String> {
-	let url = std::env::var(LATEST_URL_ENV)
-		.ok()
-		.filter(|v| !v.trim().is_empty())
-		.unwrap_or_else(|| DEFAULT_LATEST_URL.to_string());
-	let body = fetch_text(&url).context("failed to ask GitHub for the newest release")?;
-	let tag = parse_tag_name(&body)
-		.ok_or_else(|| anyhow!("no tag_name in the release response from {url}"))?;
-	normalize_version(&tag)
+/// The newest published release.
+pub struct Latest {
+	pub version: String,
+	/// Whether that release is a pre-release, which it is whenever the project has
+	/// not cut a stable one yet. Worth saying out loud to anyone who asked only for
+	/// "latest".
+	pub prerelease: bool,
+}
+
+/// The newest published release, preferring the newest stable one.
+///
+/// `/releases/latest` skips pre-releases entirely, so a project whose every
+/// release so far is a beta gets a 404 from it and needs the full list, which is
+/// ordered newest-first.
+pub fn resolve_latest() -> Result<Latest> {
+	let latest_url = env_url(LATEST_URL_ENV, DEFAULT_LATEST_URL);
+	// A 404 from this one is an answer rather than a failure — it is what GitHub
+	// says when no release is stable — so the error is dropped for the fallback.
+	let stable = fetch_text(&latest_url).ok();
+	if let Some(tag) = stable.as_deref().and_then(parse_tag_name) {
+		return Ok(Latest {
+			version: normalize_version(&tag)?,
+			prerelease: false,
+		});
+	}
+
+	let list_url = env_url(LIST_URL_ENV, DEFAULT_LIST_URL);
+	let body = fetch_text(&list_url).context("failed to ask GitHub for the newest release")?;
+	let (tag, prerelease) = parse_first_release(&body)
+		.ok_or_else(|| anyhow!("no release to install; tried {latest_url} and {list_url}"))?;
+	Ok(Latest {
+		version: normalize_version(&tag)?,
+		prerelease,
+	})
 }
 
 fn parse_tag_name(body: &str) -> Option<String> {
@@ -239,6 +277,26 @@ fn parse_tag_name(body: &str) -> Option<String> {
 		.get("tag_name")?
 		.as_str()
 		.map(|s| s.trim().to_string())
+}
+
+/// The tag and pre-release flag of the newest entry in a `/releases` array.
+///
+/// Drafts are skipped rather than assumed absent: they are invisible to an
+/// anonymous request but not to a request carrying a token.
+fn parse_first_release(body: &str) -> Option<(String, bool)> {
+	let value: serde_json::Value = serde_json::from_str(body).ok()?;
+	let flag = |release: &serde_json::Value, key: &str| {
+		release
+			.get(key)
+			.and_then(serde_json::Value::as_bool)
+			.unwrap_or(false)
+	};
+	let release = value
+		.as_array()?
+		.iter()
+		.find(|release| !flag(release, "draft"))?;
+	let tag = release.get("tag_name")?.as_str()?.trim().to_string();
+	Some((tag, flag(release, "prerelease")))
 }
 
 /// The digest a `sha256sum`-style checksums file records for one file name.
@@ -441,5 +499,49 @@ mod tests {
 		);
 		assert!(parse_tag_name("not json").is_none());
 		assert!(parse_tag_name(r#"{"message":"Not Found"}"#).is_none());
+	}
+
+	#[test]
+	fn first_release_is_the_newest_listed_and_reports_prerelease() {
+		// What /releases answers while only betas exist, which is when
+		// /releases/latest answers 404 and this list is all there is to read.
+		let body = r#"[
+			{"tag_name":"v1.0.0-beta-2","draft":false,"prerelease":true},
+			{"tag_name":"v1.0.0-beta-1","draft":false,"prerelease":true}
+		]"#;
+		assert_eq!(
+			parse_first_release(body),
+			Some(("v1.0.0-beta-2".to_string(), true))
+		);
+	}
+
+	#[test]
+	fn first_release_skips_drafts_and_marks_a_stable_release() {
+		let body = r#"[
+			{"tag_name":"v2.0.0","draft":true,"prerelease":false},
+			{"tag_name":"v1.4.0","draft":false,"prerelease":false}
+		]"#;
+		assert_eq!(
+			parse_first_release(body),
+			Some(("v1.4.0".to_string(), false))
+		);
+	}
+
+	#[test]
+	fn first_release_rejects_a_non_list() {
+		assert!(parse_first_release("[]").is_none());
+		assert!(parse_first_release(r#"{"message":"Not Found"}"#).is_none());
+		assert!(parse_first_release("not json").is_none());
+	}
+
+	#[test]
+	fn beta_tags_survive_normalization() {
+		// The published tag shape: a semver pre-release whose identifier holds a
+		// hyphen, which has to reach an asset filename intact.
+		assert_eq!(normalize_version("v1.0.0-beta-1").unwrap(), "1.0.0-beta-1");
+		assert_eq!(
+			asset_name("1.0.0-beta-1", "aarch64-apple-darwin"),
+			"lattice-1.0.0-beta-1-aarch64-apple-darwin.tar.gz"
+		);
 	}
 }

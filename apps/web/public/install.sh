@@ -24,6 +24,7 @@ set -eu
 REPO="latticeandcompany/lattice"
 BASE_URL="${LATTICE_RELEASE_BASE_URL:-https://github.com/$REPO/releases/download}"
 LATEST_URL="${LATTICE_RELEASE_LATEST_URL:-https://api.github.com/repos/$REPO/releases/latest}"
+LIST_URL="${LATTICE_RELEASE_LIST_URL:-https://api.github.com/repos/$REPO/releases?per_page=20}"
 
 BOLD=''; DIM=''; RED=''; RST=''
 if [ -t 1 ]; then
@@ -107,6 +108,16 @@ read_pin() {
 	sed -n 's/.*"latticeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' lattice.json | head -n1
 }
 
+# The first tag_name in a GitHub releases payload, or empty. Commas become
+# newlines first: the API answers on a single line, and sed's leading `.*` is
+# greedy, so on a list response it would otherwise keep the oldest tag on that
+# line rather than the newest.
+first_tag() {
+	tr ',' '\n' |
+		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' |
+		head -n1
+}
+
 if [ -n "${LATTICE_VERSION:-}" ]; then
 	VERSION="${LATTICE_VERSION#v}"
 	# A label to print, not a reference — the literal variable name is the point.
@@ -120,9 +131,24 @@ elif [ -f lattice.json ]; then
 	SOURCE='lattice.json'
 else
 	say "${DIM}no lattice.json here — installing the newest release${RST}"
-	VERSION="$(fetch_text "$LATEST_URL" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1)"
-	[ -n "$VERSION" ] || die "could not read the newest release from $LATEST_URL"
+	# /releases/latest is the last *stable* release, so it 404s for a project whose
+	# every release so far is a pre-release. That 404 is an expected answer here
+	# rather than a failure, hence the discarded stderr; the fallback keeps its own,
+	# because by then there is nothing left to try. The full list is ordered
+	# newest-first and, unauthenticated, contains no drafts.
+	VERSION="$(fetch_text "$LATEST_URL" 2>/dev/null | first_tag)"
+	if [ -z "$VERSION" ]; then
+		VERSION="$(fetch_text "$LIST_URL" | first_tag)"
+	fi
+	[ -n "$VERSION" ] || die "could not find a release to install
+       tried $LATEST_URL
+         and $LIST_URL"
 	SOURCE='newest release'
+	# Read off the version itself rather than off which URL answered, so this says
+	# nothing the downloaded artifact does not.
+	case "$VERSION" in
+		*-*) say "${DIM}$VERSION is a pre-release — no stable release yet${RST}" ;;
+	esac
 fi
 
 # A version reaches a URL and a filename, so anything but a version stops here.

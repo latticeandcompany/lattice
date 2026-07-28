@@ -249,6 +249,29 @@ impl FakeRelease {
 		format!("file://{}", path.display())
 	}
 
+	/// A `file://` URL for a `/releases` list response, newest entry first. Each
+	/// entry is a version and whether it is a pre-release.
+	pub fn list_url(&self, releases: &[(&str, bool)]) -> String {
+		let entries: Vec<String> = releases
+			.iter()
+			.map(|(version, prerelease)| {
+				format!(r#"{{"tag_name":"v{version}","draft":false,"prerelease":{prerelease}}}"#)
+			})
+			.collect();
+		let path = self.dir.path().join("releases.json");
+		std::fs::write(&path, format!("[{}]", entries.join(","))).expect("write releases.json");
+		format!("file://{}", path.display())
+	}
+
+	/// A latest-release URL that resolves to nothing, standing in for the 404
+	/// GitHub answers with while every release so far is a pre-release.
+	pub fn missing_latest_url(&self) -> String {
+		format!(
+			"file://{}",
+			self.dir.path().join("no-such-latest.json").display()
+		)
+	}
+
 	/// Delete a published version, so a later run that still succeeds proves it
 	/// did not download anything.
 	pub fn unpublish(&self, version: &str) {
