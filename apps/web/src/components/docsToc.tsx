@@ -10,9 +10,16 @@ interface DocsTocProps {
 	headings: Heading[];
 }
 
+/**
+ * The headings this list covers: h1 is the page title, and h4+ is too fine-grained to
+ * be worth a row. Exported so the layout can skip the island entirely on pages that
+ * would produce an empty list — see the note on the empty return below.
+ */
+export const tocItems = (headings: Heading[]) => headings.filter((h) => h.depth === 2 || h.depth === 3);
+
 // On-this-page navigation (Bootstrap nav) with scroll-spy. Only h2/h3 are listed.
 const DocsToc = ({ headings }: DocsTocProps) => {
-	const items = headings.filter((h) => h.depth === 2 || h.depth === 3);
+	const items = tocItems(headings);
 	const [active, setActive] = useState<string>('');
 
 	useEffect(() => {
@@ -32,7 +39,12 @@ const DocsToc = ({ headings }: DocsTocProps) => {
 		return () => observer.disconnect();
 	}, [items.length]);
 
-	if (items.length === 0) return null;
+	// Empty fragment rather than `null`: Astro picks an island's renderer by calling each
+	// registered renderer's `check()` in turn, and @astrojs/react's decides by inspecting
+	// what the component returns. A `null` return reads as "not a React component", so the
+	// search falls through to @astrojs/mdx's `check()`, which invokes the component bare —
+	// outside any React render — and the hooks above then log "Invalid hook call".
+	if (items.length === 0) return <></>;
 
 	return (
 		<nav aria-label="On this page">

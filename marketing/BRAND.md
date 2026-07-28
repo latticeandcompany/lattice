@@ -298,22 +298,46 @@ dependency graph and as a woven structure.
 
 ### Assets
 
-| File                             | What it is                    | Use on            |
-| -------------------------------- | ----------------------------- | ----------------- |
-| `lattice_icon_black.svg`         | Standalone mark, ink          | Light backgrounds |
-| `lattice_icon_white.svg`         | Standalone mark, paper        | Dark backgrounds  |
-| `lattice_icon_black_lockup.svg`  | Mark + wordmark, ink          | Light backgrounds |
-| `lattice_icon_white_lockup.svg`  | Mark + wordmark, paper        | Dark backgrounds  |
-| `lattice_icon_black_small.svg`   | Small-size mark, ink          | ≤ 48px, light bg  |
-| `lattice_icon_white_small.svg`   | Small-size mark, paper        | ≤ 48px, dark bg   |
-| `favicon.svg`                    | Simplified 4-ring mark, adaptive | Favicon (auto ink/paper) |
-| `favicon_black.svg`              | Simplified 4-ring mark, ink   | Favicon, light bg |
-| `favicon_white.svg`              | Simplified 4-ring mark, paper | Favicon, dark bg  |
+All paths are relative to `marketing/`.
+
+| File                    | What it is                       | Use on                   |
+| ----------------------- | -------------------------------- | ------------------------ |
+| `icon-black.svg`        | Standalone mark, ink             | Light backgrounds        |
+| `icon-white.svg`        | Standalone mark, paper           | Dark backgrounds         |
+| `lockup-black.svg`      | Mark + wordmark, ink             | Light backgrounds        |
+| `lockup-white.svg`      | Mark + wordmark, paper           | Dark backgrounds         |
+| `icon-black-small.svg`  | Small-size mark, ink             | ≤ 48px, light bg         |
+| `icon-white-small.svg`  | Small-size mark, paper           | ≤ 48px, dark bg          |
+| `favicon.svg`           | Simplified 4-ring mark, adaptive | Favicon (auto ink/paper) |
+| `favicon-black.svg`     | Simplified 4-ring mark, ink      | Favicon, light bg        |
+| `favicon-white.svg`     | Simplified 4-ring mark, paper    | Favicon, dark bg         |
+| `pattern.svg`           | Repeating rosette motif          | Background bands         |
+| `ascii-art.txt`         | Terminal rosette                 | CLI output               |
+| `ascii-art-full.txt`    | Terminal rosette, full detail    | CLI splash               |
 
 - **Icon** — app icons, favicons, avatars, tight spaces, or as a repeating
   brand motif. Never pair the icon with separately-typed text; use the lockup.
 - **Lockup** — the default brand signature: navbars, docs headers, README,
   footers, slides.
+
+`lattice-and-co/` holds the parent-company marks — a horizontal and a stacked
+lockup, plus an `L&Co` monogram, each in a black-on-white and a white-on-black
+export. These are set in a serif, not DM Sans, and they are never substituted for
+a Lattice product mark.
+
+### Where each copy lives
+
+The same mark exists in three places, and each one is load-bearing:
+
+| Location                  | Which copy                     | Why it exists                             |
+| ------------------------- | ------------------------------ | ----------------------------------------- |
+| `marketing/`              | The editable source            | Wordmark is live `<text>` in DM Sans       |
+| `apps/web/public/brand/`  | Outlined, served by the site   | Astro can only serve from `public/`        |
+| `.github/assets/`         | Outlined, rendered in the README | GitHub resolves README paths from `.github/` |
+
+Edit `marketing/` first, then re-export the outlined copies. The site and README
+versions have the wordmark converted to paths so they render without DM Sans
+installed — do not overwrite them with the source SVG.
 
 ### The wordmark
 
@@ -347,10 +371,10 @@ accent-colored surface, but its strokes do not take an accent.
 - **Minimum size — lockup:** 120px wide (screen) / 24px tall mark. Below this,
   switch to the standalone icon.
 - **Minimum size — icon:** the standard mark holds down to ~48px. **At 48px and
-  below, switch to the `_small` variant** (`lattice_icon_*_small.svg`): a
+  below, switch to the small variant** (`icon-*-small.svg`): a
   thinner stroke, cropped tight to the rosette. The thin stroke keeps the woven
   gaps open where the standard mark's heavier strokes blur into a blob. Below
-  ~20px (16px favicons) even the `_small` mark crowds — use **`favicon.svg`**, a
+  ~20px (16px favicons) even the small mark crowds — use **`favicon.svg`**, a
   simplified 4-ring mark with an open aperture that stays legible at 16px. It is
   theme-adaptive (ink on light browser chrome, paper on dark).
 

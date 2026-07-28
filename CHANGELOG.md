@@ -2,6 +2,46 @@
 
 Nothing is released yet. Everything below is in `mega` on the way to 0.1.0.
 
+## Repo hygiene pass — 2026-07-28
+
+### Line endings, and the binaries they destroyed
+- `.gitattributes` was a single `* text eol=crlf` rule. Because `text` was *set* rather than auto-detected, git applied CRLF normalization to binary files as well. A PNG's 8-byte signature contains a `CR LF` pair, so normalizing one corrupts it: `.github/assets/latticeco-black.png`, `latticeco-white.png` and `apps/web/src/assets/languages/node-dark.png` were all committed damaged. The two company logos were unreadable in the README
+- The rule also gave every shell script a CRLF shebang, which makes it unrunnable (`env: bash\r: No such file or directory`). `scripts/dev-link.sh`, `scripts/dev-unlink.sh`, `scripts/stress-test.sh` and `examples/nested-repo/services/api/src/serve.sh` could not execute, and the README documents two of them as the way to work on the repo
+- `.gitattributes` now lists authored text extensions explicitly, holds `.sh` and `.txt` at LF, and marks binary formats `binary` so no future `text` rule can reach them. `rosette.txt` is included with `include_str!` and printed to a terminal, which is why it is LF
+- `node-dark.png` is repaired from its intact working-tree copy. The two `latticeco-*.png` logos were damaged in both the blob and the working tree, with no earlier commit to recover from, so they are re-exported from `marketing/lattice-and-co/lockup-horizontal-*.png` — now 480px wide with an alpha channel, so the dark-theme copy no longer renders as a black box on GitHub
+
+### Rust formatting
+- Added `rustfmt.toml` with `hard_tabs = true`. Rust was 4-space while `.editorconfig` and `CODESTYLE.md` both call for tabs; 21 files are reformatted. Every other rustfmt setting stays default
+
+### CODESTYLE.md
+- The file was ArenaSwap's copied verbatim: it mandated camelCase filenames and single quotes repo-wide, listed `wxt.config.ts` and `turbo.json` as protected filenames (neither exists here), and gave no Rust guidance at all in a repo that is mostly Rust
+- It now splits into a Rust section (`crates/`) and a Web section (`apps/web/`), with the shared principles kept common. The Rust section covers rustfmt and clippy as gates, naming, crate layout, `anyhow` error context, and the `//!`/`///` rules that `AGENTS.md` already implies. `dagger` is recorded as the one deliberate exception to `lattice-<role>` crate naming, and PascalCase Astro layouts are recorded as the exception to camelCase filenames
+
+### Ignored and untracked
+- `.gitignore` now covers `.DS_Store`, `.idea/`, `.vscode/` and `*.log`. Three `.DS_Store` files were sitting in the repo, kept out only by a machine-local global excludes file
+- `dist/` and `.astro/` are no longer scoped to `apps/web`; running the site from the repo root drops a `.astro/` at the root instead
+- Running the examples dirtied the repo, which CONTRIBUTING tells contributors to do. `examples/polyglot/apps/web/dist/index.html` and `examples/polyglot/libs/utils/dist/utils.py` were committed build outputs and are now untracked; the ignore list covers every example's `dist/`, `target/`, `.venv/`, `bin/` and `__pycache__/`
+
+### GitHub
+- Added `.github/dependabot.yml` covering the Cargo workspace, the docs site's `apps/web` lockfile, and GitHub Actions, on the same Friday cadence and `Upgrade` commit prefix the other repos use
+- Added `.github/workflows/dependabot-automerge.yaml`. It listens on `pull_request` only — the ArenaSwap original also listens on `pull_request_target`, which runs every step twice and hands `contents: write` to a fork-triggered workflow. Patches auto-merge; minors auto-merge for the docs stack and the crates the test suite exercises, while anything touching caching, hashing or process control waits for review
+- Added `.github/copilot-instructions.md` pointing at `AGENTS.md`
+- Deleted `.github/assets/lockup-black.png` and `lockup-white.png`, which nothing referenced — the README uses the SVGs
+- README gains the CI, stars, forks, issues and last-commit badges the other repos carry
+
+### marketing/
+- Filenames are kebab-case throughout: `lattice_icon_black.svg` → `icon-black.svg`, `favicon_black.svg` → `favicon-black.svg`, `ascii-art_full.txt` → `ascii-art-full.txt`, and the `_lockup` variants → `lockup-black.svg` / `lockup-white.svg`
+- `Lattice & Co/` had a space and an ampersand in its path, mode 700, and six files named `1.png` through `6.png`. It is now `lattice-and-co/` at mode 755 with the marks named for what they are — `lockup-horizontal-*`, `lockup-stacked-*`, `monogram-*`
+- `BRAND.md`'s asset table is updated for the new names and gains the rows it was missing (`pattern.svg`, both ascii-art files, the company marks). A new "Where each copy lives" section explains why the same lockup exists in `marketing/`, `apps/web/public/brand/` and `.github/assets/`: the first has a live `<text>` wordmark and is the editable source, the other two are outlined so they render without DM Sans installed
+
+### Stale copy
+- Root `lattice.json` listed `tailwind.config.cjs` as a build input. The file does not exist; the docs site is Tailwind v4 through the Vite plugin
+- `examples/polyglot/apps/web/package.json` described itself as a Next.js app. It is an `echo` and `mkdir` script
+
+## Long durations print as a clock — 2026-07-28
+
+- Task and run times over a minute now read `4:07` and `1:12:30` instead of `247.00s` and `4350.00s`. Under a minute is unchanged (`1.23s`). Applies everywhere `lattice` prints a duration: per-task completion lines and the run summary, in both the interactive and CI reporters
+
 ## Copy and comment cleanup across the repo — 2026-07-28
 
 ### Voice guides

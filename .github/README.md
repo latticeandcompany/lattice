@@ -12,9 +12,18 @@
 <br />
 
 ![Rust](https://img.shields.io/badge/Rust-1.75+-000000?logo=rust&logoColor=white)
+![Cargo](https://img.shields.io/badge/Cargo-workspace-000000?logo=rust&logoColor=white)
 ![Astro](https://img.shields.io/badge/Astro-7-BC52EE?logo=astro&logoColor=white)
+![Bootstrap](https://img.shields.io/badge/Bootstrap-5-7952B3?logo=bootstrap&logoColor=white)
+![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4-06B6D4?logo=tailwindcss&logoColor=white)
+
 ![Version](https://img.shields.io/badge/version-0.1.0-informational)
 ![License](https://img.shields.io/github/license/latticeandcompany/lattice)
+[![CI](https://img.shields.io/github/actions/workflow/status/latticeandcompany/lattice/ci.yml?branch=mega&label=CI&logo=githubactions&logoColor=white)](https://github.com/latticeandcompany/lattice/actions/workflows/ci.yml)
+![Stars](https://img.shields.io/github/stars/latticeandcompany/lattice?logo=github)
+![Forks](https://img.shields.io/github/forks/latticeandcompany/lattice?logo=github)
+![Issues](https://img.shields.io/github/issues/latticeandcompany/lattice?logo=github)
+![Last Commit](https://img.shields.io/github/last-commit/latticeandcompany/lattice?logo=git&logoColor=white)
 
 </div>
 

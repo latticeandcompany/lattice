@@ -1,0 +1,117 @@
+version: 2
+updates:
+  # The Cargo workspace — every crate under crates/ resolves through the root lockfile.
+  - package-ecosystem: 'cargo'
+    directory: '/'
+    target-branch: 'mega'
+    schedule:
+      interval: 'weekly'
+      day: 'friday'
+      time: '15:00'
+      timezone: 'America/New_York'
+    open-pull-requests-limit: 10
+    allow:
+      - dependency-type: 'all'
+    commit-message:
+      prefix: 'Upgrade'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'rust'
+      - 'automated'
+    groups:
+      async-runtime:
+        patterns:
+          - 'tokio'
+          - 'libc'
+        update-types:
+          - 'minor'
+          - 'patch'
+      serde-stack:
+        patterns:
+          - 'serde'
+          - 'serde_json'
+          - 'jsonschema'
+        update-types:
+          - 'minor'
+          - 'patch'
+      cli-and-terminal:
+        patterns:
+          - 'clap'
+          - 'clap_complete'
+          - 'console'
+          - 'dialoguer'
+          - 'indicatif'
+        update-types:
+          - 'minor'
+          - 'patch'
+      test-tooling:
+        patterns:
+          - 'assert_cmd'
+          - 'predicates'
+          - 'tempfile'
+        update-types:
+          - 'minor'
+          - 'patch'
+    versioning-strategy: 'increase'
+
+  # The docs site. Its lockfile lives in apps/web, not at the root.
+  - package-ecosystem: 'npm'
+    directory: '/apps/web'
+    target-branch: 'mega'
+    schedule:
+      interval: 'weekly'
+      day: 'friday'
+      time: '15:00'
+      timezone: 'America/New_York'
+    open-pull-requests-limit: 10
+    allow:
+      - dependency-type: 'all'
+    commit-message:
+      prefix: 'Upgrade'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'docs-site'
+      - 'automated'
+    groups:
+      astro-stack:
+        patterns:
+          - 'astro'
+          - '@astrojs/*'
+          - 'astro-seo'
+        update-types:
+          - 'minor'
+          - 'patch'
+      frontend-stack:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react*'
+          - 'bootstrap'
+          - 'bootstrap-icons'
+          - 'tailwindcss'
+          - '@tailwindcss/*'
+          - 'sass'
+        update-types:
+          - 'minor'
+          - 'patch'
+    versioning-strategy: 'increase'
+
+  # Pinned action versions rot silently; nothing else updates them.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    target-branch: 'mega'
+    schedule:
+      interval: 'weekly'
+      day: 'friday'
+      time: '15:00'
+      timezone: 'America/New_York'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'Upgrade'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'ci'
+      - 'automated'

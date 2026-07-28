@@ -7,22 +7,22 @@ use crate::cli::BIN_VERSION;
 
 #[derive(Args, Debug)]
 pub struct VersionArgs {
-    /// Output version information as JSON.
-    #[arg(long)]
-    pub json: bool,
+	/// Output version information as JSON.
+	#[arg(long)]
+	pub json: bool,
 }
 
 impl VersionArgs {
-    pub async fn execute(&self) -> Result<()> {
-        if self.json {
-            println!(
-                r#"{{"version":"{}","target":"{}"}}"#,
-                BIN_VERSION,
-                std::env::consts::ARCH
-            );
-        } else {
-            println!("{}", splash(BIN_VERSION));
-        }
-        Ok(())
-    }
+	pub async fn execute(&self) -> Result<()> {
+		if self.json {
+			println!(
+				r#"{{"version":"{}","target":"{}"}}"#,
+				BIN_VERSION,
+				std::env::consts::ARCH
+			);
+		} else {
+			println!("{}", splash(BIN_VERSION));
+		}
+		Ok(())
+	}
 }

@@ -8,6 +8,6 @@ use cli::Cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    cli.execute().await
+	let cli = Cli::parse();
+	cli.execute().await
 }

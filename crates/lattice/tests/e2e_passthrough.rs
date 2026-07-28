@@ -43,31 +43,31 @@ const IGNORE: &str = r#"["**/node_modules/**", "**/.turbo/**", "**/dist/**"]"#;
 /// to be scheduled first. `ignore` is a parameter so a test can show what
 /// happens when a pattern is missing.
 fn nested_repo(fx: &Fixture, ignore: &str) {
-    fx.write_exec("bin/turbo", TURBO_STUB);
+	fx.write_exec("bin/turbo", TURBO_STUB);
 
-    // The nested repo: its own manifest, its own task config, its own packages.
-    fx.write(
-        "frontend/package.json",
-        r#"{ "name": "frontend", "private": true, "workspaces": ["packages/*"] }
+	// The nested repo: its own manifest, its own task config, its own packages.
+	fx.write(
+		"frontend/package.json",
+		r#"{ "name": "frontend", "private": true, "workspaces": ["packages/*"] }
 "#,
-    );
-    fx.write(
-        "frontend/turbo.json",
-        r#"{ "tasks": { "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] } } }
+	);
+	fx.write(
+		"frontend/turbo.json",
+		r#"{ "tasks": { "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] } } }
 "#,
-    );
-    fx.write(
-        "frontend/packages/ui/src/index.js",
-        "export const ui = 1;\n",
-    );
-    fx.write(
-        "frontend/packages/site/src/index.js",
-        "export const site = 1;\n",
-    );
+	);
+	fx.write(
+		"frontend/packages/ui/src/index.js",
+		"export const ui = 1;\n",
+	);
+	fx.write(
+		"frontend/packages/site/src/index.js",
+		"export const site = 1;\n",
+	);
 
-    fx.write("api/src/main.txt", "api v1\n");
+	fx.write("api/src/main.txt", "api v1\n");
 
-    fx.config(&format!(
+	fx.config(&format!(
         r#"{{
   "latticeVersion": "0.1.0",
   "workspaces": [
@@ -93,113 +93,113 @@ fn nested_repo(fx: &Fixture, ignore: &str) {
 /// nested repo's runner is resolved in a real checkout (a global install, or
 /// `node_modules/.bin`).
 fn lattice(fx: &Fixture) -> Command {
-    let mut cmd = fx.lattice();
-    let host = std::env::var("PATH").unwrap_or_default();
-    cmd.env("PATH", format!("{}:{host}", fx.join("bin").display()));
-    cmd
+	let mut cmd = fx.lattice();
+	let host = std::env::var("PATH").unwrap_or_default();
+	cmd.env("PATH", format!("{}:{host}", fx.join("bin").display()));
+	cmd
 }
 
 #[test]
 fn nested_runner_runs_in_graph_order_with_no_engine_machinery() {
-    let fx = Fixture::new();
-    nested_repo(&fx, IGNORE);
+	let fx = Fixture::new();
+	nested_repo(&fx, IGNORE);
 
-    lattice(&fx)
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        // The inner runner ran, and fanned out over the nested repo's packages.
-        .stdout(predicate::str::contains("frontend:build: ui:build: done"))
-        .stdout(predicate::str::contains("frontend:build: site:build: done"))
-        .stdout(predicate::str::contains(
-            "frontend:build: turbo-stub: build complete",
-        ))
-        // `api` copies a frontend artifact, so it could only succeed downstream.
-        .stdout(predicate::str::contains("api:build: api-built"))
-        .stdout(predicate::str::contains("0 failed"));
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		// The inner runner ran, and fanned out over the nested repo's packages.
+		.stdout(predicate::str::contains("frontend:build: ui:build: done"))
+		.stdout(predicate::str::contains("frontend:build: site:build: done"))
+		.stdout(predicate::str::contains(
+			"frontend:build: turbo-stub: build complete",
+		))
+		// `api` copies a frontend artifact, so it could only succeed downstream.
+		.stdout(predicate::str::contains("api:build: api-built"))
+		.stdout(predicate::str::contains("0 failed"));
 
-    assert!(
-        fx.exists("frontend/packages/ui/dist/bundle.js")
-            && fx.exists("frontend/packages/site/dist/bundle.js"),
-        "the inner runner's artifacts should be on disk"
-    );
-    assert_eq!(
-        fx.read("api/dist/site.js"),
-        "export const site = 1;\n",
-        "api must consume the artifact the nested repo produced"
-    );
-    assert!(
-        !fx.exists(".lattice/toolchains"),
-        "a passthrough repo declares no engines and must provision nothing"
-    );
+	assert!(
+		fx.exists("frontend/packages/ui/dist/bundle.js")
+			&& fx.exists("frontend/packages/site/dist/bundle.js"),
+		"the inner runner's artifacts should be on disk"
+	);
+	assert_eq!(
+		fx.read("api/dist/site.js"),
+		"export const site = 1;\n",
+		"api must consume the artifact the nested repo produced"
+	);
+	assert!(
+		!fx.exists(".lattice/toolchains"),
+		"a passthrough repo declares no engines and must provision nothing"
+	);
 }
 
 #[test]
 fn nested_repo_caches_as_one_unit() {
-    let fx = Fixture::new();
-    nested_repo(&fx, IGNORE);
+	let fx = Fixture::new();
+	nested_repo(&fx, IGNORE);
 
-    lattice(&fx)
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("0 cached"));
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("0 cached"));
 
-    // Unchanged inputs: the whole nested repo is one hit, and its runner is
-    // never invoked.
-    lattice(&fx)
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("frontend:build: cache hit ["))
-        .stdout(predicate::str::contains("2 cached"))
-        .stdout(predicate::str::contains("turbo-stub").not());
+	// Unchanged inputs: the whole nested repo is one hit, and its runner is
+	// never invoked.
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("frontend:build: cache hit ["))
+		.stdout(predicate::str::contains("2 cached"))
+		.stdout(predicate::str::contains("turbo-stub").not());
 
-    // The hit restores every artifact the inner runner had produced.
-    std::fs::remove_dir_all(fx.join("frontend/packages/ui/dist")).expect("rm dist");
-    std::fs::remove_dir_all(fx.join("frontend/packages/site/dist")).expect("rm dist");
-    lattice(&fx)
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("frontend:build: cache hit ["));
-    assert!(
-        fx.exists("frontend/packages/ui/dist/bundle.js")
-            && fx.exists("frontend/packages/site/dist/bundle.js"),
-        "a hit on the passthrough workspace must restore the inner artifacts"
-    );
+	// The hit restores every artifact the inner runner had produced.
+	std::fs::remove_dir_all(fx.join("frontend/packages/ui/dist")).expect("rm dist");
+	std::fs::remove_dir_all(fx.join("frontend/packages/site/dist")).expect("rm dist");
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("frontend:build: cache hit ["));
+	assert!(
+		fx.exists("frontend/packages/ui/dist/bundle.js")
+			&& fx.exists("frontend/packages/site/dist/bundle.js"),
+		"a hit on the passthrough workspace must restore the inner artifacts"
+	);
 
-    // A source edit anywhere inside the nested repo busts its key and re-runs
-    // the inner runner. `api` is untouched, so it still hits.
-    fx.write(
-        "frontend/packages/ui/src/index.js",
-        "export const ui = 2;\n",
-    );
-    lattice(&fx)
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("frontend:build: cache hit").not())
-        .stdout(predicate::str::contains(
-            "frontend:build: turbo-stub: build complete",
-        ))
-        .stdout(predicate::str::contains("api:build: cache hit ["));
+	// A source edit anywhere inside the nested repo busts its key and re-runs
+	// the inner runner. `api` is untouched, so it still hits.
+	fx.write(
+		"frontend/packages/ui/src/index.js",
+		"export const ui = 2;\n",
+	);
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("frontend:build: cache hit").not())
+		.stdout(predicate::str::contains(
+			"frontend:build: turbo-stub: build complete",
+		))
+		.stdout(predicate::str::contains("api:build: cache hit ["));
 }
 
 #[test]
 fn unignored_inner_runner_cache_dir_defeats_the_lattice_cache() {
-    let fx = Fixture::new();
-    // Same repo, but `.turbo` is no longer ignored: the inner runner's
-    // per-invocation marker lands in the key, so no run can ever hit.
-    nested_repo(&fx, r#"["**/node_modules/**", "**/dist/**"]"#);
+	let fx = Fixture::new();
+	// Same repo, but `.turbo` is no longer ignored: the inner runner's
+	// per-invocation marker lands in the key, so no run can ever hit.
+	nested_repo(&fx, r#"["**/node_modules/**", "**/dist/**"]"#);
 
-    lattice(&fx).args(["run", "build", "-l"]).assert().success();
-    lattice(&fx)
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("frontend:build: cache hit").not())
-        .stdout(predicate::str::contains(
-            "frontend:build: turbo-stub: build complete",
-        ));
+	lattice(&fx).args(["run", "build", "-l"]).assert().success();
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("frontend:build: cache hit").not())
+		.stdout(predicate::str::contains(
+			"frontend:build: turbo-stub: build complete",
+		));
 }

@@ -21,50 +21,50 @@ const FAKETOOL_ENGINE: &str = r#"{
 
 #[test]
 fn setup_provisions_toolchain_only_repo() {
-    let fx = Fixture::new();
-    // No workspaces, no tasks: a pure toolchain-manager repo.
-    fx.config(&format!(
-        r#"{{
+	let fx = Fixture::new();
+	// No workspaces, no tasks: a pure toolchain-manager repo.
+	fx.config(&format!(
+		r#"{{
   "latticeVersion": "0.1.0",
   "engines": {{ "faketool": {FAKETOOL_ENGINE} }}
 }}
 "#
-    ));
+	));
 
-    fx.lattice()
-        .args(["setup", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("setup complete"));
+	fx.lattice()
+		.args(["setup", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("setup complete"));
 
-    // The provisioned tree carries the fake binary and its pin record.
-    let files = fx.files_under(".lattice/toolchains/faketool");
-    assert!(
-        files.iter().any(|p| p.ends_with("bin/faketool")),
-        "provisioned faketool binary is missing; found {files:?}"
-    );
-    assert!(
-        files.iter().any(|p| p.ends_with("pins.json")),
-        "pins.json is missing; found {files:?}"
-    );
-    // It lands under a `<version>-<hash>` dir (1.2.3 from the fake versionCmd).
-    assert!(
-        files
-            .iter()
-            .any(|p| p.to_string_lossy().contains("/1.2.3-")),
-        "expected a 1.2.3-<hash> pin dir; found {files:?}"
-    );
+	// The provisioned tree carries the fake binary and its pin record.
+	let files = fx.files_under(".lattice/toolchains/faketool");
+	assert!(
+		files.iter().any(|p| p.ends_with("bin/faketool")),
+		"provisioned faketool binary is missing; found {files:?}"
+	);
+	assert!(
+		files.iter().any(|p| p.ends_with("pins.json")),
+		"pins.json is missing; found {files:?}"
+	);
+	// It lands under a `<version>-<hash>` dir (1.2.3 from the fake versionCmd).
+	assert!(
+		files
+			.iter()
+			.any(|p| p.to_string_lossy().contains("/1.2.3-")),
+		"expected a 1.2.3-<hash> pin dir; found {files:?}"
+	);
 }
 
 #[test]
 fn path_injection_makes_provisioned_tool_available_during_run() {
-    let fx = Fixture::new();
-    fx.mkdir("app");
-    // `faketool` is not on the host PATH; the build command is the bare tool
-    // name, which only resolves because its provisioned bin dir is prepended to
-    // PATH for the task.
-    fx.config(&format!(
-        r#"{{
+	let fx = Fixture::new();
+	fx.mkdir("app");
+	// `faketool` is not on the host PATH; the build command is the bare tool
+	// name, which only resolves because its provisioned bin dir is prepended to
+	// PATH for the task.
+	fx.config(&format!(
+		r#"{{
   "latticeVersion": "0.1.0",
   "workspaces": [
     {{ "name": "app", "path": "app", "auto": false,
@@ -74,12 +74,12 @@ fn path_injection_makes_provisioned_tool_available_during_run() {
   "tasks": {{ "build": {{}} }}
 }}
 "#
-    ));
+	));
 
-    fx.lattice()
-        .args(["run", "build", "-l"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("faketool 1.2.3"))
-        .stdout(predicate::str::contains("0 failed"));
+	fx.lattice()
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("faketool 1.2.3"))
+		.stdout(predicate::str::contains("0 failed"));
 }

@@ -9,12 +9,11 @@ target/
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-# RustRover
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+*.log
 
 # Claude Code agent worktrees (ephemeral, machine-specific).
 .claude/worktrees/
@@ -26,20 +25,20 @@ target/
 .lattice/bin/
 .lattice-setup-marker
 
-apps/web/node_modules/
+node_modules/
 
-# Astro build output and generated content types for the site.
-apps/web/dist/
-apps/web/.astro/
-
-# Nested-repo example: the inner runner's dependency tree, its own cache, and
-# everything either runner builds.
-examples/nested-repo/frontend/node_modules/
-examples/nested-repo/**/.turbo/
-examples/nested-repo/**/dist/
+# Astro build output and generated content types. Not scoped to apps/web: running
+# the site from the repo root drops a .astro/ here instead.
+dist/
+.astro/
 
 # Running the examples (README/CONTRIBUTING tell contributors to) leaves the same
-# ephemeral runtime artifacts there as at the repo root.
+# ephemeral runtime artifacts there as at the repo root, plus whatever each
+# example's own toolchain builds.
 examples/**/.lattice/cache/
 examples/**/.lattice/toolchains/
 examples/**/.lattice/bin/
+examples/**/.turbo/
+examples/**/.venv/
+examples/**/bin/
+examples/**/__pycache__/

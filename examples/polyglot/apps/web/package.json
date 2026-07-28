@@ -1,7 +1,7 @@
 {
   "name": "web",
   "version": "0.1.0",
-  "description": "Example Next.js web application workspace",
+  "description": "Example npm workspace, detected from its lockfile",
   "scripts": {
     "build": "echo 'Building web app...' && mkdir -p dist && echo '<html><body>Hello from web</body></html>' > dist/index.html",
     "test": "echo 'Running web tests... OK'",

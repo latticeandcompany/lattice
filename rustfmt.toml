@@ -1,0 +1,4 @@
+# Rust follows the repo-wide indentation rule from .editorconfig and
+# .agents/CODESTYLE.md: tabs, not spaces. Everything else is rustfmt default —
+# `cargo fmt --all --check` in CI is the gate, so there is nothing else to decide.
+hard_tabs = true

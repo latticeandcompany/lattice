@@ -1,2 +1,42 @@
-# Auto detect text files and perform LF normalization
-* text eol=crlf
+# Authored text is stored LF in the repository and checked out CRLF, matching
+# .editorconfig. Extensions are listed explicitly rather than using a `*` rule:
+# a CRLF shebang makes a shell script unrunnable on macOS and Linux
+# ("env: bash\r: No such file or directory"), and rosette.txt is embedded with
+# include_str! and printed to a terminal, so it must not carry carriage returns.
+
+*.rs text eol=crlf
+*.toml text eol=crlf
+*.json text eol=crlf
+*.md text eol=crlf
+*.yml text eol=crlf
+*.yaml text eol=crlf
+*.astro text eol=crlf
+*.ts text eol=crlf
+*.tsx text eol=crlf
+*.js text eol=crlf
+*.mjs text eol=crlf
+*.cjs text eol=crlf
+*.css text eol=crlf
+*.scss text eol=crlf
+*.svg text eol=crlf
+
+*.sh text eol=lf
+*.txt text eol=lf
+
+# Binaries are marked explicitly. The previous `* text eol=crlf` rule forced text
+# treatment on everything, and CRLF normalization destroyed three committed PNGs —
+# a PNG's own 8-byte signature contains a CR LF pair, so normalizing it corrupts
+# the file beyond recognition. Never let a `text` rule reach these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.gif binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.gz binary
+*.zip binary

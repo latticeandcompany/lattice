@@ -17,7 +17,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "tailwind.config.cjs", "tsconfig.json"],
+      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "tsconfig.json"],
       "outputs": ["dist/**"]
     },
     "dev": {

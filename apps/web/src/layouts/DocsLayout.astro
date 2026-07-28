@@ -7,7 +7,7 @@ import '../globals.scss';
 import '../styles/docs.scss';
 import Navbar from '../components/navbar';
 import DocsSidebar from '../components/docsSidebar';
-import DocsToc from '../components/docsToc';
+import DocsToc, { tocItems } from '../components/docsToc';
 import DocsSearch from '../components/docsSearch';
 import type { DocGroup } from '../lib/docs';
 import type { Heading } from '../components/docsToc';
@@ -23,6 +23,9 @@ interface Props {
 
 const { title, description, group, nav, headings } = Astro.props;
 const path = Astro.url.pathname;
+// Several pages are short enough to have no h2/h3 at all; they get no table of contents,
+// so there's nothing for the island to show and no reason to ship and hydrate it.
+const hasToc = tocItems(headings).length > 0;
 ---
 
 <!doctype html>
@@ -81,7 +84,7 @@ const path = Astro.url.pathname;
 
 				<aside class="docs-grid__toc pt-4 d-none d-xl-block">
 					<div class="docs-sticky">
-						<DocsToc client:load headings={headings} />
+						{hasToc && <DocsToc client:load headings={headings} />}
 					</div>
 				</aside>
 			</div>
