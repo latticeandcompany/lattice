@@ -18,7 +18,12 @@
   Sass, and `astro-seo` releases. Tailwind now runs through the CSS-first
   `@tailwindcss/vite` plugin (the deprecated `@astrojs/tailwind` integration was
   removed); the brand theme lives in `src/styles/tailwind.css` and Tailwind is
-  imported without preflight so Bootstrap keeps owning the reset.
+  imported without preflight so Bootstrap keeps owning the reset. Tailwind
+  utilities are namespaced with a `tw:` prefix so its v4 on-demand scanner can't
+  regenerate bare classes that collide with Bootstrap (`collapse`, `container`,
+  `col-*`, …) — an unprefixed setup emitted `.collapse{visibility:collapse}` and
+  a Tailwind `.container`/grid, which hid the navbar actions and docs sidebar and
+  skewed layout. Write Tailwind utilities as `tw:flex`, `tw:text-teal-500`.
 
 - **Persistent tasks stream by default** — a `lattice run` that pulls in a
   persistent task (a dev server, watcher, or anything in its dependency closure)

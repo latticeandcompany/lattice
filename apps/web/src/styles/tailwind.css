@@ -1,11 +1,17 @@
 /* Tailwind v4 entry (CSS-first, replaces tailwind.config.cjs + @astrojs/tailwind).
-   Imported as theme + utilities only, skipping preflight: Bootstrap owns the reset,
-   so its variable-driven components stay authoritative in the cascade. Tailwind
-   utilities live in @layer utilities and therefore never override Bootstrap's
-   unlayered rules (styling priority per .agents/CODESTYLE.md: Bootstrap first). */
+   Theme + utilities only, skipping preflight: Bootstrap owns the reset, so its
+   variable-driven components stay authoritative.
+
+   Every utility and variable is prefixed `tw:` (Tailwind's recommended coexistence
+   escape hatch). Bootstrap and Tailwind share many bare class names — `collapse`,
+   `container`, `border`, `shadow`, `rounded`, `p-*` — and some map to different CSS
+   properties (Bootstrap `.collapse` toggles `display`; Tailwind `collapse` sets
+   `visibility: collapse`), so an unprefixed Tailwind would silently hide Bootstrap
+   collapses and skew layout. The prefix removes that whole class of collisions;
+   write Tailwind utilities as `tw:flex`, `tw:text-teal-500`, etc. */
 @layer theme, base, components, utilities;
-@import 'tailwindcss/theme.css' layer(theme);
-@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tailwindcss/theme.css' layer(theme) prefix(tw);
+@import 'tailwindcss/utilities.css' layer(utilities) prefix(tw);
 
 /* Dark mode follows Bootstrap's [data-bs-theme="dark"] toggle, so `dark:` variants
    stay in sync with the rest of the theme switch. */
