@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Self-healing editor schema** — `run`, `setup`, and `prune` now write
+  `.lattice/schema.json` when it's missing (a cleared cache dir, or a clone where
+  it was never committed), so an editor's JSON language server can always resolve
+  the config's `$schema`. An existing copy is left untouched to avoid churn. The
+  schema is also committed to this repo so validation works before the first run.
+
+- **Stacked commands** — `lattice run` now accepts multiple tasks in one
+  invocation (e.g. `lattice run lint test build`). The roots are merged into a
+  single dependency graph, so a dependency shared by several roots runs once and
+  independent roots parallelize where the graph allows. All existing flags
+  (`--filter`, `--concurrency`, `--continue`, `--dry-run`, `--no-cache`) apply to
+  the combined run; an unknown task in the list fails fast and names the offender.
+  - `--sequentially` / `-s` runs each task's graph to completion, in the order
+    given, before starting the next — the strict-phases alternative to the merged
+    default. Fail-fast stops at the first failed phase; `--continue` runs the
+    remaining phases and still exits non-zero.
+
 - **Marketing + docs site** (`apps/web`) — a single Astro site combining the landing
   page and documentation, built primarily in React with Bootstrap, styled to the
   monochrome brand system.

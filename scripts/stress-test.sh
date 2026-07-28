@@ -131,7 +131,7 @@ lat "$ENVROOT" ; t_ok "bare \`lattice\` exits 0"
 t_has "bare \`lattice\` points at help" "lattice --help"
 
 lat "$ENVROOT" --help ; t_ok "\`--help\` exits 0"
-t_has "help lists run"         "Run a task"
+t_has "help lists run"         "Run one or more tasks"
 t_has "help lists setup"       "Provision"
 t_has "help lists init"        "Scaffold"
 t_has "help lists prune"       "Evict cache"
@@ -189,6 +189,12 @@ fi
 lat "$INITDIR" init --yes ; t_bad "init refuses to clobber existing config"
 t_has "init clobber message" "already exists"
 lat "$INITDIR" init --yes --force ; t_ok "init --force overwrites"
+
+# Self-heal: a missing schema (wiped cache dir, uncommitted clone) is rewritten
+# by any command that loads the config, so editors always resolve `$schema`.
+rm -f "$INITDIR/.lattice/schema.json"
+lat "$INITDIR" run build --dry-run >/dev/null 2>&1 || true
+t_file "$INITDIR/.lattice/schema.json" "run rewrites a missing schema (self-heal)"
 
 # =========================================================================
 # 3. The production monorepo.
@@ -377,6 +383,25 @@ lat "$PROD" run lint  -l ; t_ok "run lint exits 0"
 t_has "lint ran"  "core-lint-ok"
 lat "$PROD" run clean -l ; t_ok "run clean exits 0"
 t_has "clean ran" "core-clean-ok"
+
+# Stacked commands: one invocation, one combined graph. lint + test + build run
+# together; test's build dependency runs once, ahead of test.
+lat "$PROD" run lint test build --no-cache -l ; t_ok "run lint test build (stacked) exits 0"
+t_has "stacked run ran lint"  "core-lint-ok"
+t_has "stacked run ran test"  "core-test-ok"
+t_has "stacked run built"     "core:build"
+lat "$PROD" run lint test build --dry-run ; t_ok "stacked --dry-run exits 0"
+t_has "stacked dry-run banner lists all roots" "dry run · lint test build"
+lat "$PROD" run build definitely-not-a-task ; t_bad "stacked run rejects an unknown task"
+t_has "unknown stacked task names the offender" "definitely-not-a-task"
+
+# --sequentially: each task's graph runs to completion before the next, in order.
+lat "$PROD" run lint test -s --no-cache -l ; t_ok "run lint test --sequentially exits 0"
+t_has "sequential run ran lint"  "core-lint-ok"
+t_has "sequential run ran test"  "core-test-ok"
+lat "$PROD" run lint build --sequentially --dry-run ; t_ok "sequential --dry-run exits 0"
+t_has "sequential dry-run labels the lint phase"  "dry run · lint (phase)"
+t_has "sequential dry-run labels the build phase" "dry run · build (phase)"
 
 # =========================================================================
 # 8. Persistent task (dev server): must not block; SIGINT tears down.

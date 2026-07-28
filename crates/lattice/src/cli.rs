@@ -43,7 +43,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Run a task across your workspaces, in dependency order.
+    /// Run one or more tasks across your workspaces, in dependency order.
     Run(RunArgs),
 
     /// Provision pinned toolchains and install native dependencies.

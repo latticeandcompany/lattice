@@ -24,6 +24,7 @@ impl PruneArgs {
         let root = find_root(&cwd).ok_or_else(|| {
             anyhow::anyhow!("No lattice.json found in this directory or any parent.")
         })?;
+        crate::schema::ensure_schema(&root);
         let config = lattice_config::load_config(&root)?;
 
         let max = match &self.max_size {

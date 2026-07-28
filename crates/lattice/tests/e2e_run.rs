@@ -149,6 +149,160 @@ fn dry_run_lists_tasks_without_executing() {
 }
 
 #[test]
+fn stacked_tasks_run_as_one_graph() {
+    let fx = Fixture::new();
+    fx.mkdir("a");
+    // test dependsOn build; lint is independent. Stacking all three should run
+    // build once (before test) and lint too.
+    fx.config(
+        r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false, "scripts": {
+      "lint": "echo LINTED > lint.txt",
+      "build": "echo BUILT > build.txt",
+      "test": "echo TESTED > test.txt"
+    } }
+  ],
+  "tasks": {
+    "lint": {},
+    "build": {},
+    "test": { "dependsOn": ["build"] }
+  }
+}
+"#,
+    );
+
+    fx.lattice()
+        .args(["run", "lint", "test", "build", "-l"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("app:lint: done"))
+        .stdout(predicate::str::contains("app:build: done"))
+        .stdout(predicate::str::contains("app:test: done"));
+
+    assert!(fx.exists("a/lint.txt"), "lint ran");
+    assert!(fx.exists("a/build.txt"), "build ran");
+    assert!(fx.exists("a/test.txt"), "test ran");
+}
+
+#[test]
+fn stacked_dry_run_lists_all_tasks() {
+    let fx = Fixture::new();
+    fx.mkdir("a");
+    fx.config(
+        r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false, "scripts": {
+      "lint": "echo L", "build": "echo B" } }
+  ],
+  "tasks": { "lint": {}, "build": {} }
+}
+"#,
+    );
+
+    fx.lattice()
+        .args(["run", "lint", "build", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry run · lint build"))
+        .stdout(predicate::str::contains("app:lint"))
+        .stdout(predicate::str::contains("app:build"));
+}
+
+#[test]
+fn sequentially_runs_each_task_phase_in_order() {
+    let fx = Fixture::new();
+    fx.mkdir("a");
+    // Each task appends a marker; --sequentially must run them strictly in the
+    // listed order (lint, then test — which drags in its build dep — then build).
+    fx.config(
+        r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false, "scripts": {
+      "lint": "echo lint >> order.txt",
+      "build": "echo build >> order.txt",
+      "test": "echo test >> order.txt"
+    } }
+  ],
+  "tasks": {
+    "lint": {},
+    "build": {},
+    "test": { "dependsOn": ["build"] }
+  }
+}
+"#,
+    );
+
+    fx.lattice()
+        .args(["run", "lint", "test", "-s", "-l"])
+        .assert()
+        .success();
+
+    // Phase order: lint (phase 1), then build→test (phase 2). build appears
+    // before test because test dependsOn build.
+    let order = std::fs::read_to_string(fx.join("a/order.txt")).unwrap();
+    let lines: Vec<&str> = order.lines().collect();
+    assert_eq!(lines, vec!["lint", "build", "test"]);
+}
+
+#[test]
+fn sequentially_stops_at_first_failed_phase() {
+    let fx = Fixture::new();
+    fx.mkdir("a");
+    // lint fails; --sequentially fail-fast must not reach the build phase.
+    fx.config(
+        r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false, "scripts": {
+      "lint": "exit 1",
+      "build": "echo built > build.txt"
+    } }
+  ],
+  "tasks": { "lint": {}, "build": {} }
+}
+"#,
+    );
+
+    fx.lattice()
+        .args(["run", "lint", "build", "-s", "-l"])
+        .assert()
+        .failure();
+
+    assert!(
+        !fx.exists("a/build.txt"),
+        "a failed earlier phase must stop the run before the build phase"
+    );
+}
+
+#[test]
+fn sequentially_dry_run_lists_each_phase() {
+    let fx = Fixture::new();
+    fx.mkdir("a");
+    fx.config(
+        r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false, "scripts": {
+      "lint": "echo L", "build": "echo B" } }
+  ],
+  "tasks": { "lint": {}, "build": {} }
+}
+"#,
+    );
+
+    fx.lattice()
+        .args(["run", "lint", "build", "--sequentially", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry run · lint (phase)"))
+        .stdout(predicate::str::contains("dry run · build (phase)"));
+}
+
+#[test]
 fn keep_going_runs_independent_and_reports_failure() {
     let fx = Fixture::new();
     fx.mkdir("a");

@@ -39,6 +39,7 @@ impl SetupArgs {
             )
         })?;
 
+        crate::schema::ensure_schema(&root);
         let config = lattice_config::load_config(&root)?;
         let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
         let mode = detect_output_mode(effective_loq);

@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod schema;
 
 use anyhow::Result;
 use clap::Parser;

@@ -27,12 +27,13 @@ pub struct ExecutionGraph {
     pub topo_order: Vec<NodeIndex>,
 }
 
-/// The transitive closure of `root_task` over `dependsOn` (both same-workspace
-/// and `^`-prefixed cross-workspace edges refer to task names).
-fn collect_task_set(root_task: &str, config: &LatticeConfig) -> Vec<String> {
+/// The transitive closure of `root_tasks` over `dependsOn` (both same-workspace
+/// and `^`-prefixed cross-workspace edges refer to task names). Stacked roots
+/// share this one set, so a dependency common to several roots is collected once.
+fn collect_task_set(root_tasks: &[&str], config: &LatticeConfig) -> Vec<String> {
     let mut visited = HashSet::new();
     let mut ordered = Vec::new();
-    let mut stack = vec![root_task.to_string()];
+    let mut stack: Vec<String> = root_tasks.iter().map(|t| t.to_string()).collect();
 
     while let Some(task) = stack.pop() {
         if visited.contains(&task) {
@@ -56,25 +57,43 @@ fn collect_task_set(root_task: &str, config: &LatticeConfig) -> Vec<String> {
     ordered
 }
 
-/// Build the cross-workspace execution graph for `root_task`.
+/// Build the cross-workspace execution graph for a single `root_task`.
 ///
-/// Edges: `^task` deps connect a workspace's task to the same task in each of
-/// its `dependsOn` workspaces; bare deps connect tasks within one workspace.
-/// A persistent task may not be depended on (it never completes); cycles are
-/// rejected.
+/// Convenience wrapper over [`build_execution_graph_multi`] for the common
+/// single-task case.
 pub fn build_execution_graph(
     workspaces: &[Workspace],
     root_task: &str,
     config: &LatticeConfig,
 ) -> Result<ExecutionGraph> {
-    if !config.tasks.contains_key(root_task) {
-        bail!(
-            "Task '{}' is not defined in the tasks section of lattice.json",
-            root_task
-        );
+    build_execution_graph_multi(workspaces, &[root_task], config)
+}
+
+/// Build one combined cross-workspace execution graph for several stacked
+/// `root_tasks` (e.g. `lattice run lint test build`).
+///
+/// The roots are merged into a single DAG, so a dependency shared by several
+/// roots runs once and independent roots parallelize where the graph allows.
+///
+/// Edges: `^task` deps connect a workspace's task to the same task in each of
+/// its `dependsOn` workspaces; bare deps connect tasks within one workspace.
+/// A persistent task may not be depended on (it never completes); cycles are
+/// rejected.
+pub fn build_execution_graph_multi(
+    workspaces: &[Workspace],
+    root_tasks: &[&str],
+    config: &LatticeConfig,
+) -> Result<ExecutionGraph> {
+    for root_task in root_tasks {
+        if !config.tasks.contains_key(*root_task) {
+            bail!(
+                "Task '{}' is not defined in the tasks section of lattice.json",
+                root_task
+            );
+        }
     }
 
-    let task_set = collect_task_set(root_task, config);
+    let task_set = collect_task_set(root_tasks, config);
     let mut graph: DiGraph<TaskNode, ()> = DiGraph::new();
     let mut node_map: HashMap<(String, String), NodeIndex> = HashMap::new();
 
@@ -101,7 +120,7 @@ pub fn build_execution_graph(
                     // A manual workspace that declares no command for the
                     // requested root task halts. Auto workspaces silently skip
                     // tasks that don't apply to their toolchain.
-                    if !ws.auto && task_name == root_task {
+                    if !ws.auto && root_tasks.contains(&task_name.as_str()) {
                         bail!(
                             "Workspace '{}' is \"auto\": false but declares no command for \
                              task '{}'. Add it under this workspace's \"scripts\" map in lattice.json.",
@@ -302,6 +321,43 @@ mod tests {
         let build_pos = order.iter().position(|n| n.task_name == "build").unwrap();
         let test_pos = order.iter().position(|n| n.task_name == "test").unwrap();
         assert!(build_pos < test_pos);
+    }
+
+    #[test]
+    fn stacked_roots_merge_into_one_graph() {
+        let workspaces = vec![ws(
+            "app",
+            &[],
+            &[
+                ("lint", "eslint"),
+                ("build", "tsc"),
+                ("test", "vitest"),
+            ],
+        )];
+        // test depends on build; lint is independent.
+        let cfg = config(&[
+            ("lint", PipelineTask::default()),
+            ("build", PipelineTask::default()),
+            ("test", task(&["build"])),
+        ]);
+        let g = build_execution_graph_multi(&workspaces, &["lint", "test", "build"], &cfg).unwrap();
+        let order = dry_run_order(&g);
+
+        // build appears once and before test; lint is present too.
+        let build_nodes = order.iter().filter(|n| n.task_name == "build").count();
+        assert_eq!(build_nodes, 1, "shared dependency must not be duplicated");
+        let build_pos = order.iter().position(|n| n.task_name == "build").unwrap();
+        let test_pos = order.iter().position(|n| n.task_name == "test").unwrap();
+        assert!(build_pos < test_pos);
+        assert!(order.iter().any(|n| n.task_name == "lint"));
+    }
+
+    #[test]
+    fn stacked_roots_reject_unknown_task() {
+        let workspaces = vec![ws("app", &[], &[("build", "tsc")])];
+        let cfg = config(&[("build", PipelineTask::default())]);
+        let err = build_execution_graph_multi(&workspaces, &["build", "nope"], &cfg).unwrap_err();
+        assert!(format!("{err}").contains("nope"));
     }
 
     #[test]

@@ -10,10 +10,7 @@ use serde_json::{json, Map, Value};
 use lattice_output::{logo, teal};
 
 use crate::cli::BIN_VERSION;
-
-/// The canonical schema, bundled into the binary and written to
-/// `<cwd>/.lattice/schema.json` on init so the config self-validates in editors.
-const SCHEMA_JSON: &str = include_str!("../../assets/schema.json");
+use crate::schema::SCHEMA_JSON;
 
 /// Lines that init ensures are present in `.gitignore` (cache + provisioned
 /// toolchains are local artifacts). The committed `.lattice/schema.json` stays
