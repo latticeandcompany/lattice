@@ -1,5 +1,5 @@
 import { defineConfig } from 'astro/config';
-import tailwind from '@astrojs/tailwind';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
 import mdx from '@astrojs/mdx';
@@ -7,5 +7,8 @@ import mdx from '@astrojs/mdx';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://lattice.build',
-	integrations: [tailwind({ applyBaseStyles: false }), react(), sitemap(), mdx()],
+	integrations: [react(), sitemap(), mdx()],
+	vite: {
+		plugins: [tailwindcss()],
+	},
 });

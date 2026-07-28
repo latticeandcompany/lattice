@@ -1,4 +1,5 @@
-import { defineCollection, z as zod } from 'astro:content';
+import { defineCollection } from 'astro:content';
+import { z as zod } from 'astro/zod';
 import { glob } from 'astro/loaders';
 
 // Docs content lives as Markdown/MDX in src/content/docs. Another agent writes the

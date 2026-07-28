@@ -141,7 +141,7 @@ fn interactive_wizard() -> Result<Value> {
     let capabilities = ["build tool", "toolchain manager", "both"];
     let cap = Select::with_theme(&theme)
         .with_prompt("What does this repo need Lattice for?")
-        .items(&capabilities)
+        .items(capabilities)
         .default(2)
         .interact()?;
     let do_build = cap == 0 || cap == 2;

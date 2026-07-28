@@ -137,9 +137,17 @@ impl LocalStore {
 
     /// sha256 hex of a file's bytes, or `None` if the file cannot be opened.
     fn digest_file(path: &Path) -> Option<String> {
+        use std::io::Read;
         let mut file = std::fs::File::open(path).ok()?;
         let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher).ok()?;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = file.read(&mut buf).ok()?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
         Some(hex::encode(hasher.finalize()))
     }
 }

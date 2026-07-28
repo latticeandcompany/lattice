@@ -1,0 +1,59 @@
+/* Tailwind v4 entry (CSS-first, replaces tailwind.config.cjs + @astrojs/tailwind).
+   Imported as theme + utilities only, skipping preflight: Bootstrap owns the reset,
+   so its variable-driven components stay authoritative in the cascade. Tailwind
+   utilities live in @layer utilities and therefore never override Bootstrap's
+   unlayered rules (styling priority per .agents/CODESTYLE.md: Bootstrap first). */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+/* Dark mode follows Bootstrap's [data-bs-theme="dark"] toggle, so `dark:` variants
+   stay in sync with the rest of the theme switch. */
+@custom-variant dark (&:where([data-bs-theme='dark'], [data-bs-theme='dark'] *));
+
+/* Brand tokens (mirrors marketing/BRAND.md). Monochrome-first: ink/paper base, the
+   derived gray ramp, and teal as the one reserved product accent. */
+@theme {
+	--color-transparent: transparent;
+	--color-current: currentColor;
+
+	--color-ink: #020d0c;
+	--color-paper: #fbf8ff;
+
+	--color-gray-900: #141f1e;
+	--color-gray-700: #3a4443;
+	--color-gray-500: #6e7776;
+	--color-gray-300: #b6bcbb;
+	--color-gray-100: #e7e6e9;
+
+	--color-teal-300: #63c4b8;
+	--color-teal-500: #1b998b;
+	--color-teal-700: #136e64;
+
+	--font-sans: 'DM Sans', system-ui, sans-serif;
+	--font-mono: 'DM Mono', ui-monospace, monospace;
+
+	/* Brand type ramp (~1.25 modular scale). */
+	--text-display: 3.75rem;
+	--text-display--line-height: 4rem;
+	--text-display--letter-spacing: -0.02em;
+	--text-display--font-weight: 700;
+
+	--text-h1: 2.5rem;
+	--text-h1--line-height: 3rem;
+	--text-h1--letter-spacing: -0.01em;
+	--text-h1--font-weight: 700;
+
+	--text-h2: 2rem;
+	--text-h2--line-height: 2.5rem;
+	--text-h2--font-weight: 700;
+
+	--text-h3: 1.5rem;
+	--text-h3--line-height: 2rem;
+	--text-h3--font-weight: 500;
+
+	--text-body-lg: 1.125rem;
+	--text-body-lg--line-height: 1.75rem;
+
+	--container-content: 72rem;
+}

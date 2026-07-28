@@ -4,6 +4,15 @@
 
 ### Changed
 
+- **Rust workspace dependencies upgraded to latest** — notable majors: petgraph
+  0.6→0.8, sha2 0.10→0.11, console 0.15→0.16, indicatif 0.17→0.18, dialoguer
+  0.11→0.12, and jsonschema 0.48→0.49, plus caret-compatible bumps via `cargo
+  update` (anyhow, clap, tokio, serde, chrono, libc, indexmap, tempfile, …). Two
+  source fixes were required: sha2 0.11 dropped the `io::Write` impl on hashers,
+  so the cache file digest now reads bytes in an explicit loop, and dialoguer
+  0.12 takes `Select::items` by value. Build, tests, clippy, and the stress test
+  all pass on the new versions.
+
 - **Marketing site dependencies upgraded** — `apps/web` moved to Astro 7
   (from 5), Tailwind CSS v4 (from v3), and the latest `@astrojs/*`, React,
   Sass, and `astro-seo` releases. Tailwind now runs through the CSS-first

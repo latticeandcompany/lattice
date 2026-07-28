@@ -1,32 +1,26 @@
 {
-  "$ref": "#/definitions/docs",
-  "definitions": {
-    "docs": {
-      "type": "object",
-      "properties": {
-        "title": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "group": {
-          "type": "string",
-          "default": "Overview"
-        },
-        "order": {
-          "type": "number",
-          "default": 100
-        },
-        "$schema": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ],
-      "additionalProperties": false
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "group": {
+      "default": "Overview",
+      "type": "string"
+    },
+    "order": {
+      "default": 100,
+      "type": "number"
+    },
+    "$schema": {
+      "type": "string"
     }
   },
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "required": [
+    "title"
+  ]
 }
