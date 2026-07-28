@@ -716,7 +716,17 @@ fn go_mod_has_toolchain(path: &Path) -> bool {
 /// Resolve one task's command for a workspace. For JS/deno drivers the task
 /// must exist in the manifest's `scripts`/`tasks` map; other drivers use the
 /// tool's invoke form directly.
-pub fn infer_task_command(task: &str, ws_driver: &DriverResolution, path: &Path) -> Option<String> {
+///
+/// A `persistent` task (dev server, watcher) is never fabricated for a
+/// direct-invoke driver — there is no universal `cargo dev`/`go dev`, so it runs
+/// only where the workspace explicitly declares it (an explicit `scripts` entry,
+/// applied before this is called, or a manifest script for JS/deno drivers).
+pub fn infer_task_command(
+    task: &str,
+    ws_driver: &DriverResolution,
+    path: &Path,
+    persistent: bool,
+) -> Option<String> {
     let spec = DriverRegistry::get(&ws_driver.tool)?;
     if let Some(names) = manifest_script_names(path, &ws_driver.tool) {
         if names.iter().any(|n| n == task) {
@@ -724,6 +734,8 @@ pub fn infer_task_command(task: &str, ws_driver: &DriverResolution, path: &Path)
         } else {
             None
         }
+    } else if persistent {
+        None
     } else {
         Some(spec.invoke(task))
     }
@@ -788,11 +800,13 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
         }
         if ws_cfg.auto {
             if let Some(drv) = &driver {
-                for task in config.tasks.keys() {
+                for (task, task_cfg) in &config.tasks {
                     if commands.contains_key(task) {
                         continue;
                     }
-                    if let Some(cmd) = infer_task_command(task, drv, &path) {
+                    if let Some(cmd) =
+                        infer_task_command(task, drv, &path, task_cfg.is_persistent())
+                    {
                         commands.insert(task.clone(), cmd);
                     }
                 }
@@ -960,11 +974,25 @@ mod tests {
         );
         let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
         assert_eq!(
-            infer_task_command("build", &d, tmp.path()).as_deref(),
+            infer_task_command("build", &d, tmp.path(), false).as_deref(),
             Some("pnpm run build")
         );
         // A task not in package.json scripts is not invented.
-        assert_eq!(infer_task_command("test", &d, tmp.path()), None);
+        assert_eq!(infer_task_command("test", &d, tmp.path(), false), None);
+    }
+
+    #[test]
+    fn direct_invoke_driver_never_fabricates_persistent_task() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "Cargo.lock", "");
+        let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+        // A normal task uses the tool's invoke form directly...
+        assert_eq!(
+            infer_task_command("build", &d, tmp.path(), false).as_deref(),
+            Some("cargo build")
+        );
+        // ...but a persistent task is never fabricated (there is no `cargo dev`).
+        assert_eq!(infer_task_command("dev", &d, tmp.path(), true), None);
     }
 
     #[test]
@@ -999,6 +1027,67 @@ mod tests {
         assert_eq!(ws[0].command_for("build"), Some("pnpm run build"));
         assert_eq!(ws[0].command_for("deploy"), Some("./deploy.sh"));
         assert_eq!(ws[0].driver.as_ref().unwrap().tool, "pnpm");
+    }
+
+    #[test]
+    fn auto_workspace_never_infers_persistent_task_command() {
+        use lattice_config::{PipelineTask, WorkspaceConfig};
+        let tmp = TempDir::new().unwrap();
+        let ws_dir = tmp.path().join("core");
+        fs::create_dir_all(&ws_dir).unwrap();
+        // A cargo (non-manifest) driver: normally infers a command for any task.
+        write(&ws_dir, "Cargo.lock", "");
+
+        let mut config = LatticeConfig::default();
+        config.tasks.insert("build".into(), Default::default());
+        let dev = PipelineTask {
+            persistent: Some(true),
+            ..Default::default()
+        };
+        config.tasks.insert("dev".into(), dev);
+        config.workspaces.push(WorkspaceConfig {
+            name: "core".into(),
+            path: "core".into(),
+            auto: true,
+            engines: EngineMap::new(),
+            depends_on: None,
+            scripts: Default::default(),
+        });
+
+        let ws = discover_workspaces(tmp.path(), &config).unwrap();
+        // A normal task is still inferred; the persistent `dev` is not fabricated.
+        assert_eq!(ws[0].command_for("build"), Some("cargo build"));
+        assert_eq!(ws[0].command_for("dev"), None);
+    }
+
+    #[test]
+    fn auto_workspace_runs_persistent_task_only_where_declared() {
+        use lattice_config::{PipelineTask, WorkspaceConfig};
+        let tmp = TempDir::new().unwrap();
+        let ws_dir = tmp.path().join("web");
+        fs::create_dir_all(&ws_dir).unwrap();
+        write(&ws_dir, "Cargo.lock", "");
+
+        let mut config = LatticeConfig::default();
+        let dev = PipelineTask {
+            persistent: Some(true),
+            ..Default::default()
+        };
+        config.tasks.insert("dev".into(), dev);
+        let mut scripts = indexmap::IndexMap::new();
+        scripts.insert("dev".to_string(), "trunk serve".to_string());
+        config.workspaces.push(WorkspaceConfig {
+            name: "web".into(),
+            path: "web".into(),
+            auto: true,
+            engines: EngineMap::new(),
+            depends_on: None,
+            scripts,
+        });
+
+        let ws = discover_workspaces(tmp.path(), &config).unwrap();
+        // An explicitly declared persistent script is honored.
+        assert_eq!(ws[0].command_for("dev"), Some("trunk serve"));
     }
 
     #[test]

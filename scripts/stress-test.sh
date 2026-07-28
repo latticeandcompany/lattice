@@ -410,7 +410,9 @@ sect "persistent tasks"
 
 DEVLOG="$ENVROOT/dev.log"
 : > "$DEVLOG"
-( cd "$PROD" && exec "$BIN" run dev --filter docs -l ) > "$DEVLOG" 2>&1 &
+# No -l: a run that pulls in a persistent task auto-selects raw, line-by-line
+# output so the dev server's streaming output stays visible.
+( cd "$PROD" && exec "$BIN" run dev --filter docs ) > "$DEVLOG" 2>&1 &
 BG_PID=$!
 # Wait for the persistent child to announce readiness (or the process to die).
 i=0
@@ -465,8 +467,11 @@ sect "driver detection (never-prescribe) — all ecosystems"
 
 DET="$ENVROOT/detect"
 PKG='{ "scripts": { "build": "tsc" } }'
+# npm also declares a `dev` script, so a persistent `dev` task resolves here —
+# but must NOT be fabricated for the direct-invoke drivers (cargo/go/…).
+PKG_DEV='{ "scripts": { "build": "tsc", "dev": "vite" } }'
 mkdir -p "$DET"
-w "$DET/pkgs/npm/package-lock.json" "";      w "$DET/pkgs/npm/package.json" "$PKG"
+w "$DET/pkgs/npm/package-lock.json" "";      w "$DET/pkgs/npm/package.json" "$PKG_DEV"
 w "$DET/pkgs/pnpm/pnpm-lock.yaml" "";         w "$DET/pkgs/pnpm/package.json" "$PKG"
 w "$DET/pkgs/yarn/yarn.lock" "";              w "$DET/pkgs/yarn/package.json" "$PKG"
 w "$DET/pkgs/bun/bun.lockb" "";               w "$DET/pkgs/bun/package.json" "$PKG"
@@ -504,7 +509,10 @@ cat > "$DET/lattice.json" <<'JSON'
     { "name": "override-bun", "path": "pkgs/override", "engines": { "bun": ">=1.0.0" } },
     { "name": "composition", "path": "pkgs/composition" }
   ],
-  "tasks": { "build": { "outputs": ["dist/**"] } }
+  "tasks": {
+    "build": { "outputs": ["dist/**"] },
+    "dev": { "persistent": true }
+  }
 }
 JSON
 lat "$DET" run build --dry-run ; t_ok "detection dry-run resolves all workspaces"
@@ -524,6 +532,13 @@ t_has  "detect maven (mvnw)"                "./mvnw build"
 t_has  "detect dotnet (global.json)"        "dotnet build"
 t_hasE "declaration overrides lockfile"     "override-bun:build.*bun run build"
 t_hasE "roles compose (node+pnpm→pnpm)"     "composition:build.*pnpm run build"
+
+# Persistent tasks are never fabricated for direct-invoke drivers: `run dev`
+# resolves only the workspace that declares a `dev` script (npm), never cargo/go.
+lat "$DET" run dev --dry-run ; t_ok "persistent-task dry-run exits 0"
+t_hasE "persistent dev runs where declared" "npm:dev.*npm run dev"
+t_hasnt "persistent dev not fabricated for cargo" "cargo dev"
+t_hasnt "persistent dev not fabricated for go"    "go dev"
 
 # =========================================================================
 # 11. Error paths & guardrails.

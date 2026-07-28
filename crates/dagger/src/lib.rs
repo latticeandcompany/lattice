@@ -57,6 +57,20 @@ fn collect_task_set(root_tasks: &[&str], config: &LatticeConfig) -> Vec<String> 
     ordered
 }
 
+/// Whether any task in the transitive closure of `root_tasks` (over `dependsOn`)
+/// is persistent. A persistent task (dev server, watcher) streams output
+/// indefinitely, so the caller uses this to pick a streaming-friendly output
+/// mode instead of the live TUI.
+pub fn includes_persistent_task(root_tasks: &[&str], config: &LatticeConfig) -> bool {
+    collect_task_set(root_tasks, config).iter().any(|task| {
+        config
+            .tasks
+            .get(task)
+            .map(|cfg| cfg.is_persistent())
+            .unwrap_or(false)
+    })
+}
+
 /// Build the cross-workspace execution graph for a single `root_task`.
 ///
 /// Convenience wrapper over [`build_execution_graph_multi`] for the common
@@ -404,6 +418,27 @@ mod tests {
         let cfg = config(&[("dev", dev), ("build", task(&["dev"]))]);
         let err = build_execution_graph(&workspaces, "build", &cfg).unwrap_err();
         assert!(format!("{err}").contains("Persistent"));
+    }
+
+    #[test]
+    fn includes_persistent_task_detects_persistent_roots_and_deps() {
+        let dev = PipelineTask {
+            persistent: Some(true),
+            ..Default::default()
+        };
+        let cfg = config(&[
+            ("dev", dev),
+            ("build", PipelineTask::default()),
+            // start depends on dev (a persistent dependency).
+            ("start", task(&["dev"])),
+        ]);
+
+        // A persistent root is detected directly.
+        assert!(includes_persistent_task(&["dev"], &cfg));
+        // A persistent dependency pulled in transitively is detected.
+        assert!(includes_persistent_task(&["start"], &cfg));
+        // A run with no persistent task anywhere in its closure is not.
+        assert!(!includes_persistent_task(&["build"], &cfg));
     }
 
     #[test]

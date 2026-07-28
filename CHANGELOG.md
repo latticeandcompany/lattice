@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Changed
+
+- **Marketing site dependencies upgraded** — `apps/web` moved to Astro 7
+  (from 5), Tailwind CSS v4 (from v3), and the latest `@astrojs/*`, React,
+  Sass, and `astro-seo` releases. Tailwind now runs through the CSS-first
+  `@tailwindcss/vite` plugin (the deprecated `@astrojs/tailwind` integration was
+  removed); the brand theme lives in `src/styles/tailwind.css` and Tailwind is
+  imported without preflight so Bootstrap keeps owning the reset.
+
+- **Persistent tasks stream by default** — a `lattice run` that pulls in a
+  persistent task (a dev server, watcher, or anything in its dependency closure)
+  now defaults to raw, line-by-line output instead of the live TUI, so the
+  process's streaming output stays visible. Previously this required `-l`
+  (`--loquacious`). Non-persistent runs on a terminal still get the interactive
+  TUI. A persistent task's output always streams live even in raw mode (other
+  per-task output stays collapsed and is surfaced on failure).
+
+### Fixed
+
+- **Persistent tasks are no longer fabricated for auto workspaces** — a
+  direct-invoke driver (cargo, go, …) used to invent a command for *any* task
+  name, so `lattice run dev` picked up every Rust/Go workspace as `cargo dev` /
+  `go dev` even though no such task exists. Auto-detection now never fabricates a
+  command for a `persistent` task; it runs only where the workspace actually
+  declares it (an explicit `scripts` entry, or a manifest script for JS/deno
+  drivers). Non-persistent tasks (`build`, `test`, …) still infer as before.
+
 ### Added
 
 - **Self-healing editor schema** — `run`, `setup`, and `prune` now write

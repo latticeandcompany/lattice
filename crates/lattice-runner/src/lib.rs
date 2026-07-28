@@ -634,8 +634,8 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
         let task2 = task.clone();
         tokio::spawn(async move {
             let _ = tokio::join!(
-                drain_pipe(stdout, false, &tx, &ws2, &task2, false),
-                drain_pipe(stderr, true, &tx, &ws2, &task2, false),
+                drain_pipe(stdout, false, &tx, &ws2, &task2, false, true),
+                drain_pipe(stderr, true, &tx, &ws2, &task2, false, true),
             );
         });
 
@@ -655,8 +655,8 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let (out_lines, err_lines, status) = tokio::join!(
-        drain_pipe(stdout, false, &ctx.tx, &ws, &task, true),
-        drain_pipe(stderr, true, &ctx.tx, &ws, &task, true),
+        drain_pipe(stdout, false, &ctx.tx, &ws, &task, true, false),
+        drain_pipe(stderr, true, &ctx.tx, &ws, &task, true, false),
         child.wait(),
     );
 
@@ -774,6 +774,7 @@ async fn drain_pipe<R: AsyncRead + Unpin>(
     ws: &str,
     task: &str,
     capture: bool,
+    persistent: bool,
 ) -> Vec<(bool, String)> {
     let mut captured = Vec::new();
     if let Some(pipe) = pipe {
@@ -784,6 +785,7 @@ async fn drain_pipe<R: AsyncRead + Unpin>(
                 task: task.to_string(),
                 line: line.clone(),
                 stderr,
+                persistent,
             }));
             if capture && captured.len() < MAX_CAPTURED_LINES {
                 captured.push((stderr, line));

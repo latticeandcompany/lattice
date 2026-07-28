@@ -243,6 +243,9 @@ pub enum TaskEvent {
         task: String,
         line: String,
         stderr: bool,
+        /// From a persistent task (dev server/watcher). Streamed live even
+        /// outside loquacious mode — that output is the point of the run.
+        persistent: bool,
     },
     Finished {
         workspace: String,
@@ -339,8 +342,11 @@ impl Reporter for CiReporter {
                 task,
                 line,
                 stderr,
+                persistent,
             } => {
-                if self.loquacious {
+                // Persistent output (dev servers) always streams; other per-task
+                // output only in loquacious mode (else it's surfaced on failure).
+                if self.loquacious || persistent {
                     if stderr {
                         eprintln!("{}:{}: {}", workspace, task, line);
                     } else {
@@ -720,6 +726,7 @@ mod tests {
             task: task.clone(),
             line: "compiling".to_string(),
             stderr: false,
+            persistent: false,
         });
         r.event(TaskEvent::Finished {
             workspace: ws.clone(),

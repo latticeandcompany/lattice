@@ -2,9 +2,9 @@ use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
-use dagger::{build_execution_graph_multi, dry_run_order, ExecutionGraph};
+use dagger::{build_execution_graph_multi, dry_run_order, includes_persistent_task, ExecutionGraph};
 use lattice_config::find_root;
-use lattice_output::{banner_line, make_reporter, paint_teal};
+use lattice_output::{banner_line, make_reporter, paint_teal, OutputMode};
 use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure};
 use lattice_workspace::discover_workspaces;
 
@@ -90,7 +90,17 @@ impl RunArgs {
         }
 
         let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
-        let mode = detect_output_mode(effective_loq);
+        let mut mode = detect_output_mode(effective_loq);
+
+        // Persistent tasks (dev servers, watchers) stream output indefinitely,
+        // which the live TUI can't render. Default such runs to raw, CI-style
+        // line output so that streaming output stays visible.
+        if mode == OutputMode::Interactive {
+            let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
+            if includes_persistent_task(&task_refs, &config) {
+                mode = OutputMode::Raw;
+            }
+        }
 
         let mut workspaces = discover_workspaces(&root, &config)?;
 
