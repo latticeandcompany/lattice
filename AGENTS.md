@@ -26,6 +26,7 @@ Each part can be used together or separately. You can use one and not the other.
 - Update the CHANGELOG.md after each change you make
 - Ask questions frequently
 - Dogfood our own product! It helps us catch errors and gaps faster!
+- Update the docs after EVERY change!
 
 ## What you SHOULDNT do
 - Overcomment. Use comments sparingly to explain truly unique cases of ambiguous content. Do not write a doc comment that restates the name of the thing it documents. Do not decorate the file with `// ---- Section ----` banners
