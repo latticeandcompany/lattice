@@ -93,6 +93,8 @@ read_pin() {
 
 if [ -n "${LATTICE_VERSION:-}" ]; then
 	VERSION="${LATTICE_VERSION#v}"
+	# A label to print, not a reference — the literal variable name is the point.
+	# shellcheck disable=SC2016
 	SOURCE='$LATTICE_VERSION'
 elif [ -f lattice.json ]; then
 	VERSION="$(read_pin)"
