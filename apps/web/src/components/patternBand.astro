@@ -1,0 +1,85 @@
+---
+// The signature strip after the footer: the left half of the mark on black, then a
+// run of pattern rectangles flush beside it, so the logo reads as the first tile in
+// the series. Always ink with paper marks, in every theme.
+const ROTATIONS = [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5];
+
+interface Panel {
+	tile: string;
+	size: number; // background tile size in px
+}
+
+const panels: Panel[] = [
+	{ tile: '/brand/pattern.svg', size: 150 },
+	{ tile: '/brand/patterns/rings.svg', size: 96 },
+	{ tile: '/brand/patterns/waves.svg', size: 84 },
+	{ tile: '/brand/patterns/weave.svg', size: 64 },
+	{ tile: '/brand/patterns/dots.svg', size: 46 },
+	{ tile: '/brand/patterns/chevrons.svg', size: 64 },
+	{ tile: '/brand/patterns/grid.svg', size: 58 },
+];
+---
+
+<section class="pattern-band" aria-hidden="true">
+	<div class="pattern-band__panel pattern-band__logo">
+		<svg class="pattern-band__mark" viewBox="60 60 580 580">
+			{
+				ROTATIONS.map((deg, i) => (
+					<ellipse
+						class="rosette-stroke"
+						cx="350"
+						cy="350"
+						rx="250"
+						ry="95"
+						pathlength="1"
+						transform={`rotate(${deg} 350 350)`}
+						stroke-width="15.635"
+						style={`animation-delay:${i * 0.07}s; stroke: var(--paper);`}
+					/>
+				))
+			}
+		</svg>
+	</div>
+
+	{panels.map((p) => <div class="pattern-band__panel pattern-band__tile" style={`background-image:url('${p.tile}'); background-size:${p.size}px auto;`} />)}
+</section>
+
+<style>
+	.pattern-band {
+		display: flex;
+		flex-wrap: nowrap;
+		width: 100%;
+		height: clamp(220px, 24vw, 340px);
+		background: var(--ink);
+		overflow: hidden;
+	}
+	.pattern-band__panel {
+		position: relative;
+		height: 100%;
+	}
+	.pattern-band__panel + .pattern-band__panel {
+		border-left: 1px solid rgba(251, 248, 255, 0.12);
+	}
+	/* Width tracks the band height so the mark's left half fills the panel edge to
+	   edge, with no dead space on the left. */
+	.pattern-band__logo {
+		flex: 0 0 auto;
+		height: 100%;
+		aspect-ratio: 0.66;
+		overflow: hidden;
+	}
+	.pattern-band__mark {
+		position: absolute;
+		top: 50%;
+		right: 0;
+		height: 132%;
+		width: auto;
+		transform: translate(50%, -50%);
+		overflow: visible;
+	}
+	.pattern-band__tile {
+		flex: 1 1 170px;
+		background-repeat: repeat;
+		background-position: center;
+	}
+</style>

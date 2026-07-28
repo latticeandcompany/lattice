@@ -8,7 +8,8 @@
     { "name": "lattice-cache", "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
     { "name": "dagger", "path": "crates/dagger", "dependsOn": ["lattice-config", "lattice-workspace"] },
     { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
-    { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] }
+    { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
+    { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } }
   ],
   "engines": {
     "cargo": ">=1.75.0"
@@ -16,7 +17,12 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "Cargo.toml"]
+      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "tailwind.config.cjs", "tsconfig.json"],
+      "outputs": ["dist/**"]
+    },
+    "dev": {
+      "persistent": true,
+      "cache": false
     },
     "test": {
       "dependsOn": ["build"],

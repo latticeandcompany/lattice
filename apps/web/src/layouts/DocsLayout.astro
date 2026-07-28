@@ -1,0 +1,105 @@
+---
+import { SEO } from 'astro-seo';
+import { ClientRouter } from 'astro:transitions';
+import '../styles/bootstrap.scss';
+import '../globals.scss';
+import '../styles/docs.scss';
+import Navbar from '../components/navbar';
+import DocsSidebar from '../components/docsSidebar';
+import DocsToc from '../components/docsToc';
+import type { DocGroup } from '../lib/docs';
+import type { Heading } from '../components/docsToc';
+
+interface Props {
+	title: string;
+	description?: string;
+	nav: DocGroup[];
+	headings: Heading[];
+}
+
+const { title, description, nav, headings } = Astro.props;
+const path = Astro.url.pathname;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+		<meta name="generator" content={Astro.generator} />
+		<ClientRouter />
+		<SEO title={`${title} · Lattice docs`} description={description} />
+		<script is:inline>
+			(() => {
+				const setTheme = () => {
+					let theme;
+					try {
+						theme = localStorage.getItem('theme');
+					} catch {}
+					if (theme !== 'light' && theme !== 'dark') {
+						theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+					}
+					document.documentElement.setAttribute('data-bs-theme', theme);
+				};
+				setTheme();
+				document.addEventListener('astro:after-swap', setTheme);
+			})();
+		</script>
+	</head>
+	<body>
+		<Navbar client:load transition:persist />
+		<div class="mx-auto px-3" style="max-width: 84rem;">
+			<div class="docs-grid">
+				<aside class="docs-grid__side pt-4">
+					<div class="docs-sticky">
+						<DocsSidebar client:load nav={nav} path={path} />
+					</div>
+				</aside>
+
+				<main class="docs-grid__main py-4 py-lg-5">
+					<article class="doc-prose">
+						<slot />
+					</article>
+				</main>
+
+				<aside class="docs-grid__toc pt-4 d-none d-xl-block">
+					<div class="docs-sticky">
+						<DocsToc client:load headings={headings} />
+					</div>
+				</aside>
+			</div>
+		</div>
+
+		<style>
+			.docs-grid {
+				display: grid;
+				grid-template-columns: 1fr;
+				gap: 2rem;
+			}
+			.docs-sticky {
+				position: sticky;
+				top: 5rem;
+				max-height: calc(100vh - 6rem);
+				overflow-y: auto;
+			}
+			.docs-grid__main {
+				min-width: 0;
+			}
+			@media (min-width: 992px) {
+				.docs-grid {
+					grid-template-columns: 15rem minmax(0, 1fr);
+				}
+				.docs-grid__side {
+					border-right: 1px solid var(--border-subtle);
+					padding-right: 1.5rem;
+				}
+			}
+			@media (min-width: 1200px) {
+				.docs-grid {
+					grid-template-columns: 15rem minmax(0, 1fr) 13rem;
+				}
+			}
+		</style>
+	</body>
+</html>

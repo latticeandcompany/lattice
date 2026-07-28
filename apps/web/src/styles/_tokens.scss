@@ -1,0 +1,56 @@
+// Brand tokens - the single source of color truth (mirrors marketing/BRAND.md).
+// SCSS vars feed Bootstrap's variable overrides; the CSS custom properties feed
+// everything else and swap cleanly between light and dark.
+
+// Base - never pure #000 / #fff.
+$ink: #020d0c;
+$paper: #fbf8ff;
+
+// Derived neutral ramp.
+$gray-900: #141f1e;
+$gray-700: #3a4443;
+$gray-500: #6e7776;
+$gray-300: #b6bcbb;
+$gray-100: #e7e6e9;
+
+// Reserved product accent (teal = Lattice Build). Standalone Lattice is
+// monochrome, so teal is used only for focus rings and non-text UI - never body.
+$teal-300: #63c4b8;
+$teal-500: #1b998b;
+$teal-700: #136e64;
+
+:root {
+	--ink: #{$ink};
+	--paper: #{$paper};
+	--gray-900: #{$gray-900};
+	--gray-700: #{$gray-700};
+	--gray-500: #{$gray-500};
+	--gray-300: #{$gray-300};
+	--gray-100: #{$gray-100};
+	--teal-300: #{$teal-300};
+	--teal-500: #{$teal-500};
+	--teal-700: #{$teal-700};
+
+	// Semantic tokens (light is the default surface).
+	--surface: var(--paper);
+	--surface-2: #{$gray-100};
+	--text: var(--ink);
+	--text-muted: #{$gray-500};
+	--text-subtle: #{$gray-700};
+	--border: #{$gray-300};
+	--border-subtle: #{$gray-100};
+	--mark: var(--ink);
+	--focus: #{$teal-500};
+}
+
+[data-bs-theme='dark'] {
+	--surface: var(--ink);
+	--surface-2: #{$gray-900};
+	--text: var(--paper);
+	--text-muted: #{$gray-300};
+	--text-subtle: #{$gray-300};
+	--border: #{$gray-700};
+	--border-subtle: #{$gray-900};
+	--mark: var(--paper);
+	--focus: #{$teal-300};
+}

@@ -1,0 +1,159 @@
+// Docs sidebar / TOC nav links (Bootstrap .nav-link, themed).
+.doc-nav-link,
+.doc-toc-link {
+	font-size: 0.925rem;
+	color: var(--text-muted);
+	border-left: 2px solid transparent;
+	border-radius: 0;
+
+	&:hover,
+	&:focus {
+		color: var(--text);
+	}
+
+	&.active {
+		color: var(--text);
+		font-weight: 500;
+		border-left-color: var(--focus);
+		background: var(--surface-2);
+	}
+}
+
+.doc-toc-link {
+	font-size: 0.85rem;
+
+	&.active {
+		background: transparent;
+	}
+}
+
+// Prose styling for rendered Markdown docs. Vercel register: generous measure,
+// hairline rules, DM Mono code, the accent kept out of body text.
+
+.doc-prose {
+	color: var(--text);
+	font-size: 1rem;
+	line-height: 1.7;
+	max-width: 44rem;
+
+	> :first-child {
+		margin-top: 0;
+	}
+
+	h1 {
+		font-size: clamp(2rem, 4vw, 2.5rem);
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		margin: 0 0 1rem;
+	}
+
+	h2 {
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		margin: 2.75rem 0 1rem;
+		padding-top: 0.5rem;
+	}
+
+	h3 {
+		font-size: 1.2rem;
+		font-weight: 500;
+		margin: 2rem 0 0.75rem;
+	}
+
+	p,
+	ul,
+	ol {
+		margin: 0 0 1.15rem;
+	}
+
+	ul,
+	ol {
+		padding-left: 1.35rem;
+	}
+
+	li {
+		margin-bottom: 0.4rem;
+	}
+
+	a {
+		color: var(--text);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		text-decoration-color: var(--border);
+		transition: text-decoration-color 0.15s ease;
+
+		&:hover {
+			text-decoration-color: var(--text);
+		}
+	}
+
+	strong {
+		font-weight: 700;
+	}
+
+	code {
+		font-family: 'DM Mono', monospace;
+		font-size: 0.875em;
+		background: var(--surface-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: 4px;
+		padding: 0.1rem 0.35rem;
+	}
+
+	pre {
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: 0.625rem;
+		padding: 1rem 1.15rem;
+		overflow-x: auto;
+		margin: 0 0 1.5rem;
+		font-size: 0.85rem;
+		line-height: 1.65;
+
+		code {
+			background: none;
+			border: 0;
+			padding: 0;
+			font-size: inherit;
+		}
+	}
+
+	blockquote {
+		margin: 0 0 1.5rem;
+		padding: 0.25rem 0 0.25rem 1rem;
+		border-left: 2px solid var(--border);
+		color: var(--text-subtle);
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		margin: 0 0 1.5rem;
+		font-size: 0.925rem;
+
+		th,
+		td {
+			text-align: left;
+			padding: 0.55rem 0.75rem;
+			border-bottom: 1px solid var(--border);
+		}
+
+		th {
+			font-weight: 500;
+			color: var(--text-muted);
+		}
+	}
+
+	hr {
+		border: 0;
+		border-top: 1px solid var(--border);
+		margin: 2.5rem 0;
+	}
+
+	img {
+		max-width: 100%;
+		height: auto;
+		border-radius: 0.5rem;
+	}
+}

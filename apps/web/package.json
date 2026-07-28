@@ -1,0 +1,31 @@
+{
+	"name": "@lattice/web",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "astro dev",
+		"start": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview",
+		"astro": "astro"
+	},
+	"dependencies": {
+		"@astrojs/mdx": "^4.3.7",
+		"@astrojs/react": "^4.4.1",
+		"@astrojs/sitemap": "^3.7.2",
+		"@astrojs/tailwind": "^6.0.2",
+		"astro": "^5.16.8",
+		"astro-seo": "^0.8.4",
+		"bootstrap": "^5.3.8",
+		"bootstrap-icons": "^1.13.1",
+		"react": "^19.2.6",
+		"react-dom": "^19.2.6",
+		"sass": "^1.97.3",
+		"tailwindcss": "3.4.19"
+	},
+	"devDependencies": {
+		"@types/react": "^19.2.14",
+		"@types/react-dom": "^19.2.3"
+	}
+}

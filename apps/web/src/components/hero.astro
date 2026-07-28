@@ -1,0 +1,134 @@
+---
+import { Image } from 'astro:assets';
+import go from '../assets/languages/go.png';
+import node from '../assets/languages/node.png';
+import java from '../assets/languages/java.png';
+import ruby from '../assets/languages/ruby.png';
+import python from '../assets/languages/python.png';
+import dotnet from '../assets/languages/dotnet.png';
+
+interface Lang {
+	src: ImageMetadata;
+	name: string;
+	x: number; // % across the field
+	y: number; // % down the field
+	w: number; // display width in px
+	feedX: number;
+	feedY: number;
+}
+
+// Positions are percentages of the bounded field, so the logos, the threads, and
+// the rosette all share one coordinate space and stay aligned at every width.
+const langs: Lang[] = [
+	{ src: go, name: 'Go', x: 15, y: 25, w: 94, feedX: 45, feedY: 78 },
+	{ src: node, name: 'Node.js', x: 9, y: 52, w: 84, feedX: 42, feedY: 83 },
+	{ src: java, name: 'Java', x: 16, y: 79, w: 42, feedX: 46, feedY: 86 },
+	{ src: ruby, name: 'Ruby', x: 85, y: 23, w: 62, feedX: 55, feedY: 78 },
+	{ src: python, name: 'Python', x: 91, y: 50, w: 58, feedX: 58, feedY: 83 },
+	{ src: dotnet, name: '.NET', x: 84, y: 76, w: 68, feedX: 54, feedY: 86 },
+];
+
+const ROTATIONS = [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5];
+
+const thread = (l: Lang) => {
+	const midY = l.y + (l.feedY - l.y) * 0.55;
+	const c2x = l.feedX + (l.x - l.feedX) * 0.25;
+	return `M ${l.x} ${l.y} C ${l.x} ${midY}, ${c2x} ${l.feedY - 6}, ${l.feedX} ${l.feedY}`;
+};
+---
+
+<section id="top" class="hero position-relative overflow-hidden">
+	<div class="hero__field mx-auto position-absolute top-0 bottom-0 start-0 end-0">
+		<svg class="hero__threads position-absolute top-0 start-0 w-100 h-100" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+			{langs.map((l, i) => <path class="weave-thread" d={thread(l)} style={`animation-delay:${0.7 + i * 0.08}s`} />)}
+		</svg>
+
+		<div class="hero__rosette position-absolute">
+			<svg viewBox="60 60 580 580" role="img" aria-label="Lattice">
+				{
+					ROTATIONS.map((deg, i) => (
+						<ellipse
+							class="rosette-stroke"
+							cx="350"
+							cy="350"
+							rx="250"
+							ry="95"
+							pathlength="1"
+							transform={`rotate(${deg} 350 350)`}
+							stroke-width="15.635"
+							style={`animation-delay:${i * 0.08}s`}
+						/>
+					))
+				}
+			</svg>
+		</div>
+
+		{
+			langs.map((l, i) => (
+				<Image
+					src={l.src}
+					alt={l.name}
+					width={l.w * 2}
+					class="lang-logo d-none d-md-block"
+					style={`left:${l.x}%; top:${l.y}%; width:${l.w}px; animation-delay:${0.15 + i * 0.09}s`}
+				/>
+			))
+		}
+	</div>
+
+	<div class="hero__copy position-relative mx-auto text-center px-3">
+		<h1 class="hero__title fw-bold mb-3">Weave it all together</h1>
+		<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 34rem;">
+			A fast, local toolchain for managing monorepos. Build every language in your repo with
+			one command, and skip the work that hasn't changed.
+		</p>
+		<div class="d-flex flex-wrap gap-2 justify-content-center">
+			<a href="/docs" class="btn btn-secondary px-4">Read the docs</a>
+			<a href="/docs/getting-started" class="btn btn-contrast px-4">Get started</a>
+		</div>
+	</div>
+</section>
+
+<script is:inline>
+	(() => {
+		const replay = () => {
+			document.querySelectorAll('.hero .rosette-stroke, .hero .weave-thread, .hero .lang-logo').forEach((el) => {
+				el.style.animation = 'none';
+				void el.getBoundingClientRect();
+				el.style.animation = '';
+			});
+		};
+		document.addEventListener('astro:after-swap', replay);
+	})();
+</script>
+
+<style>
+	.hero {
+		min-height: clamp(620px, 90vh, 860px);
+	}
+	.hero__field {
+		max-width: 1320px;
+	}
+	.hero__copy {
+		max-width: 48rem;
+		padding-top: clamp(4.5rem, 12vh, 8rem);
+		z-index: 1;
+	}
+	.hero__title {
+		font-size: clamp(2.75rem, 7vw, 5rem);
+		letter-spacing: -0.03em;
+		line-height: 1.02;
+	}
+	.hero__rosette {
+		left: 50%;
+		bottom: 0;
+		width: min(28rem, 56%);
+		transform: translate(-50%, 50%);
+		line-height: 0;
+	}
+	.hero__rosette svg {
+		width: 100%;
+		height: auto;
+		overflow: visible;
+	}
+</style>

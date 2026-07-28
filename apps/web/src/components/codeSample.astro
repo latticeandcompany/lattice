@@ -1,0 +1,98 @@
+---
+// A short demo, framed as the payoff for the reader: one file, one command, and
+// the parts that didn't change come back from cache instead of rebuilding.
+---
+
+<section class="px-3 py-5">
+	<div class="mx-auto" style="max-width: 72rem;">
+		<div class="mb-5" style="max-width: 40rem;">
+			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
+				Skip work you already did
+			</h2>
+			<p class="fs-5 mb-0" style="color: var(--text-muted);">
+				Your projects and how they build live in one file. Run it, and Lattice rebuilds only
+				what changed since last time.
+			</p>
+		</div>
+
+		<div class="row g-4 align-items-stretch">
+			<div class="col-12 col-lg-6">
+				<div class="card code-card h-100">
+					<div class="card-header code-card__bar">
+						<span class="code-card__dot"></span>
+						<span class="code-card__dot"></span>
+						<span class="code-card__dot"></span>
+						<span class="code-card__name">lattice.json</span>
+					</div>
+					<div class="card-body p-0">
+						<pre class="code-card__body mb-0"><code>{`{
+  "workspaces": [
+    { "name": "api", "path": "apps/api", "engines": { "go": ">=1.22" } },
+    { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } },
+    { "name": "ml",  "path": "services/ml", "engines": { "python": ">=3.12" } }
+  ],
+  "tasks": {
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
+    "test":  { "dependsOn": ["build"] }
+  }
+}`}</code></pre>
+					</div>
+				</div>
+			</div>
+
+			<div class="col-12 col-lg-6">
+				<div class="card code-card h-100">
+					<div class="card-header code-card__bar">
+						<span class="code-card__dot"></span>
+						<span class="code-card__dot"></span>
+						<span class="code-card__dot"></span>
+						<span class="code-card__name">terminal</span>
+					</div>
+					<div class="card-body p-0">
+						<pre class="code-card__body mb-0"><code>{`$ lattice run build
+
+  api   build   built
+  web   build   `}<span class="lattice-accent">restored from cache</span>{`
+  ml    build   built
+
+  3 projects, 1 restored from cache
+`}</code></pre>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<style>
+	.code-card {
+		background: var(--surface-2);
+		overflow: hidden;
+	}
+	.code-card__bar {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		background: transparent;
+	}
+	.code-card__dot {
+		width: 0.6rem;
+		height: 0.6rem;
+		border-radius: 50%;
+		background: var(--border);
+	}
+	.code-card__name {
+		margin-left: 0.5rem;
+		font-family: 'DM Mono', monospace;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.code-card__body {
+		padding: 1.1rem 1.25rem;
+		font-family: 'DM Mono', monospace;
+		font-size: 0.85rem;
+		line-height: 1.7;
+		color: var(--text);
+		overflow-x: auto;
+	}
+</style>

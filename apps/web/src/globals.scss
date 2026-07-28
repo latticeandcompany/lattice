@@ -1,0 +1,231 @@
+// Global stylesheet. Load order matters: tokens define the CSS custom properties,
+// fonts register the local typefaces, Bootstrap Icons ships its own @font-face +
+// glyph classes through SASS (per the request - icons as a font, loaded via sass).
+
+@use './styles/tokens';
+@use './styles/fonts';
+// Bootstrap Icons as a font, loaded through SASS. The package's default src uses a
+// cache-buster query that Vite won't bundle, so point it at self-hosted copies in
+// /public/fonts - fully local, resolves correctly in the production build.
+@use '../node_modules/bootstrap-icons/font/bootstrap-icons.scss' with (
+	$bootstrap-icons-font-src: (
+		url('/fonts/bootstrap-icons.woff2') format('woff2'),
+		url('/fonts/bootstrap-icons.woff') format('woff')
+	)
+);
+
+:root {
+	color-scheme: light dark;
+}
+
+html {
+	scroll-behavior: smooth;
+}
+
+body {
+	font-family: 'DM Sans', system-ui, sans-serif;
+	background-color: var(--surface);
+	color: var(--text);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+::selection {
+	background-color: var(--ink);
+	color: var(--paper);
+}
+
+[data-bs-theme='dark'] ::selection {
+	background-color: var(--paper);
+	color: var(--ink);
+}
+
+// Monospace surfaces always use DM Mono (code, terminals, version metadata).
+code,
+kbd,
+pre,
+samp {
+	font-family: 'DM Mono', ui-monospace, monospace;
+}
+
+// Visible, keyboard-only focus. Teal is the one sanctioned accent, and only ever
+// as a non-text focus ring on the monochrome standalone brand.
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+
+// The one sanctioned spot of color: the product accent (teal), used sparingly on a
+// few icons and highlights. Everything else stays monochrome.
+.lattice-accent {
+	color: var(--focus);
+}
+
+// Quiet nav links that warm to full contrast on hover, with a small teal marker on
+// the active route.
+.nav-link--quiet {
+	color: var(--text-muted);
+	font-weight: 500;
+	transition: color 0.15s ease;
+
+	&:hover,
+	&:focus {
+		color: var(--text);
+	}
+
+	&.active {
+		color: var(--text);
+	}
+}
+
+.dropdown-item.active,
+.dropdown-item:active {
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.dropdown-item.active .bi {
+	color: var(--focus);
+}
+
+// Primary CTA that always contrasts the surface: ink button on light, paper button
+// on dark. Keeps the one high-contrast action legible in both themes.
+.btn-contrast {
+	background: var(--text);
+	color: var(--surface);
+	border: 1px solid var(--text);
+
+	&:hover,
+	&:focus {
+		background: var(--text-subtle);
+		border-color: var(--text-subtle);
+		color: var(--surface);
+	}
+}
+
+// ===== Logo draw-on-load =====
+// The mark is 8 stroked ellipses. Each is normalized to pathLength 1 and its dash
+// offset animates from 1 → 0, so the rosette draws itself stroke by stroke. Weights
+// are staggered per-ellipse via inline animation-delay in the component.
+@keyframes drawStroke {
+	from {
+		stroke-dashoffset: 1;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+.rosette-stroke {
+	fill: none;
+	stroke: var(--mark);
+	stroke-linecap: round;
+	pathlength: 1;
+	stroke-dasharray: 1;
+	stroke-dashoffset: 1;
+	animation: drawStroke 0.9s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+// ===== Weaving connectors (hero) =====
+// Dashed threads run from each language mark into the rosette. They draw in after
+// the marks settle, reinforcing the "weave it all together" idea.
+@keyframes drawThread {
+	from {
+		stroke-dashoffset: var(--thread-len);
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+.weave-thread {
+	fill: none;
+	stroke: var(--gray-500);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-dasharray: 6 7;
+	vector-effect: non-scaling-stroke;
+	animation: threadFade 0.6s ease forwards;
+	opacity: 0;
+}
+
+// Language logos in the hero field: absolutely placed by percentage, centered on
+// their point, and settling in before the threads draw.
+.lang-logo {
+	position: absolute;
+	height: auto;
+	transform: translate(-50%, -50%);
+	opacity: 0;
+	animation: logoIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+	transition: transform 0.2s ease;
+}
+
+.lang-logo:hover {
+	transform: translate(-50%, -50%) scale(1.06);
+}
+
+@keyframes logoIn {
+	from {
+		opacity: 0;
+		transform: translate(-50%, calc(-50% + 10px));
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, -50%);
+	}
+}
+
+@keyframes threadFade {
+	to {
+		opacity: 0.85;
+	}
+}
+
+// Language marks settle in before the threads draw.
+@keyframes markIn {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.weave-mark {
+	opacity: 0;
+	transform-box: fill-box;
+	transform-origin: center;
+	animation: markIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+	transition: transform 0.2s ease;
+}
+
+.weave-mark:hover {
+	transform: translateY(-3px) scale(1.06);
+}
+
+// Respect reduced-motion: show the final state, skip the drawing.
+@media (prefers-reduced-motion: reduce) {
+	.rosette-stroke {
+		stroke-dashoffset: 0;
+		animation: none;
+	}
+	.weave-thread {
+		opacity: 0.85;
+		animation: none;
+	}
+	.weave-mark {
+		opacity: 1;
+		transform: none;
+		animation: none;
+	}
+	.lang-logo {
+		opacity: 1;
+		animation: none;
+	}
+	html {
+		scroll-behavior: auto;
+	}
+}

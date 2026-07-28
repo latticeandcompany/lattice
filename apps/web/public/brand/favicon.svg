@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="84 84 532 532" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simplified Lattice mark for favicons: 4 rings, open aperture.
+       Theme-adaptive: ink on light browser chrome, paper on dark. -->
+  <style>
+    :root { --mk: #020D0C; }
+    @media (prefers-color-scheme: dark) { :root { --mk: #FBF8FF; } }
+  </style>
+  <g fill="none" stroke="var(--mk)" stroke-width="16">
+    <ellipse cx="350" cy="350" rx="250" ry="95"/>
+    <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(45 350 350)"/>
+    <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(90 350 350)"/>
+    <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(135 350 350)"/>
+  </g>
+</svg>

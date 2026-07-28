@@ -1,0 +1,66 @@
+---
+// What the developer gets, in their terms. Every line is a benefit to the person
+// running builds, not a description of how the tool works inside.
+interface Benefit {
+	icon: string;
+	title: string;
+	body: string;
+}
+
+const benefits: Benefit[] = [
+	{
+		icon: 'bi-lightning-charge',
+		title: 'Builds finish sooner',
+		body: 'Repeat a build and the parts that didn\'t change come straight from cache. You wait for new work, not for work you already did.',
+	},
+	{
+		icon: 'bi-command',
+		title: 'One command for the whole repo',
+		body: 'Build, test, and run every project in your monorepo the same way, whatever language it\'s written in. No per-language scripts to remember.',
+	},
+	{
+		icon: 'bi-play-circle',
+		title: 'No build scripts to write',
+		body: 'List your projects once, and Lattice reads each one\'s own manifest to work out how it builds. No per-language build scripts to write or keep in sync.',
+	},
+	{
+		icon: 'bi-box-seam',
+		title: 'The right tool versions, every time',
+		body: 'Lattice pins the compilers and tools each project needs, so a fresh clone builds the same on your laptop and in CI.',
+	},
+];
+---
+
+<section id="why" class="px-3 py-5">
+	<div class="mx-auto" style="max-width: 72rem;">
+		<div class="mx-auto text-center mb-5" style="max-width: 40rem;">
+			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
+				Spend less time waiting on builds
+			</h2>
+			<p class="fs-5 mb-0" style="color: var(--text-muted);">
+				Point Lattice at a monorepo and it takes care of the busywork, so you can get back to
+				writing code.
+			</p>
+		</div>
+
+		<div class="row g-4">
+			{
+				benefits.map((b) => (
+					<div class="col-12 col-md-6">
+						<div class="card h-100">
+							<div class="card-body p-4">
+								<i class={`bi ${b.icon} fs-3 d-block mb-3 lattice-accent`} aria-hidden="true" />
+								<h3 class="card-title fw-bold mb-2" style="font-size: 1.375rem;">
+									{b.title}
+								</h3>
+								<p class="card-text mb-0" style="color: var(--text-subtle); line-height: 1.6;">
+									{b.body}
+								</p>
+							</div>
+						</div>
+					</div>
+				))
+			}
+		</div>
+	</div>
+</section>

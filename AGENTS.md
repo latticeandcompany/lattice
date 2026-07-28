@@ -26,3 +26,4 @@ Each part can be used together or seperately. You can use one and not the other.
 - Update the CHANGELOG.md after each change you make
 - Ask questions frequently
 - Dogfood our own product! It helps us catch errors and gaps faster!
+- Don't overcomment. Use comments sparingly to explain truly unique cases of ambiguous content

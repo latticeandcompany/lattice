@@ -1,0 +1,63 @@
+---
+import { SEO } from 'astro-seo';
+import { ClientRouter } from 'astro:transitions';
+import '../styles/bootstrap.scss';
+import '../globals.scss';
+import Navbar from '../components/navbar';
+import Footer from '../components/footer.astro';
+import PatternBand from '../components/patternBand.astro';
+
+interface Props {
+	title?: string;
+	description?: string;
+}
+
+const {
+	title = 'Lattice: A fast, local toolchain for managing monorepos',
+	description = 'A fast, local toolchain for managing monorepos.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+		<meta name="generator" content={Astro.generator} />
+		<ClientRouter />
+		<SEO
+			title={title}
+			description={description}
+			openGraph={{
+				basic: { title, type: 'website', image: '/brand/favicon.svg', url: Astro.url.href },
+				optional: { description, siteName: 'Lattice' },
+			}}
+		/>
+		{/* Set the theme before paint to avoid a flash. */}
+		<script is:inline>
+			(() => {
+				const setTheme = () => {
+					let theme;
+					try {
+						theme = localStorage.getItem('theme');
+					} catch {}
+					if (theme !== 'light' && theme !== 'dark') {
+						theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+					}
+					document.documentElement.setAttribute('data-bs-theme', theme);
+				};
+				setTheme();
+				document.addEventListener('astro:after-swap', setTheme);
+			})();
+		</script>
+	</head>
+	<body>
+		<Navbar client:load transition:persist />
+		<main>
+			<slot />
+		</main>
+		<Footer />
+		<PatternBand />
+	</body>
+</html>

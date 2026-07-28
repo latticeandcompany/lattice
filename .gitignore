@@ -25,3 +25,5 @@ target/
 .lattice/toolchains/
 .lattice/bin/
 .lattice-setup-marker
+
+apps/web/node_modules/
