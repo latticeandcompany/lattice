@@ -48,7 +48,7 @@ Some projects join the family while keeping their own brand (e.g. **ArenaSwap**)
 They are **not** required to adopt Lattice colors, wordmark, or layout. The only
 shared thread is **DM Sans** as the typeface, plus a family endorsement:
 
-> Built with ❤️ by [Lattice](https://github.com/<org>)
+> Built with ❤️ by [Lattice](https://github.com/latticeandcompany)
 
 placed in the footer. This signals lineage without absorbing the sub-brand.
 
@@ -403,8 +403,8 @@ For independent projects in the family (e.g. ArenaSwap), include in the footer:
 
 ```html
 <footer>
-  Built with ❤️ by <a href="https://github.com/<org>">Lattice</a>
-  · <a href="https://github.com/<org>">Join our GitHub org</a>
+  Built with ❤️ by <a href="https://github.com/latticeandcompany">Lattice</a>
+  · <a href="https://github.com/latticeandcompany">Join our GitHub org</a>
 </footer>
 ```
 

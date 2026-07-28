@@ -12,7 +12,7 @@
     { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } }
   ],
   "engines": {
-    "cargo": ">=1.75.0"
+    "cargo": ">=1.86.0"
   },
   "tasks": {
     "build": {

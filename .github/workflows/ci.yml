@@ -35,3 +35,11 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      # The installer is the first thing a new user runs, and it runs under
+      # whatever /bin/sh they have.
+      - name: Shellcheck the installer
+        run: shellcheck --shell=sh apps/web/public/install.sh
+
+      - name: Versions agree everywhere they are written by hand
+        run: scripts/check-versions.sh

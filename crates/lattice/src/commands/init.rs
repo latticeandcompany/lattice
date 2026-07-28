@@ -12,10 +12,10 @@ use lattice_output::{logo, teal};
 use crate::cli::BIN_VERSION;
 use crate::schema::SCHEMA_JSON;
 
-/// Lines that init ensures are present in `.gitignore` (cache + provisioned
-/// toolchains are local artifacts). The committed `.lattice/schema.json` stays
-/// tracked and is not ignored.
-const GITIGNORE_LINES: &[&str] = &[".lattice/cache/", ".lattice/toolchains/"];
+/// Lines that init ensures are present in `.gitignore`: the cache, provisioned
+/// toolchains, and the installed binaries are all per-machine artifacts. The
+/// committed `.lattice/schema.json` stays tracked and is not ignored.
+const GITIGNORE_LINES: &[&str] = &[".lattice/cache/", ".lattice/toolchains/", ".lattice/bin/"];
 
 #[derive(Args, Debug)]
 #[command(long_about = "Scaffold a lattice.json in the current directory.\n\n\

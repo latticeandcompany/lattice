@@ -9,30 +9,60 @@ order: 1
 
 ## Install
 
-Lattice is pre-release. Install it from source, which needs Rust 1.75 or newer:
+Lattice runs on macOS and Linux. On Windows, use it inside WSL2.
+
+Run this from the root of the repo you want to use it in:
+
+```sh
+curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
+```
+
+It downloads a binary for your platform, checks it against the published checksum,
+and puts it in `./.lattice/bin/`. Nothing goes to a global path, and there is no
+`PATH` to edit:
+
+```sh
+./.lattice/bin/lattice version
+```
+
+To remove it, delete the directory:
+
+```sh
+rm -rf .lattice
+```
+
+### Versions are per repo
+
+If the directory already has a `lattice.json`, the installer reads
+`latticeVersion` from it and installs exactly that version. It is read by the
+installer rather than by Lattice because it has to be known before there is a
+binary to read it.
+
+From then on, the pin is what runs. A binary in `.lattice/bin` that is not the
+pinned version installs the pinned one and hands the command over to it, so
+checking out a branch that pins a different version is enough to run that
+version — with no re-download once it is on disk.
+
+To move a repo to a different version:
+
+```sh
+./.lattice/bin/lattice upgrade 0.2.0   # or: upgrade latest
+```
+
+That installs the version, points `.lattice/bin/lattice` at it, and writes it to
+`latticeVersion`. Commit the change and everyone else moves the next time they
+run a command.
+
+### Building from source
+
+Needs Rust 1.86 or newer:
 
 ```sh
 cargo install --git https://github.com/latticeandcompany/lattice lattice
 ```
 
-Or clone and build:
-
-```sh
-git clone https://github.com/latticeandcompany/lattice
-cd lattice
-cargo build --release
-```
-
-Verify the install:
-
-```sh
-lattice version
-```
-
-A `curl | sh` installer that places a target-matched binary in `./.lattice/bin/`
-ships with the first tagged release. Once it exists, a repo that already has a
-`lattice.json` will get the exact version pinned by `latticeVersion`, so everyone on
-the project runs the same build, and `rm -rf .lattice` will remove it.
+A binary you built yourself is left alone: in a repo that pins another version it
+says so once, and runs anyway.
 
 ## Describe your repo
 

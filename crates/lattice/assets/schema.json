@@ -12,7 +12,7 @@
     },
     "latticeVersion": {
       "type": "string",
-      "description": "Version of Lattice this config targets."
+      "description": "The version of Lattice this repo runs. An installed binary that is not this version installs it and hands over, so everyone gets the same build."
     },
     "workspaces": {
       "type": "array",
@@ -178,7 +178,7 @@
         },
         "versionCheck": {
           "type": "boolean",
-          "description": "When true (default), enforce engine version checks."
+          "description": "When true (default), compare the running binary against latticeVersion. Set false to run whatever binary is invoked."
         }
       }
     }

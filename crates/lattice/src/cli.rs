@@ -6,7 +6,7 @@ use lattice_output::OutputMode;
 
 use crate::commands::{
 	completions::CompletionsArgs, init::InitArgs, prune::PruneArgs, run::RunArgs, setup::SetupArgs,
-	version::VersionArgs,
+	upgrade::UpgradeArgs, version::VersionArgs,
 };
 
 /// The compiled-in binary version.
@@ -33,7 +33,7 @@ pub struct Cli {
 	#[arg(short, long, global = true, hide = true)]
 	pub verbose: bool,
 
-	/// Suppress the version-drift nag.
+	/// Run this binary even when the repo pins another version.
 	#[arg(long, global = true)]
 	pub no_version_check: bool,
 
@@ -55,6 +55,9 @@ pub enum Commands {
 	/// Evict cache artifacts until the cache is under a size limit.
 	Prune(PruneArgs),
 
+	/// Move this repo to another version of Lattice and pin it.
+	Upgrade(UpgradeArgs),
+
 	/// Print a shell completion script to stdout.
 	Completions(CompletionsArgs),
 
@@ -68,14 +71,37 @@ impl Cli {
 		self.loquacious || self.verbose
 	}
 
+	/// Whether the pinned-version handover is skipped for this command.
+	///
+	/// `upgrade` is how the pin changes, so it has to run as invoked. The other
+	/// two answer questions about this binary and this shell: a completion script
+	/// must be the only thing on stdout, and `version` reporting anything but
+	/// what the user just ran would make drift harder to diagnose, not easier.
+	fn skips_pin_handover(&self) -> bool {
+		matches!(
+			self.command,
+			Some(Commands::Upgrade(_))
+				| Some(Commands::Completions(_))
+				| Some(Commands::Version(_))
+		)
+	}
+
 	pub async fn execute(self) -> Result<()> {
 		let flag_loq = self.flag_loquacious();
 		let no_version_check = self.no_version_check;
+
+		if !self.skips_pin_handover() {
+			if let Some(root) = crate::drift::repo_root() {
+				crate::drift::honor_pin(&root, no_version_check)?;
+			}
+		}
+
 		match self.command {
 			Some(Commands::Run(args)) => args.execute(flag_loq, no_version_check).await,
 			Some(Commands::Setup(args)) => args.execute(flag_loq, no_version_check).await,
 			Some(Commands::Init(args)) => args.execute().await,
 			Some(Commands::Prune(args)) => args.execute().await,
+			Some(Commands::Upgrade(args)) => args.execute().await,
 			Some(Commands::Completions(args)) => args.execute(),
 			Some(Commands::Version(args)) => args.execute().await,
 			// Bare `lattice`: show the branded splash and point at `--help`
@@ -113,6 +139,10 @@ pub fn detect_output_mode(effective_loq: bool) -> OutputMode {
 /// The nag shows only in an interactive session, when the repo opts into the
 /// check, no suppression flag/env is set, and the pinned version differs from
 /// the running binary. It is advisory and never an error.
+///
+/// By the time a command gets this far, a binary under `.lattice/bin` has already
+/// been handed over to the pinned one (see [`crate::drift`]), so in practice this
+/// is what a binary Lattice did not install gets instead.
 pub fn should_nag(
 	mode: OutputMode,
 	version_check_setting: bool,

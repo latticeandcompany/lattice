@@ -16,8 +16,9 @@ impl VersionArgs {
 	pub async fn execute(&self) -> Result<()> {
 		if self.json {
 			println!(
-				r#"{{"version":"{}","target":"{}"}}"#,
+				r#"{{"version":"{}","target":"{}","arch":"{}"}}"#,
 				BIN_VERSION,
+				env!("LATTICE_TARGET"),
 				std::env::consts::ARCH
 			);
 		} else {

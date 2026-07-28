@@ -13,5 +13,23 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# The floor comes from the dev tree: jsonschema -> idna -> idna_adapter -> icu_*.
+# Verify with `cargo +<msrv> check --workspace --all-targets` before changing it.
+rust-version = "1.86"
 authors = ["Ryan Mullin"]
 license = "ISC"
+publish = false
+repository = "https://github.com/latticeandcompany/lattice"
+homepage = "https://latticeandcompany.github.io/lattice"
+documentation = "https://latticeandcompany.github.io/lattice/docs"
+keywords = ["monorepo", "build", "task-runner", "cache", "toolchain"]
+categories = [
+    "development-tools",
+    "development-tools::build-utils",
+    "command-line-utilities",
+]
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1

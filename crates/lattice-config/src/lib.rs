@@ -194,7 +194,7 @@ impl fmt::Display for CacheSize {
 			return write!(f, "0B");
 		}
 		for (unit, name) in [(TB, "TB"), (GB, "GB"), (MB, "MB"), (KB, "KB")] {
-			if bytes.is_multiple_of(unit) {
+			if bytes % unit == 0 {
 				return write!(f, "{}{}", bytes / unit, name);
 			}
 		}

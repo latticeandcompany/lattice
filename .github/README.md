@@ -11,13 +11,13 @@
 
 <br />
 
-![Rust](https://img.shields.io/badge/Rust-1.75+-000000?logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.86+-000000?logo=rust&logoColor=white)
 ![Cargo](https://img.shields.io/badge/Cargo-workspace-000000?logo=rust&logoColor=white)
 ![Astro](https://img.shields.io/badge/Astro-7-BC52EE?logo=astro&logoColor=white)
 ![Bootstrap](https://img.shields.io/badge/Bootstrap-5-7952B3?logo=bootstrap&logoColor=white)
 ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4-06B6D4?logo=tailwindcss&logoColor=white)
 
-![Version](https://img.shields.io/badge/version-0.1.0-informational)
+![Version](https://img.shields.io/github/v/release/latticeandcompany/lattice?label=version&include_prereleases&sort=semver)
 ![License](https://img.shields.io/github/license/latticeandcompany/lattice)
 [![CI](https://img.shields.io/github/actions/workflow/status/latticeandcompany/lattice/ci.yml?branch=mega&label=CI&logo=githubactions&logoColor=white)](https://github.com/latticeandcompany/lattice/actions/workflows/ci.yml)
 ![Stars](https://img.shields.io/github/stars/latticeandcompany/lattice?logo=github)
@@ -33,21 +33,19 @@ Lattice runs the tasks in your monorepo in dependency order and in parallel, the
 
 ## Install
 
-Lattice is pre-release, so install it from source:
+macOS and Linux. On Windows, use WSL2.
+
+From the root of the repo you want to use it in:
 
 ```sh
-cargo install --git https://github.com/latticeandcompany/lattice lattice
+curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
 ```
 
-Or clone and build:
+That puts a binary for your platform in `./.lattice/bin/` and touches nothing else. Run it as `./.lattice/bin/lattice`; remove it with `rm -rf .lattice`.
 
-```sh
-git clone https://github.com/latticeandcompany/lattice
-cd lattice
-cargo build --release
-```
+If the repo already has a `lattice.json`, you get the version its `latticeVersion` names. `lattice upgrade 0.2.0` moves the repo to another version and writes it back to `lattice.json`, so committing that line moves everyone at once.
 
-<sub>A `curl | sh` installer that drops a target-matched binary into `./.lattice/bin/` ships with the first tagged release.</sub>
+<sub>Building from source instead: `cargo install --git https://github.com/latticeandcompany/lattice lattice`, or clone and `cargo build --release`. Needs Rust 1.86+.</sub>
 
 ## Quick start
 
@@ -123,7 +121,7 @@ Full documentation: **[latticeandcompany.github.io/lattice/docs](https://lattice
 
 ## Development
 
-**Requires:** Rust 1.75+ with `rustfmt` and `clippy`. Node 26+ only for the docs site.
+**Requires:** Rust 1.86+ with `rustfmt` and `clippy`. Node 26+ only for the docs site.
 
 ```bash
 git clone https://github.com/latticeandcompany/lattice
