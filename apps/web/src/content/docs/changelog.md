@@ -1,10 +1,171 @@
 ---
 title: Changelog
-description: Notable changes to Lattice.
+description: Release history for Lattice, curated from the repo's CHANGELOG.md.
 group: Reference
 order: 9
 ---
 
 # Changelog
 
-> This page is being written.
+This page curates the user-facing history from the repo's own `CHANGELOG.md`,
+newest first. That file is the source of record; this page drops the entries
+that only matter to someone working inside the repo and links out to the
+relevant docs where they exist.
+
+Lattice is currently at `1.0.0-beta-2` — a pre-release build; there is no
+`1.0.0` yet. Versions follow semver: a major bump means a breaking change to
+the `lattice.json` schema or the CLI surface. A version bump is also a full
+cache miss, because the running version is one of the inputs hashed into every
+task's cache key, so the first run after an upgrade re-runs everything. See
+[Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
+
+## Installing, upgrading, and running the version a repo pins — 2026-07-28
+
+Lattice can now be installed without a Rust toolchain, and a repo's
+`latticeVersion` is enforced rather than merely announced. See
+[Installation](/lattice/docs/installation) and
+[Upgrading](/lattice/docs/upgrading).
+
+### `curl | sh` installs a target-matched binary into the repo
+- The installer detects the OS, architecture and libc, resolves a version,
+  downloads the matching release archive, verifies its SHA256 against the
+  release's checksums file, and installs `./.lattice/bin/lattice-<version>`
+  with `./.lattice/bin/lattice` symlinked to it. Nothing is written outside
+  `.lattice`, so `rm -rf .lattice` is the uninstall
+- Version resolution, in order: `$LATTICE_VERSION`, then `latticeVersion` from
+  `./lattice.json`, then the newest release when the directory has no config
+  at all. A `lattice.json` that exists but pins nothing is an error
+- It fails loudly, before installing anything, on an unsupported platform, a
+  missing pin, a missing release asset, a missing checksums entry, or a digest
+  that does not match
+- `.lattice/bin/` is now one of the `.gitignore` lines `lattice init` maintains
+
+### Every invocation runs the version the repo pins
+- A binary under `.lattice/bin` whose version differs from `latticeVersion`
+  now prints one line naming both versions, installs the pinned version if it
+  is not already on disk, repoints the symlink, and hands the invocation over
+  to it with the arguments untouched. Switching between two branches that pin
+  versions you already have is a symlink swap and touches no network
+- A binary Lattice did not install — `cargo install`, a distro package, a
+  local dev build — is never replaced. It gets an advisory one-line nag
+  instead, with a runnable `lattice upgrade <version>`
+- `--no-version-check`, `LATTICE_NO_VERSION_CHECK` and
+  `settings.versionCheck: false` each skip the whole thing. `upgrade`,
+  `version` and `completions` are never handed off: they answer for the
+  binary that was invoked, and a completion script has to be the only thing
+  on stdout
+- A pinned version that cannot be installed is a hard failure naming the
+  version and the way past it, rather than silently running a build the repo
+  did not ask for
+
+### `lattice upgrade <version|latest>`
+- Installs the version, points `.lattice/bin/lattice` at it, and rewrites
+  `latticeVersion`. `latest` resolves the newest release; a bare version pins
+  it exactly, with or without a leading `v`
+- The config is edited as text, so key order, indentation and the rest of the
+  file survive a bump
+- Re-running for a version already pinned and installed reports that and
+  repoints the symlink — the one case where doing nothing would leave the
+  repo on the wrong binary
+
+### Releases are published for six targets
+- macOS x86_64/aarch64, Linux x86_64 (gnu and musl), Linux aarch64, and
+  Windows x86_64, as `lattice-<version>-<target>.tar.gz` archives carrying the
+  binary, the license and completion scripts, alongside one
+  `lattice-<version>-checksums.txt` and the installer itself
+
+## Four documented promises the code did not keep — 2026-07-28
+
+Groundwork for the first tagged release: statements in the README, the docs,
+or a manifest that the code contradicted.
+
+- The minimum Rust version is `1.86`, not the `1.75` every doc previously
+  claimed — the real floor, once the lockfile is resolved against each
+  dependency's own requirement, comes from `clap`, `sha2`, `indexmap`, and the
+  ICU crates reached through `jsonschema`
+- `lattice version --json` now reports a real target triple
+  (`aarch64-apple-darwin`) in its `target` field instead of a bare
+  architecture (`aarch64`); the bare architecture moved to its own `arch`
+  field rather than being dropped. See [CLI reference](/lattice/docs/cli)
+- Windows is not supported: `lattice-workspace`'s toolchain probe hardcodes a
+  Unix shell and a Unix `PATH` separator, so engine version checks and
+  toolchain provisioning cannot work there. The docs now say macOS and Linux,
+  and point Windows users at WSL2. See
+  [Installation](/lattice/docs/installation)
+
+## Long durations print as a clock — 2026-07-28
+
+- Task and run times over a minute now read `4:07` and `1:12:30` instead of
+  `247.00s` and `4350.00s`. Under a minute is unchanged (`1.23s`). Applies
+  everywhere Lattice prints a duration: per-task completion lines and the run
+  summary, in both the interactive and CI reporters. See
+  [Output and logging](/lattice/docs/output-modes)
+
+## Nested repos: docs, worked example, and tests — 2026-07-28
+
+- A subtree that already has its own task runner can be declared as a manual
+  workspace whose `scripts` shell out to that runner — ordering, `dependsOn`,
+  caching as one opaque unit, and validation all fall out of the existing
+  workspace mechanism, with no separate feature needed
+- Two limitations: a manual workspace must declare any task invoked directly,
+  and a downstream workspace must not copy an upstream artifact at build
+  time, because a cache key covers only the inputs its own workspace declares
+- `examples/nested-repo` ships as a runnable worked example: a JS monorepo
+  (npm workspaces, two packages, an inner dependency edge) as one Lattice
+  node, plus a downstream service. See [Nested repos](/lattice/docs/nested-repos)
+
+## Docs site search — 2026-07-28
+
+- Full-text search over the documentation, opened with `⌘K`/`Ctrl-K` or `/`,
+  navigable with the arrow keys, listing heading-level matches beneath each
+  page so a long page points at the section that matched
+
+## Persistent tasks stream their output by default — 2026-07-27
+
+- A `lattice run` that pulls in a persistent task — a dev server, a watcher,
+  or anything in its dependency closure — now defaults to raw line-by-line
+  output instead of the live TUI, so the process's streaming output stays
+  visible; this previously required `-l` (`--loquacious`)
+- Non-persistent runs on a terminal still get the interactive TUI
+- A persistent task's output always streams live even in raw mode, while
+  other per-task output stays collapsed and is surfaced on failure
+- Auto-detection no longer fabricates a command for a persistent task: a
+  direct-invoke driver (`cargo`, `go`, …) used to invent a command for any
+  task name, so `lattice run dev` picked up every Rust and Go workspace as
+  `cargo dev` or `go dev` even though no such task exists
+- A persistent task now runs only where the workspace declares it, through an
+  explicit `scripts` entry or a manifest script for the JS and Deno drivers;
+  non-persistent tasks (`build`, `test`, …) still infer as before. See
+  [Persistent tasks](/lattice/docs/persistent-tasks) and
+  [Output and logging](/lattice/docs/output-modes)
+
+## Stacked commands and a self-healing editor schema — 2026-07-27
+
+- `lattice run` accepts multiple tasks in one invocation
+  (`lattice run lint test build`); the roots merge into a single dependency
+  graph, so a dependency shared by several roots runs once and independent
+  roots parallelize where the graph allows
+- All existing flags (`--filter`, `--concurrency`, `--continue`, `--dry-run`,
+  `--no-cache`) apply to the combined run, and an unknown task in the list
+  fails fast and names the offender
+- `--sequentially` / `-s` runs each task's graph to completion in the order
+  given before starting the next; fail-fast stops at the first failed phase,
+  and `--continue` runs the remaining phases and still exits non-zero
+- `run`, `setup`, and `prune` write `.lattice/schema.json` when it is
+  missing, as happens with a cleared cache directory or a clone where it was
+  never committed, so an editor's JSON language server can resolve the
+  config's `$schema`. An existing copy is left untouched to avoid churn. See
+  [Task graph](/lattice/docs/task-graph) and [CLI reference](/lattice/docs/cli)
+
+## The documented install command installed the wrong software — 2026-07-27
+
+- The docs site told readers to run `cargo install lattice`, but `lattice` on
+  crates.io is an unrelated markdown linter, so anyone following the
+  getting-started page or the landing-page copy button got someone else's
+  tool. Both were corrected to a working install path. See
+  [Installation](/lattice/docs/installation) for the current instructions
+
+## License of record was inconsistent — 2026-07-27
+
+- `LICENSE` is ISC while the workspace manifest declared `license = "MIT"`;
+  the manifest now says ISC
