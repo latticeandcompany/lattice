@@ -19,6 +19,36 @@ cache miss, because the running version is one of the inputs hashed into every
 task's cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Flags for what used to be environment variables — 2026-07-29
+
+Four settings that could only be given through the environment are now flags.
+`--theme light|dark` picks the splash art's teal shade, and `--release-base-url`
+sets where release archives are downloaded from — both global, so they parse on
+`lattice` and on every subcommand. `--release-latest-url` and
+`--release-list-url` sit on `lattice upgrade`, which is the only command that
+resolves `latest`.
+
+The matching `LATTICE_*` variables all still work; the flag wins where both are
+given. Two things stay variables on purpose: `LATTICE_SWITCHED_FROM`, which is
+read by a *different build* of Lattice after a version switch and so cannot be a
+flag that build might not know, and `LATTICE_TOOLCHAIN_DIR`, which Lattice hands
+to your `installCmd` rather than reads. See
+[Environment variables](/lattice/docs/environment-variables) and the
+[CLI reference](/lattice/docs/cli).
+
+## One color per task in the plain stream — 2026-07-29
+
+The `workspace:task` label leading each line of the plain stream now carries its
+own color, so the interleaved output of a parallel run can be followed one task
+at a time. Both halves of the label count: `web:build`, `web:test`, and
+`api:build` are three different colors, and the first eight distinct labels in a
+run never share one.
+
+Color now follows the terminal rather than the mode, so `-l` at a shell paints
+labels while the same run piped, redirected, or under `CI` emits nothing to
+strip. `NO_COLOR` still turns it all off. See
+[Output and logging](/lattice/docs/output-modes).
+
 ## A run that executes nothing says so — 2026-07-29
 
 A run where every task came back from cache now ends with a `FULL CACHE` line

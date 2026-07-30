@@ -31,15 +31,46 @@ const DEFAULT_LATEST_URL: &str =
 const DEFAULT_LIST_URL: &str =
 	"https://api.github.com/repos/latticeandcompany/lattice/releases?per_page=20";
 
-/// Overrides `DEFAULT_BASE_URL`. A `file://` base makes the whole install path
-/// testable without a network.
+/// The environment fallback for each flag, kept so a value already exported in
+/// CI keeps working. The flag wins where both are given.
 const BASE_URL_ENV: &str = "LATTICE_RELEASE_BASE_URL";
-
-/// Overrides `DEFAULT_LATEST_URL`.
 const LATEST_URL_ENV: &str = "LATTICE_RELEASE_LATEST_URL";
-
-/// Overrides `DEFAULT_LIST_URL`.
 const LIST_URL_ENV: &str = "LATTICE_RELEASE_LIST_URL";
+
+/// Where release lookups point, as `--release-base-url` and friends left them.
+///
+/// A `file://` base makes the whole install path testable without a network.
+#[derive(Clone, Debug, Default)]
+pub struct ReleaseUrls {
+	pub base: Option<String>,
+	pub latest: Option<String>,
+	pub list: Option<String>,
+}
+
+impl ReleaseUrls {
+	fn base(&self) -> String {
+		resolve_url(self.base.as_deref(), BASE_URL_ENV, DEFAULT_BASE_URL)
+	}
+
+	fn latest(&self) -> String {
+		resolve_url(self.latest.as_deref(), LATEST_URL_ENV, DEFAULT_LATEST_URL)
+	}
+
+	fn list(&self) -> String {
+		resolve_url(self.list.as_deref(), LIST_URL_ENV, DEFAULT_LIST_URL)
+	}
+}
+
+/// An endpoint: the flag, then the environment, then the built-in default. A
+/// blank value at either stage does not count as given, so an inherited
+/// `LATTICE_RELEASE_BASE_URL=` cannot silently break the download path.
+fn resolve_url(flag: Option<&str>, env_name: &str, default: &str) -> String {
+	let given = |v: String| Some(v).filter(|v| !v.trim().is_empty());
+	flag.map(str::to_string)
+		.and_then(given)
+		.or_else(|| std::env::var(env_name).ok().and_then(given))
+		.unwrap_or_else(|| default.to_string())
+}
 
 #[cfg(windows)]
 const BIN_FILE: &str = "lattice.exe";
@@ -73,20 +104,8 @@ fn host_target() -> &'static str {
 	env!("LATTICE_TARGET")
 }
 
-/// An endpoint, with an environment override that an empty value does not count as.
-fn env_url(name: &str, default: &str) -> String {
-	std::env::var(name)
-		.ok()
-		.filter(|v| !v.trim().is_empty())
-		.unwrap_or_else(|| default.to_string())
-}
-
-fn base_url() -> String {
-	env_url(BASE_URL_ENV, DEFAULT_BASE_URL)
-}
-
-fn asset_url(version: &str, asset: &str) -> String {
-	format!("{}/v{version}/{asset}", base_url().trim_end_matches('/'))
+fn asset_url(urls: &ReleaseUrls, version: &str, asset: &str) -> String {
+	format!("{}/v{version}/{asset}", urls.base().trim_end_matches('/'))
 }
 
 pub fn bin_dir(root: &Path) -> PathBuf {
@@ -125,7 +144,12 @@ pub fn is_installed(root: &Path, version: &str) -> bool {
 
 /// Ensure `version` is on disk and return its path, downloading only if it is
 /// missing. `log` receives progress lines for whichever stream the caller uses.
-pub fn ensure_installed(root: &Path, version: &str, log: &mut dyn FnMut(&str)) -> Result<PathBuf> {
+pub fn ensure_installed(
+	root: &Path,
+	version: &str,
+	urls: &ReleaseUrls,
+	log: &mut dyn FnMut(&str),
+) -> Result<PathBuf> {
 	let dest = versioned_bin(root, version);
 	if is_installed(root, version) {
 		return Ok(dest);
@@ -145,7 +169,7 @@ pub fn ensure_installed(root: &Path, version: &str, log: &mut dyn FnMut(&str)) -
 	}
 	std::fs::create_dir_all(&staging)
 		.with_context(|| format!("failed to create {}", staging.display()))?;
-	let result = install_from_release(&staging, version, &asset, &dest, log);
+	let result = install_from_release(&staging, version, &asset, &dest, urls, log);
 	std::fs::remove_dir_all(&staging).ok();
 	result?;
 
@@ -157,6 +181,7 @@ fn install_from_release(
 	version: &str,
 	asset: &str,
 	dest: &Path,
+	urls: &ReleaseUrls,
 	log: &mut dyn FnMut(&str),
 ) -> Result<()> {
 	log(&format!(
@@ -165,9 +190,9 @@ fn install_from_release(
 	));
 
 	let archive = staging.join(asset);
-	download(&asset_url(version, asset), &archive)?;
+	download(&asset_url(urls, version, asset), &archive)?;
 
-	let checksums = fetch_text(&asset_url(version, &checksums_name(version)))?;
+	let checksums = fetch_text(&asset_url(urls, version, &checksums_name(version)))?;
 	let expected = digest_for(&checksums, asset).ok_or_else(|| {
 		anyhow!(
 			"{} does not list {asset}; this platform may not be published for {version}",
@@ -249,8 +274,8 @@ pub struct Latest {
 /// `/releases/latest` skips pre-releases entirely, so a project whose every
 /// release so far is a beta gets a 404 from it and needs the full list, which is
 /// ordered newest-first.
-pub fn resolve_latest() -> Result<Latest> {
-	let latest_url = env_url(LATEST_URL_ENV, DEFAULT_LATEST_URL);
+pub fn resolve_latest(urls: &ReleaseUrls) -> Result<Latest> {
+	let latest_url = urls.latest();
 	// A 404 from this one is an answer rather than a failure — it is what GitHub
 	// says when no release is stable — so the error is dropped for the fallback.
 	let stable = fetch_text(&latest_url).ok();
@@ -261,7 +286,7 @@ pub fn resolve_latest() -> Result<Latest> {
 		});
 	}
 
-	let list_url = env_url(LIST_URL_ENV, DEFAULT_LIST_URL);
+	let list_url = urls.list();
 	let body = fetch_text(&list_url).context("failed to ask GitHub for the newest release")?;
 	let (tag, prerelease) = parse_first_release(&body)
 		.ok_or_else(|| anyhow!("no release to install; tried {latest_url} and {list_url}"))?;
@@ -451,9 +476,38 @@ mod tests {
 		);
 		assert_eq!(checksums_name("0.2.0"), "lattice-0.2.0-checksums.txt");
 		assert_eq!(
-			asset_url("0.2.0", "lattice-0.2.0-x86_64-unknown-linux-gnu.tar.gz"),
+			asset_url(
+				&ReleaseUrls::default(),
+				"0.2.0",
+				"lattice-0.2.0-x86_64-unknown-linux-gnu.tar.gz"
+			),
 			format!("{DEFAULT_BASE_URL}/v0.2.0/lattice-0.2.0-x86_64-unknown-linux-gnu.tar.gz")
 		);
+	}
+
+	#[test]
+	fn a_base_url_flag_replaces_the_default_and_loses_no_trailing_slash() {
+		let urls = ReleaseUrls {
+			base: Some("file:///tmp/rel/".to_string()),
+			..ReleaseUrls::default()
+		};
+		assert_eq!(
+			asset_url(&urls, "0.2.0", "lattice-0.2.0-aarch64-apple-darwin.tar.gz"),
+			"file:///tmp/rel/v0.2.0/lattice-0.2.0-aarch64-apple-darwin.tar.gz"
+		);
+	}
+
+	#[test]
+	fn a_flag_beats_the_environment_and_a_blank_beats_neither() {
+		// The env name is unset in this process, so only the flag and the default
+		// are in play — enough to pin the two ends of the precedence chain.
+		assert_eq!(
+			resolve_url(Some("https://mirror.example/dl"), BASE_URL_ENV, "default"),
+			"https://mirror.example/dl"
+		);
+		assert_eq!(resolve_url(None, BASE_URL_ENV, "default"), "default");
+		// A blank flag is not a value; it must not shadow what comes after it.
+		assert_eq!(resolve_url(Some("   "), BASE_URL_ENV, "default"), "default");
 	}
 
 	#[test]

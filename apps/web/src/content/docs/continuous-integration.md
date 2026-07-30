@@ -33,12 +33,14 @@ config that never gets read.
 `lattice run` and `lattice setup` pick their output mode the same way
 everywhere: not attached to a terminal, or the `CI` environment variable is
 set, or `--loquacious`/`-l` was passed, and the mode is `Raw` — a plain,
-line-by-line, ANSI-free stream instead of the live interactive display. See
+line-by-line stream instead of the live interactive display. See
 [Output and logging](/lattice/docs/output-modes) for the full model.
 
 A CI job gets `Raw` for two independent reasons at once: GitHub Actions sets
 `CI` in every job's environment, and a step's stdout isn't a terminal to begin
-with. Either one alone is already enough. You never need `-l` in a GitHub
+with. Either one alone is already enough. That second reason is also why a CI
+log is ANSI-free: color follows the terminal, not the mode, so the colored
+`workspace:task` labels an `-l` run shows at a shell never reach a log file. You never need `-l` in a GitHub
 Actions job for this reason — but if you're running Lattice somewhere that
 doesn't set `CI` (a plain SSH session driving a build, for instance) and want
 the same greppable output, pass `-l` explicitly:

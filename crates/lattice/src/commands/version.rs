@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
 
-use lattice_output::splash;
+use lattice_output::{splash, Theme};
 
 use crate::cli::BIN_VERSION;
 
@@ -13,7 +13,7 @@ pub struct VersionArgs {
 }
 
 impl VersionArgs {
-	pub async fn execute(&self) -> Result<()> {
+	pub async fn execute(&self, theme: Theme) -> Result<()> {
 		if self.json {
 			println!(
 				r#"{{"version":"{}","target":"{}","arch":"{}"}}"#,
@@ -22,7 +22,7 @@ impl VersionArgs {
 				std::env::consts::ARCH
 			);
 		} else {
-			println!("{}", splash(BIN_VERSION));
+			println!("{}", splash(BIN_VERSION, theme));
 		}
 		Ok(())
 	}

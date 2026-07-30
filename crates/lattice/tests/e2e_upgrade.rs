@@ -1,7 +1,7 @@
 //! `lattice upgrade` and the pinned-version handover, end to end.
 //!
 //! Every test publishes a fake release to a temp directory and points the CLI at
-//! it with `LATTICE_RELEASE_BASE_URL`, so the real download, checksum, extract,
+//! it with `--release-base-url`, so the real download, checksum, extract,
 //! install and link path runs with no network.
 
 mod common;
@@ -49,8 +49,12 @@ fn upgrade_installs_the_release_and_rewrites_the_pin() {
 	release.publish("9.9.9", "pinned-binary");
 
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["upgrade", "9.9.9"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"9.9.9",
+		])
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("0.1.0"))
@@ -84,8 +88,12 @@ fn upgrade_accepts_a_v_prefix_and_is_idempotent() {
 	release.publish("9.9.9", "pinned-binary");
 
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["upgrade", "v9.9.9"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"v9.9.9",
+		])
 		.assert()
 		.success();
 
@@ -93,8 +101,12 @@ fn upgrade_accepts_a_v_prefix_and_is_idempotent() {
 	// does not need the release at all.
 	release.unpublish("9.9.9");
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["upgrade", "9.9.9"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"9.9.9",
+		])
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("already on 9.9.9"));
@@ -110,9 +122,14 @@ fn upgrade_latest_resolves_the_newest_release() {
 	release.publish("9.9.9", "pinned-binary");
 
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.env("LATTICE_RELEASE_LATEST_URL", release.latest_url("9.9.9"))
-		.args(["upgrade", "latest"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"latest",
+			"--release-latest-url",
+			&release.latest_url("9.9.9"),
+		])
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("9.9.9"));
@@ -135,13 +152,16 @@ fn upgrade_latest_falls_back_to_the_newest_pre_release() {
 	release.publish("9.9.9-beta-2", "beta-binary");
 
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.env("LATTICE_RELEASE_LATEST_URL", release.missing_latest_url())
-		.env(
-			"LATTICE_RELEASE_LIST_URL",
-			release.list_url(&[("9.9.9-beta-2", true), ("9.9.9-beta-1", true)]),
-		)
-		.args(["upgrade", "latest"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"latest",
+			"--release-latest-url",
+			&release.missing_latest_url(),
+			"--release-list-url",
+			&release.list_url(&[("9.9.9-beta-2", true), ("9.9.9-beta-1", true)]),
+		])
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("9.9.9-beta-2"))
@@ -166,13 +186,16 @@ fn upgrade_latest_prefers_a_stable_release_over_a_newer_pre_release() {
 	release.publish("9.9.9", "stable-binary");
 
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.env("LATTICE_RELEASE_LATEST_URL", release.latest_url("9.9.9"))
-		.env(
-			"LATTICE_RELEASE_LIST_URL",
-			release.list_url(&[("9.9.10-beta-1", true), ("9.9.9", false)]),
-		)
-		.args(["upgrade", "latest"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"latest",
+			"--release-latest-url",
+			&release.latest_url("9.9.9"),
+			"--release-list-url",
+			&release.list_url(&[("9.9.10-beta-1", true), ("9.9.9", false)]),
+		])
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("9.9.9"))
@@ -194,8 +217,12 @@ fn upgrade_refuses_an_archive_that_fails_its_checksum() {
 	release.publish_with_wrong_digest("9.9.9", "tampered");
 
 	fx.lattice()
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["upgrade", "9.9.9"])
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"9.9.9",
+		])
 		.assert()
 		.failure()
 		.stderr(predicates::str::contains("checksum mismatch"));
@@ -209,6 +236,68 @@ fn upgrade_refuses_an_archive_that_fails_its_checksum() {
 			.contains(r#""latticeVersion": "0.1.0""#),
 		"a failed upgrade must not move the pin"
 	);
+}
+
+/// The environment variables the flags replaced still work, so a CI job that
+/// exports one keeps installing from the same place.
+#[test]
+fn the_release_url_env_vars_still_work_without_a_flag() {
+	if !curl_supports_file() {
+		return;
+	}
+	let fx = fixture();
+	let release = FakeRelease::new();
+	release.publish("9.9.9", "pinned-binary");
+
+	fx.lattice()
+		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
+		.env("LATTICE_RELEASE_LATEST_URL", release.latest_url("9.9.9"))
+		.args(["upgrade", "latest"])
+		.assert()
+		.success()
+		.stdout(predicates::str::contains("9.9.9"));
+
+	assert!(fx.exists(".lattice/bin/lattice-9.9.9"));
+}
+
+/// ...and where both are given, the flag is the one that counts.
+#[test]
+fn a_release_url_flag_beats_the_environment() {
+	if !curl_supports_file() {
+		return;
+	}
+	let fx = fixture();
+	let release = FakeRelease::new();
+	release.publish("9.9.9", "pinned-binary");
+	let dead_end = FakeRelease::new();
+
+	fx.lattice()
+		// The env points somewhere with no release at all: reaching for it instead
+		// of the flag is a failure this asserts cannot happen.
+		.env("LATTICE_RELEASE_BASE_URL", dead_end.base_url())
+		.args([
+			"--release-base-url",
+			&release.base_url(),
+			"upgrade",
+			"9.9.9",
+		])
+		.assert()
+		.success();
+
+	assert!(fx.exists(".lattice/bin/lattice-9.9.9"));
+}
+
+/// A blank value is not a value — an inherited `LATTICE_RELEASE_BASE_URL=` must
+/// fall through to the default rather than build an empty URL.
+#[test]
+fn a_blank_release_url_env_var_falls_through() {
+	let fx = fixture();
+	fx.lattice()
+		.env("LATTICE_RELEASE_BASE_URL", "")
+		.args(["upgrade", "not-a-version"])
+		.assert()
+		.failure()
+		.stderr(predicates::str::contains("is not a version"));
 }
 
 #[test]
@@ -244,12 +333,14 @@ fn a_pinned_repo_switches_to_the_version_it_pins() {
 	release.publish("9.9.9", "pinned-binary");
 
 	fx.managed_lattice(&bin)
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["run", "greet"])
+		.args(["--release-base-url", &release.base_url(), "run", "greet"])
 		.assert()
 		.success()
-		// The pinned build ran, with the arguments passed through.
-		.stdout(predicates::str::contains("pinned-binary run greet"))
+		// The pinned build ran, with the whole command line passed through — the
+		// global flag included, so the build being handed to reads it the same way.
+		.stdout(predicates::str::contains("pinned-binary"))
+		.stdout(predicates::str::contains("--release-base-url"))
+		.stdout(predicates::str::contains("run greet"))
 		.stderr(predicates::str::contains("this repo pins"))
 		.stderr(predicates::str::contains("switching"));
 
@@ -272,8 +363,7 @@ fn a_version_already_on_disk_is_not_downloaded_again() {
 	let release = FakeRelease::new();
 	release.publish("9.9.9", "pinned-binary");
 	fx.managed_lattice(&bin)
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["run", "greet"])
+		.args(["--release-base-url", &release.base_url(), "run", "greet"])
 		.assert()
 		.success();
 
@@ -283,8 +373,7 @@ fn a_version_already_on_disk_is_not_downloaded_again() {
 	release.unpublish("9.9.9");
 
 	fx.managed_lattice(&bin)
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["run", "greet"])
+		.args(["--release-base-url", &release.base_url(), "run", "greet"])
 		.assert()
 		.success()
 		.stdout(predicates::str::contains("pinned-binary"))
@@ -340,8 +429,7 @@ fn a_missing_pinned_version_fails_loudly_rather_than_running_the_wrong_one() {
 
 	let release = FakeRelease::new();
 	fx.managed_lattice(&bin)
-		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
-		.args(["run", "greet"])
+		.args(["--release-base-url", &release.base_url(), "run", "greet"])
 		.assert()
 		.failure()
 		.stderr(predicates::str::contains("9.9.9"))

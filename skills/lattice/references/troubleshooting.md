@@ -110,8 +110,10 @@ pipe is the most common surprise cause.
 
 ## Color appears somewhere it shouldn't
 
-Color is only emitted in interactive mode, and only when `NO_COLOR` is unset. Set
-`NO_COLOR` to any value to suppress it without changing the output mode.
+Color is emitted only when stdout is a real terminal, in either mode: an `-l` run
+at a shell colors each `workspace:task` label, the same run piped or redirected
+colors nothing. Set `NO_COLOR` to any value to suppress it everywhere without
+changing the output mode.
 
 ## A run never finishes
 

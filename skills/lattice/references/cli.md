@@ -87,7 +87,16 @@ A size is an integer plus `B`, `KB`, `MB`, `GB`, or `TB` (case-insensitive, base
 Installs another Lattice version under `.lattice/bin`, repoints
 `.lattice/bin/lattice` at it, and writes it to `latticeVersion` in
 `lattice.json`. Commit that change and everyone on the repo moves together.
-`<VERSION>` is a version (`0.2.0`) or `latest`. No flags of its own.
+`<VERSION>` is a version (`0.2.0`) or `latest`.
+
+| Flag | Argument | Description |
+| --- | --- | --- |
+| `--release-latest-url` | `<URL>` | Endpoint naming the newest stable release, for `upgrade latest` |
+| `--release-list-url` | `<URL>` | Endpoint listing every release, used when no release is stable yet |
+
+Both only matter to `upgrade latest`; a plain `upgrade 0.2.0` never asks either
+endpoint anything. The archive itself comes from `--release-base-url`, which is
+global because the version handover downloads too.
 
 If the binary running `upgrade` is not the version it just pinned, it prints the
 command to run next rather than switching for you.
@@ -118,6 +127,8 @@ subcommand, before or after the subcommand name.
 | `--loquacious` | `-l` | Stream the plain line-by-line log instead of the interactive display |
 | `--verbose` | `-v` | Hidden alias for `--loquacious` |
 | `--no-version-check` | — | Run this binary even when the repo pins another version |
+| `--theme <THEME>` | — | `light` or `dark`; tunes the splash art's teal shade. Any other value is a parse error |
+| `--release-base-url <URL>` | — | Base URL to download release archives from. A `file://` base works offline |
 
 `-V`/`--version` prints the compiled-in binary version but exists only on
 `lattice` itself; `lattice run -V` is a parse error.
@@ -139,20 +150,37 @@ failed) is what's printed. `--sequentially` applies the same rule per phase.
 
 ## Environment variables Lattice reads
 
-| Variable | Effect | Counts as set when |
-| --- | --- | --- |
-| `CI` | Forces plain output, same as `-l` | Present, any value, including empty |
-| `NO_COLOR` | Disables ANSI color. Nothing turns it back on | Present, any value |
-| `LATTICE_NO_VERSION_CHECK` | Suppresses the drift nag and the handover to a pinned `latticeVersion` | Present, any value |
-| `LATTICE_THEME` | `light` or `dark`; forces the splash's teal shade | Recognized value present |
-| `COLORFGBG` | Splash theme fallback when `LATTICE_THEME` is unset. Read as `fg;bg`; a trailing `7` or `15` means a light background | It parses |
-| `LATTICE_RELEASE_BASE_URL` | Base URL `upgrade` and the version switch download archives from. A `file://` base makes installs testable offline | Present and not whitespace-only |
-| `LATTICE_RELEASE_LATEST_URL` | Endpoint resolving `upgrade latest` to the newest stable release | Present and not whitespace-only |
-| `LATTICE_RELEASE_LIST_URL` | Fallback when the latest-stable endpoint names nothing | Present and not whitespace-only |
-| `LATTICE_SWITCHED_FROM` | Internal. Set on the process an invocation is handed to after a version switch. Not meant to be set by hand | Present, any value |
+Prefer the flag wherever one exists — it wins over the variable, and it is what
+the CLI is built around. The variables are kept so an exported value keeps
+working.
+
+| Variable | Flag to prefer | Effect | Counts as set when |
+| --- | --- | --- | --- |
+| `CI` | `-l` | Forces plain output | Present, any value, including empty |
+| `NO_COLOR` | — | Disables ANSI color. Nothing turns it back on | Present, any value |
+| `LATTICE_NO_VERSION_CHECK` | `--no-version-check` | Suppresses the drift nag and the handover to a pinned `latticeVersion` | Present, any value |
+| `LATTICE_THEME` | `--theme` | `light` or `dark`; forces the splash's teal shade | Recognized value present |
+| `COLORFGBG` | `--theme` | Splash theme fallback when neither the flag nor `LATTICE_THEME` is set. Read as `fg;bg`; a trailing `7` or `15` means a light background | It parses |
+| `LATTICE_RELEASE_BASE_URL` | `--release-base-url` | Base URL `upgrade` and the version switch download archives from | Present and not whitespace-only |
+| `LATTICE_RELEASE_LATEST_URL` | `--release-latest-url` | Endpoint resolving `upgrade latest` to the newest stable release | Present and not whitespace-only |
+| `LATTICE_RELEASE_LIST_URL` | `--release-list-url` | Fallback when the latest-stable endpoint names nothing | Present and not whitespace-only |
+| `LATTICE_SWITCHED_FROM` | — | Internal. Set on the process an invocation is handed to after a version switch. Not meant to be set by hand | Present, any value |
+
+`LATTICE_SWITCHED_FROM` has no flag on purpose: the process being handed to is a
+different build of Lattice, and one older than the flag would reject it. For the
+same reason, a repo pinning an older version is the one case where the
+`LATTICE_RELEASE_*` variables are safer than the flags — the whole command line
+is passed through the handover, so a flag the pinned build does not know is a
+parse error there.
 
 `CI` and `-l` are independent triggers for the same plain output mode; there is
 no way to force the interactive display back on from inside `CI=1`.
+
+In that mode the `workspace:task` label leading each line is colored, one color
+per task, so interleaved parallel output can be followed by eye. The color is
+emitted only when stdout is a real terminal: piped, redirected, or under `CI`
+the labels are bare, so captured output stays byte-for-byte greppable and
+carries no escapes to strip. `NO_COLOR` suppresses it at a terminal too.
 
 ## What Lattice sets for a spawned command
 
@@ -173,7 +201,11 @@ shell Lattice runs in.
 
 Highest first:
 
-1. CLI flag — `-l`, `--no-version-check`
-2. Environment variable — `LATTICE_NO_VERSION_CHECK`
+1. CLI flag — `-l`, `--no-version-check`, `--theme`, `--release-base-url`
+2. Environment variable — `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL`
 3. `settings` in `lattice.json` — `settings.loquacious`, `settings.versionCheck`
 4. Built-in default
+
+For the URL overrides a blank value does not count as given at either of the
+first two steps, so an inherited `LATTICE_RELEASE_BASE_URL=` falls through to
+the default rather than building an empty URL.

@@ -125,6 +125,29 @@ t_grepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then pass "$3"; else fail "
 
 w() { mkdir -p "$(dirname "$1")"; printf '%s' "$2" > "$1"; }
 
+# Anything TTY-only (label colors, the interactive display) is invisible to
+# `lat`, which captures through a pipe. `ptylat` runs the binary under a
+# pseudo-terminal instead, using whichever `script` the platform ships. BSD
+# `script` does not propagate the child's exit status, so pty runs assert on
+# captured output only, never on RC.
+PTY_OK=1
+command -v script >/dev/null 2>&1 || PTY_OK=0
+PTY_FLAVOR="bsd"
+script --version 2>/dev/null | grep -q util-linux && PTY_FLAVOR="util-linux"
+
+# Usage: ptylat "VAR=val ..." <dir> <args...>
+ptylat() {
+  local envs="$1"; local dir="$2"; shift 2
+  if [ "$PTY_FLAVOR" = "util-linux" ]; then
+    OUTPUT="$(cd "$dir" && env $envs script -qe -c "$(printf '%q ' "$BIN" "$@")" /dev/null 2>&1)"
+  else
+    OUTPUT="$(cd "$dir" && env $envs script -q /dev/null "$BIN" "$@" 2>&1)"
+  fi
+}
+
+# The prefix of a 24-bit foreground color escape — what a painted label starts with.
+TRUECOLOR="$(printf '\033[38;2;')"
+
 # =========================================================================
 # 1. Top-level surfaces: bare, help, version, completions.
 # =========================================================================
@@ -141,6 +164,8 @@ t_has "help lists prune"       "Evict cache"
 t_has "help lists upgrade"     "another version of Lattice"
 t_has "help lists completions" "completion"
 t_has "help lists version"     "version information"
+t_has "help lists --theme"            "--theme"
+t_has "help lists --release-base-url" "--release-base-url"
 
 lat "$ENVROOT" --version ; t_ok "\`--version\` exits 0"
 t_has "\`--version\` prints version" "$VERSION"
@@ -148,6 +173,18 @@ t_has "\`--version\` prints version" "$VERSION"
 lat "$ENVROOT" version ; t_ok "\`version\` exits 0"
 t_has "\`version\` splash mentions monorepos" "monorepos"
 t_has "\`version\` splash shows version"      "$VERSION"
+
+# --theme picks the splash shade; both shades render the same mark, and a shade
+# that does not exist is refused rather than quietly ignored.
+lat "$ENVROOT" version --theme light ; t_ok "\`version --theme light\` exits 0"
+t_has "the light splash still shows the version" "$VERSION"
+lat "$ENVROOT" --theme dark version ; t_ok "\`--theme\` works ahead of the subcommand"
+t_has "the dark splash still shows the version"  "$VERSION"
+lat "$ENVROOT" version --theme teal ; t_bad "\`--theme\` rejects a shade it does not have"
+t_has "the bad-theme message lists the shades" "light"
+# The variable the flag replaced still works when no flag is given.
+late "LATTICE_THEME=light" "$ENVROOT" version ; t_ok "LATTICE_THEME still works"
+t_has "the env-themed splash still shows the version" "$VERSION"
 
 lat "$ENVROOT" version --json ; t_ok "\`version --json\` exits 0"
 t_has "version json has version field" "\"version\":\"$VERSION\""
@@ -397,7 +434,27 @@ lat "$PROD" run build --no-cache --concurrency 4 ; t_ok "run --concurrency 4 exi
 
 lat "$PROD" run build --filter core --no-cache -l ; t_ok "run -l (loquacious) exits 0"
 t_has "loquacious emits hash trace" "hash"
+t_hasnt "piped -l emits no ANSI escapes" "$TRUECOLOR"
 lat "$PROD" run build --filter core --no-cache -v ; t_ok "hidden -v alias exits 0"
+
+# Label colors: `-l` at a real terminal paints each `workspace:task` label its
+# own color, and every task in the run gets a different one. Piped (asserted
+# above) and under NO_COLOR, the same run emits nothing to strip.
+if [ "$PTY_OK" = "1" ]; then
+  ptylat "" "$PROD" run build --no-cache -l
+  t_has "-l under a pty colors the workspace:task label" "$TRUECOLOR"
+  HUES="$(printf '%s\n' "$OUTPUT" | grep -o "$TRUECOLOR"'[0-9;]*m' | sort -u | wc -l | tr -d ' ')"
+  if [ "${HUES:-0}" -ge 2 ]; then
+    pass "each task's label gets a distinct color ($HUES in the run)"
+  else
+    fail "each task's label gets a distinct color" "only $HUES distinct | $(snip)"
+  fi
+  ptylat "NO_COLOR=1" "$PROD" run build --no-cache -l
+  t_hasnt "NO_COLOR suppresses label color under a pty" "$TRUECOLOR"
+else
+  say "  ${YEL}skip${RST} label-color assertions (no \`script\` to allocate a pty)"
+fi
+
 lat "$PROD" run build --filter core --no-cache --no-version-check ; t_ok "--no-version-check accepted"
 
 # -l so the CI reporter streams task output (echoed markers) we assert on.
@@ -864,8 +921,12 @@ printf '%s  %s\n' "$(sha256_of "$REL/v$FAKEVER/$STEM.tar.gz")" "$STEM.tar.gz" \
   > "$REL/v$FAKEVER/lattice-$FAKEVER-checksums.txt"
 printf '{"tag_name":"v%s"}\n' "$FAKEVER" > "$REL/latest.json"
 
-RELENV="LATTICE_RELEASE_BASE_URL=file://$REL"
-LATESTENV="LATTICE_RELEASE_LATEST_URL=file://$REL/latest.json"
+# The CLI takes these as flags. The installer is a shell script piped to sh, so
+# it keeps reading the environment — the flags below never reach it.
+RELBASE="file://$REL"
+RELFLAG="--release-base-url $RELBASE"
+LATESTFLAG="--release-latest-url file://$REL/latest.json"
+RELENV="LATTICE_RELEASE_BASE_URL=$RELBASE"
 
 # curl built without the file:// protocol cannot serve a local release; the rest
 # of the section is meaningless without it.
@@ -947,6 +1008,8 @@ fi
 # --- upgrade -------------------------------------------------------------
 lat "$ENVROOT" upgrade --help ; t_ok "\`upgrade --help\` exits 0"
 t_has "upgrade help documents the version argument" "VERSION"
+t_has "upgrade help documents --release-latest-url" "--release-latest-url"
+t_has "upgrade help documents --release-list-url"   "--release-list-url"
 
 lat "$DET" upgrade ; t_bad "upgrade requires a version"
 lat "$DET" upgrade "../../etc/passwd" ; t_bad "upgrade rejects a path as a version"
@@ -962,18 +1025,35 @@ cat > "$UPG/lattice.json" <<JSON
 }
 JSON
 if [ "$CAN_FETCH" = "1" ]; then
-  late "$RELENV" "$UPG" upgrade "$FAKEVER" ; t_ok "upgrade to a published version exits 0"
+  late "" "$UPG" $RELFLAG upgrade "$FAKEVER" ; t_ok "upgrade to a published version exits 0"
   t_has  "upgrade reports the move" "$VERSION"
   t_file "$UPG/.lattice/bin/lattice-$FAKEVER" "upgrade installs the version-stamped binary"
   t_grepfile "$UPG/lattice.json" "\"latticeVersion\": \"$FAKEVER\"" "upgrade rewrites the pin"
   t_grepfile "$UPG/lattice.json" "\"\$schema\"" "upgrade leaves the rest of the config alone"
   t_grepfile "$UPG/lattice.json" "\"build\""    "upgrade leaves the task map alone"
 
-  late "$RELENV" "$UPG" upgrade "$FAKEVER" ; t_ok "upgrade is idempotent"
+  late "" "$UPG" $RELFLAG upgrade "$FAKEVER" ; t_ok "upgrade is idempotent"
   t_has "upgrade reports an unchanged pin" "already on $FAKEVER"
 
-  late "$RELENV $LATESTENV" "$UPG" upgrade latest ; t_ok "\`upgrade latest\` exits 0"
+  late "" "$UPG" $RELFLAG upgrade latest $LATESTFLAG ; t_ok "\`upgrade latest\` exits 0"
   t_has "\`upgrade latest\` resolves a version" "$FAKEVER"
+
+  # The flags replaced environment variables that still work, so an exported
+  # value in someone's CI keeps pointing at the same place.
+  late "$RELENV" "$UPG" upgrade "$FAKEVER" ; t_ok "LATTICE_RELEASE_BASE_URL still works"
+  t_has "the env fallback reaches the same release" "already on $FAKEVER"
+
+  # And where both are given, the flag is the one that counts: the env here
+  # points at nothing, so reaching for it would fail the download.
+  late "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" "$UPG" \
+    $RELFLAG upgrade "$FAKEVER"
+  t_ok  "--release-base-url beats LATTICE_RELEASE_BASE_URL"
+
+  # A blank value is not a value; it must fall through rather than build an
+  # empty URL out of it.
+  late "LATTICE_RELEASE_BASE_URL=" "$UPG" upgrade "not-a-version"
+  t_bad "a blank LATTICE_RELEASE_BASE_URL falls through to the default"
+  t_has "the blank-value failure is about the version" "not a version"
 fi
 
 # --- the handover --------------------------------------------------------
@@ -988,11 +1068,12 @@ ln -sf "lattice-$VERSION" "$PINNED/.lattice/bin/lattice"
 MANAGED="$PINNED/.lattice/bin/lattice-$VERSION"
 
 if [ "$CAN_FETCH" = "1" ]; then
-  OUTPUT="$(cd "$PINNED" && env $RELENV "$MANAGED" run build 2>&1)"; RC=$?
+  OUTPUT="$(cd "$PINNED" && "$MANAGED" $RELFLAG run build 2>&1)"; RC=$?
   t_ok  "a managed binary in a repo pinned elsewhere exits 0"
   t_has "the handover says which version the repo pins" "this repo pins"
   t_has "the handover says it is switching"             "switching"
-  t_has "the pinned version ran, with the arguments"    "fake-lattice 9.9.9 args: run build"
+  # The whole command line is passed through, the global flag included.
+  t_has "the pinned version ran, with the arguments"    "fake-lattice 9.9.9 args: $RELFLAG run build"
   t_file "$PINNED/.lattice/bin/lattice-$FAKEVER" "the handover installed the pinned version"
   if [ "$(readlink "$PINNED/.lattice/bin/lattice")" = "lattice-$FAKEVER" ]; then
     pass "the handover repointed the stable path"
@@ -1004,7 +1085,7 @@ if [ "$CAN_FETCH" = "1" ]; then
   # all to fetch from.
   ln -sf "lattice-$VERSION" "$PINNED/.lattice/bin/lattice"
   mv "$REL/v$FAKEVER" "$REL/v$FAKEVER.away"
-  OUTPUT="$(cd "$PINNED" && env $RELENV "$MANAGED" run build 2>&1)"; RC=$?
+  OUTPUT="$(cd "$PINNED" && "$MANAGED" $RELFLAG run build 2>&1)"; RC=$?
   t_ok  "switching to a version already on disk exits 0"
   t_has "it is the pinned version that runs" "fake-lattice 9.9.9"
   mv "$REL/v$FAKEVER.away" "$REL/v$FAKEVER"
@@ -1042,19 +1123,19 @@ cat > "$NOREL/lattice.json" <<JSON
 JSON
 cp "$BIN" "$NOREL/.lattice/bin/lattice-$VERSION"
 NOREL_BIN="$NOREL/.lattice/bin/lattice-$VERSION"
-OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" \
-  "$NOREL_BIN" version --json 2>&1)"; RC=$?
+OUTPUT="$(cd "$NOREL" && "$NOREL_BIN" --release-base-url "file://$ENVROOT/nothing-here" \
+  version --json 2>&1)"; RC=$?
 t_ok  "\`version\` is never handed off"
 t_has "\`version\` reports the binary that ran" "\"version\":\"$VERSION\""
-OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" \
-  "$NOREL_BIN" completions bash 2>&1)"; RC=$?
+OUTPUT="$(cd "$NOREL" && "$NOREL_BIN" --release-base-url "file://$ENVROOT/nothing-here" \
+  completions bash 2>&1)"; RC=$?
 t_ok    "\`completions\` is never handed off"
 t_hasnt "completions output stays clean" "switching"
 
 # A pinned version that cannot be fetched is a hard failure: running the wrong
 # build silently is the thing this check exists to prevent.
-OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-here" \
-  "$NOREL_BIN" run build 2>&1)"; RC=$?
+OUTPUT="$(cd "$NOREL" && "$NOREL_BIN" --release-base-url "file://$ENVROOT/nothing-here" \
+  run build 2>&1)"; RC=$?
 t_bad "an unfetchable pinned version fails loudly"
 t_has "the failure names the pinned version" "$FAKEVER"
 t_has "the failure names the way out"        "--no-version-check"

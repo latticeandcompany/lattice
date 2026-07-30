@@ -34,12 +34,33 @@ pub fn detect_mode(stdout_is_tty: bool, loquacious: bool, ci_env: bool) -> Outpu
 	}
 }
 
-/// Color is disabled when `NO_COLOR` is set (see <https://no-color.org/>) or
-/// whenever we are in [`OutputMode::Raw`] (CI, pipe, redirect, or loquacious).
-/// It is only enabled for a genuine [`OutputMode::Interactive`] session with no
-/// `NO_COLOR` override.
-pub fn should_enable_color(mode: OutputMode, no_color_set: bool) -> bool {
-	!no_color_set && mode == OutputMode::Interactive
+/// Color is disabled when `NO_COLOR` is set (see <https://no-color.org/>) and
+/// whenever stdout is not a terminal, so a pipe, a redirect, or a CI log never
+/// receives an escape it would have to strip. A terminal in
+/// [`OutputMode::Raw`] — `-l`, or a persistent task forcing the stream — still
+/// gets color: that is where the per-task label colors live.
+pub fn should_enable_color(mode: OutputMode, no_color_set: bool, stdout_is_tty: bool) -> bool {
+	if no_color_set {
+		return false;
+	}
+	match mode {
+		OutputMode::Interactive => true,
+		OutputMode::Raw => stdout_is_tty,
+	}
+}
+
+/// Set the process-wide `console` color gate from [`should_enable_color`],
+/// reading `NO_COLOR` and the real terminal. Call this once the output mode is
+/// final and before anything prints: every `paint_*` helper and every
+/// [`console::style`] call downstream reads the gate this sets.
+pub fn apply_color_policy(mode: OutputMode) {
+	let on = should_enable_color(
+		mode,
+		std::env::var_os("NO_COLOR").is_some(),
+		Term::stdout().is_term(),
+	);
+	console::set_colors_enabled(on);
+	console::set_colors_enabled_stderr(on);
 }
 
 /// The teal accent for **Lattice Build** (`teal-500`). It is used on the rosette
@@ -63,13 +84,13 @@ pub enum Theme {
 	Dark,
 }
 
-/// An explicit `LATTICE_THEME=light|dark` override always wins. Otherwise we
-/// consult `COLORFGBG` (set by many terminals as `fg;bg`, occasionally
-/// `fg;default;bg`) and read the trailing background field: ANSI `7`/`15`
-/// (white / bright white) means a light background, anything else is dark.
-/// With no signal we default to [`Theme::Dark`] — most terminals are dark, and
-/// this preserves the historical splash color.
-pub fn theme_from_env(theme_override: Option<&str>, colorfgbg: Option<&str>) -> Theme {
+/// An explicit `light`/`dark` override always wins. Otherwise we consult
+/// `COLORFGBG` (set by many terminals as `fg;bg`, occasionally `fg;default;bg`)
+/// and read the trailing background field: ANSI `7`/`15` (white / bright white)
+/// means a light background, anything else is dark. With no signal we default to
+/// [`Theme::Dark`] — most terminals are dark, and this preserves the historical
+/// splash color.
+pub fn resolve_theme(theme_override: Option<&str>, colorfgbg: Option<&str>) -> Theme {
 	if let Some(v) = theme_override {
 		match v.trim().to_ascii_lowercase().as_str() {
 			"light" => return Theme::Light,
@@ -91,12 +112,29 @@ pub fn theme_from_env(theme_override: Option<&str>, colorfgbg: Option<&str>) -> 
 	Theme::Dark
 }
 
+/// The theme when `--theme` was not passed: `LATTICE_THEME`, else the terminal's
+/// own `COLORFGBG` signal.
 pub fn detect_theme() -> Theme {
-	theme_from_env(
+	resolve_theme(
 		std::env::var("LATTICE_THEME").ok().as_deref(),
 		std::env::var("COLORFGBG").ok().as_deref(),
 	)
 }
+
+/// The colors a `workspace:task` label can take in the raw stream: eight hues,
+/// one per 45° step around the wheel, all at the same saturation and lightness
+/// so no label reads as louder than another. The wheel starts at 25° rather
+/// than 0° to keep every entry clear of the red a `FAILED` marker uses.
+pub const LABEL_PALETTE: [(u8, u8, u8); 8] = [
+	(0xE0, 0x8D, 0x52), // 25°  amber
+	(0xC9, 0xE0, 0x52), // 70°  lime
+	(0x5E, 0xE0, 0x52), // 115° green
+	(0x52, 0xE0, 0xB1), // 160° aqua
+	(0x52, 0xA5, 0xE0), // 205° blue
+	(0x69, 0x52, 0xE0), // 250° violet
+	(0xD4, 0x52, 0xE0), // 295° magenta
+	(0xE0, 0x52, 0x81), // 340° rose
+];
 
 /// The rosette (woven-sphere) mark — the Lattice logo — as compact ASCII.
 /// Rendered in teal for the `version`/splash surface.
@@ -187,6 +225,60 @@ fn gradient_escapes(s: &str, stops: &[(u8, u8, u8)]) -> String {
 	out
 }
 
+/// `workspace:task`, painted in `color`. Kept separate from [`LabelColors::paint`]
+/// so the escape sequence is testable without touching the global color gate.
+fn label_escapes(label: &str, color: (u8, u8, u8)) -> String {
+	let (r, g, b) = color;
+	format!("\u{1b}[38;2;{r};{g};{b}m{label}\u{1b}[39m")
+}
+
+/// Hands each `workspace:task` in a run its own color from [`LABEL_PALETTE`],
+/// assigned in the order labels are first seen so that no two share one until
+/// the ninth label wraps the palette. The raw stream interleaves lines from
+/// every task at once, and the color is what lets the eye follow one of them.
+///
+/// The runner reports from concurrently spawned tasks, so the assignment table
+/// lives behind a lock.
+pub struct LabelColors {
+	assigned: Mutex<HashMap<String, usize>>,
+}
+
+impl Default for LabelColors {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl LabelColors {
+	pub fn new() -> Self {
+		Self {
+			assigned: Mutex::new(HashMap::new()),
+		}
+	}
+
+	/// This label's color, assigning one on first sight. Stable for the rest of
+	/// the run.
+	pub fn color(&self, workspace: &str, task: &str) -> (u8, u8, u8) {
+		let mut assigned = self.assigned.lock().unwrap();
+		let next = assigned.len();
+		let idx = *assigned
+			.entry(format!("{workspace}:{task}"))
+			.or_insert(next);
+		LABEL_PALETTE[idx % LABEL_PALETTE.len()]
+	}
+
+	/// `workspace:task` in this label's color, or bare when color is off — the
+	/// text is identical either way, so a piped run keeps the same shape.
+	pub fn paint(&self, workspace: &str, task: &str) -> String {
+		let label = format!("{workspace}:{task}");
+		if console::colors_enabled() {
+			label_escapes(&label, self.color(workspace, task))
+		} else {
+			label
+		}
+	}
+}
+
 /// True when the run executed nothing: every task it scheduled came back from
 /// cache. An empty run (no workspace matched the filter) does not qualify —
 /// there was no work to skip.
@@ -209,14 +301,8 @@ pub fn wordmark() -> String {
 	style("lattice").bold().to_string()
 }
 
-/// The rosette logo painted in true teal, ready to print as a splash block.
-/// The teal shade adapts to the terminal background (see [`Theme`]).
-pub fn logo() -> String {
-	logo_for(detect_theme())
-}
-
-/// The rosette logo painted for a specific [`Theme`], so callers can pick the
-/// shade without consulting the environment.
+/// The rosette logo painted in true teal for a [`Theme`], ready to print as a
+/// splash block.
 pub fn logo_for(theme: Theme) -> String {
 	let fill = match theme {
 		Theme::Light => TEAL,
@@ -230,13 +316,12 @@ pub fn logo_for(theme: Theme) -> String {
 }
 
 /// The full branded splash: the teal rosette mark, the `lattice <version>
-/// (arch)` lockup, and the tagline. Shared by `version`, `init`, and the
-/// bare `lattice` invocation. The mark's teal shade adapts to the terminal
-/// background.
-pub fn splash(version: &str) -> String {
+/// (arch)` lockup, and the tagline. Shared by `version` and the bare `lattice`
+/// invocation.
+pub fn splash(version: &str, theme: Theme) -> String {
 	format!(
 		"{}\n{} {}  {}  {}\n{}",
-		logo(),
+		logo_for(theme),
 		paint_teal(ROSETTE),
 		wordmark(),
 		style(version).bold(),
@@ -331,6 +416,15 @@ pub trait Reporter: Send + Sync {
 	/// Trace/detail line (hashing/cache/toolchain trace) — shown only in loquacious.
 	fn note(&self, msg: &str);
 	fn warn(&self, msg: &str);
+	/// A [`Reporter::note`] about one specific task. Rendered as
+	/// `workspace:task: msg`; [`CiReporter`] overrides it to color the label.
+	fn task_note(&self, workspace: &str, task: &str, msg: &str) {
+		self.note(&format!("{workspace}:{task}: {msg}"));
+	}
+	/// A [`Reporter::warn`] about one specific task, labeled the same way.
+	fn task_warn(&self, workspace: &str, task: &str, msg: &str) {
+		self.warn(&format!("{workspace}:{task}: {msg}"));
+	}
 	/// Called once at the end so the interactive impl can clear its progress surface.
 	fn finish(&self);
 }
@@ -365,16 +459,28 @@ fn fmt_secs(ms: u64) -> String {
 	}
 }
 
-/// Plain line stream: `workspace:task: <message>`, never styled. In loquacious
+/// Line stream: `workspace:task: <message>`, one line per event. In loquacious
 /// mode it also prints `note()` trace lines and per-task output. This is the
 /// reporter used when there is no TTY, or `-l` or `settings.loquacious` is set.
+///
+/// The `workspace:task` label carries a per-task color from [`LabelColors`] so
+/// interleaved lines can be told apart at a glance; nothing else in the line is
+/// styled, and off a terminal the labels print bare.
 pub struct CiReporter {
 	pub loquacious: bool,
+	labels: LabelColors,
 }
 
 impl CiReporter {
 	pub fn new(loquacious: bool) -> Self {
-		Self { loquacious }
+		Self {
+			loquacious,
+			labels: LabelColors::new(),
+		}
+	}
+
+	fn label(&self, workspace: &str, task: &str) -> String {
+		self.labels.paint(workspace, task)
 	}
 }
 
@@ -391,14 +497,18 @@ impl Reporter for CiReporter {
 	fn event(&self, ev: TaskEvent) {
 		match ev {
 			TaskEvent::Started { workspace, task } => {
-				println!("{}:{}: running", workspace, task);
+				println!("{}: running", self.label(&workspace, &task));
 			}
 			TaskEvent::CacheHit {
 				workspace,
 				task,
 				key,
 			} => {
-				println!("{}:{}: cache hit [{}]", workspace, task, short_key(&key));
+				println!(
+					"{}: cache hit [{}]",
+					self.label(&workspace, &task),
+					short_key(&key)
+				);
 			}
 			TaskEvent::Output {
 				workspace,
@@ -410,10 +520,11 @@ impl Reporter for CiReporter {
 				// Persistent output (dev servers) always streams; other per-task
 				// output only in loquacious mode (else it's surfaced on failure).
 				if self.loquacious || persistent {
+					let label = self.label(&workspace, &task);
 					if stderr {
-						eprintln!("{}:{}: {}", workspace, task, line);
+						eprintln!("{}: {}", label, line);
 					} else {
-						println!("{}:{}: {}", workspace, task, line);
+						println!("{}: {}", label, line);
 					}
 				}
 			}
@@ -422,10 +533,14 @@ impl Reporter for CiReporter {
 				task,
 				duration_ms,
 			} => {
-				println!("{}:{}: done ({})", workspace, task, fmt_secs(duration_ms));
+				println!(
+					"{}: done ({})",
+					self.label(&workspace, &task),
+					fmt_secs(duration_ms)
+				);
 			}
 			TaskEvent::Failed { workspace, task } => {
-				eprintln!("{}:{}: FAILED", workspace, task);
+				eprintln!("{}: FAILED", self.label(&workspace, &task));
 			}
 			TaskEvent::Skipped {
 				workspace,
@@ -433,18 +548,19 @@ impl Reporter for CiReporter {
 				reason,
 			} => {
 				if self.loquacious {
-					println!("{}:{}: skipped ({})", workspace, task, reason);
+					println!("{}: skipped ({})", self.label(&workspace, &task), reason);
 				}
 			}
 		}
 	}
 
 	fn surface_failure(&self, workspace: &str, task: &str, captured: &[(bool, String)]) {
+		let label = self.label(workspace, task);
 		for (stderr, line) in captured {
 			if *stderr {
-				eprintln!("{}:{}: {}", workspace, task, line);
+				eprintln!("{}: {}", label, line);
 			} else {
-				println!("{}:{}: {}", workspace, task, line);
+				println!("{}: {}", label, line);
 			}
 		}
 	}
@@ -470,6 +586,16 @@ impl Reporter for CiReporter {
 
 	fn warn(&self, msg: &str) {
 		eprintln!("lattice: warning: {}", msg);
+	}
+
+	fn task_note(&self, workspace: &str, task: &str, msg: &str) {
+		if self.loquacious {
+			println!("lattice: {}: {}", self.label(workspace, task), msg);
+		}
+	}
+
+	fn task_warn(&self, workspace: &str, task: &str, msg: &str) {
+		eprintln!("lattice: warning: {}: {}", self.label(workspace, task), msg);
 	}
 
 	fn finish(&self) {}
@@ -722,30 +848,35 @@ mod tests {
 	}
 
 	#[test]
-	fn color_only_enabled_for_interactive_without_no_color() {
-		assert!(should_enable_color(OutputMode::Interactive, false));
+	fn color_enabled_for_interactive_without_no_color() {
+		assert!(should_enable_color(OutputMode::Interactive, false, true));
 	}
 
 	#[test]
-	fn no_color_disables_color_in_interactive() {
-		assert!(!should_enable_color(OutputMode::Interactive, true));
+	fn no_color_disables_color_in_either_mode() {
+		assert!(!should_enable_color(OutputMode::Interactive, true, true));
+		assert!(!should_enable_color(OutputMode::Raw, true, true));
 	}
 
 	#[test]
-	fn raw_mode_never_enables_color() {
-		assert!(!should_enable_color(OutputMode::Raw, false));
-		assert!(!should_enable_color(OutputMode::Raw, true));
+	fn raw_colors_only_on_a_terminal() {
+		// `-l` at a real shell: colored labels.
+		assert!(should_enable_color(OutputMode::Raw, false, true));
+		// Piped, redirected, or a CI log: nothing to strip.
+		assert!(!should_enable_color(OutputMode::Raw, false, false));
 	}
 
 	/// A test-only reporter that records every event in order.
 	struct RecordingReporter {
 		events: Mutex<Vec<TaskEvent>>,
+		lines: Mutex<Vec<String>>,
 	}
 
 	impl RecordingReporter {
 		fn new() -> Self {
 			Self {
 				events: Mutex::new(Vec::new()),
+				lines: Mutex::new(Vec::new()),
 			}
 		}
 	}
@@ -757,9 +888,29 @@ mod tests {
 		}
 		fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
 		fn run_summary(&self, _total: usize, _cached: usize, _failed: usize, _elapsed_ms: u64) {}
-		fn note(&self, _msg: &str) {}
-		fn warn(&self, _msg: &str) {}
+		fn note(&self, msg: &str) {
+			self.lines.lock().unwrap().push(format!("note: {msg}"));
+		}
+		fn warn(&self, msg: &str) {
+			self.lines.lock().unwrap().push(format!("warn: {msg}"));
+		}
 		fn finish(&self) {}
+	}
+
+	#[test]
+	fn task_trace_lines_default_to_a_labeled_prefix() {
+		// A reporter that does not color labels still gets `workspace:task: msg`,
+		// so the raw stream reads the same as it did before the split.
+		let r = RecordingReporter::new();
+		r.task_note("web", "build", "hash deadbeef");
+		r.task_warn("web", "build", "cache lookup failed");
+		assert_eq!(
+			*r.lines.lock().unwrap(),
+			vec![
+				"note: web:build: hash deadbeef".to_string(),
+				"warn: web:build: cache lookup failed".to_string(),
+			]
+		);
 	}
 
 	fn _assert_send_sync<T: Send + Sync>() {}
@@ -894,29 +1045,29 @@ mod tests {
 
 	#[test]
 	fn theme_override_wins_over_colorfgbg() {
-		assert_eq!(theme_from_env(Some("light"), Some("15;0")), Theme::Light);
-		assert_eq!(theme_from_env(Some("dark"), Some("0;15")), Theme::Dark);
+		assert_eq!(resolve_theme(Some("light"), Some("15;0")), Theme::Light);
+		assert_eq!(resolve_theme(Some("dark"), Some("0;15")), Theme::Dark);
 		// Case-insensitive and whitespace-tolerant.
-		assert_eq!(theme_from_env(Some(" LIGHT "), None), Theme::Light);
+		assert_eq!(resolve_theme(Some(" LIGHT "), None), Theme::Light);
 	}
 
 	#[test]
 	fn theme_reads_colorfgbg_background_field() {
 		// Trailing field is the background: 15/7 → light, else dark.
-		assert_eq!(theme_from_env(None, Some("0;15")), Theme::Light);
-		assert_eq!(theme_from_env(None, Some("0;7")), Theme::Light);
-		assert_eq!(theme_from_env(None, Some("15;0")), Theme::Dark);
+		assert_eq!(resolve_theme(None, Some("0;15")), Theme::Light);
+		assert_eq!(resolve_theme(None, Some("0;7")), Theme::Light);
+		assert_eq!(resolve_theme(None, Some("15;0")), Theme::Dark);
 		// The three-field "fg;default;bg" form still reads the last field.
-		assert_eq!(theme_from_env(None, Some("15;default;0")), Theme::Dark);
-		assert_eq!(theme_from_env(None, Some("0;default;15")), Theme::Light);
+		assert_eq!(resolve_theme(None, Some("15;default;0")), Theme::Dark);
+		assert_eq!(resolve_theme(None, Some("0;default;15")), Theme::Light);
 	}
 
 	#[test]
 	fn theme_defaults_to_dark_without_signal() {
-		assert_eq!(theme_from_env(None, None), Theme::Dark);
+		assert_eq!(resolve_theme(None, None), Theme::Dark);
 		// Unparseable / bogus values fall through to the dark default.
-		assert_eq!(theme_from_env(Some("teal"), None), Theme::Dark);
-		assert_eq!(theme_from_env(None, Some("nonsense")), Theme::Dark);
+		assert_eq!(resolve_theme(Some("teal"), None), Theme::Dark);
+		assert_eq!(resolve_theme(None, Some("nonsense")), Theme::Dark);
 	}
 
 	#[test]
@@ -1014,9 +1165,80 @@ mod tests {
 	}
 
 	#[test]
+	fn label_palette_is_evenly_weighted() {
+		// One hue step apart at a fixed saturation and lightness: every entry
+		// spans the same distance between its brightest and dimmest channel, so
+		// no label reads as louder than another.
+		for c in LABEL_PALETTE {
+			let (max, min) = (c.0.max(c.1).max(c.2), c.0.min(c.1).min(c.2));
+			assert_eq!(max - min, 142, "{c:?} is off the ramp");
+		}
+		// Nothing in the palette is the red a `FAILED` marker uses.
+		for c in LABEL_PALETTE {
+			assert!(
+				!(c.0 > 0xC0 && c.1 < 0x60 && c.2 < 0x60),
+				"{c:?} reads as red"
+			);
+		}
+	}
+
+	#[test]
+	fn labels_get_distinct_colors_until_the_palette_wraps() {
+		let colors = LabelColors::new();
+		let assigned: Vec<_> = (0..LABEL_PALETTE.len())
+			.map(|i| colors.color(&format!("ws{i}"), "build"))
+			.collect();
+		let mut unique = assigned.clone();
+		unique.sort();
+		unique.dedup();
+		assert_eq!(unique.len(), LABEL_PALETTE.len());
+		// The ninth label wraps back to the first color.
+		assert_eq!(colors.color("ws8", "build"), assigned[0]);
+	}
+
+	#[test]
+	fn a_label_keeps_its_color_for_the_whole_run() {
+		let colors = LabelColors::new();
+		let first = colors.color("web", "build");
+		let _ = colors.color("api", "build");
+		assert_eq!(colors.color("web", "build"), first);
+	}
+
+	#[test]
+	fn changing_either_the_scope_or_the_task_changes_the_color() {
+		let colors = LabelColors::new();
+		let web_build = colors.color("web", "build");
+		let web_test = colors.color("web", "test");
+		let api_build = colors.color("api", "build");
+		assert_ne!(web_build, web_test);
+		assert_ne!(web_build, api_build);
+		assert_ne!(web_test, api_build);
+	}
+
+	#[test]
+	fn label_prints_bare_when_color_is_off() {
+		// Tests run without a TTY, so a piped or CI run gets exactly the text it
+		// got before labels were colored.
+		let colors = LabelColors::new();
+		assert_eq!(colors.paint("web", "build"), "web:build");
+		assert!(!colors.paint("web", "build").contains('\u{1b}'));
+	}
+
+	#[test]
+	fn label_escapes_wrap_the_label_once() {
+		let (r, g, b) = LABEL_PALETTE[0];
+		assert_eq!(
+			label_escapes("web:build", LABEL_PALETTE[0]),
+			format!("\u{1b}[38;2;{r};{g};{b}mweb:build\u{1b}[39m")
+		);
+	}
+
+	#[test]
 	fn splash_contains_wordmark_and_version() {
-		let s = splash("9.9.9");
-		assert!(s.contains("lattice"));
-		assert!(s.contains("9.9.9"));
+		for theme in [Theme::Light, Theme::Dark] {
+			let s = splash("9.9.9", theme);
+			assert!(s.contains("lattice"));
+			assert!(s.contains("9.9.9"));
+		}
 	}
 }

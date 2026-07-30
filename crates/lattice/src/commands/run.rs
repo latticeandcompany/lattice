@@ -6,7 +6,7 @@ use dagger::{
 	build_execution_graph_multi, dry_run_order, includes_persistent_task, ExecutionGraph,
 };
 use lattice_config::find_root;
-use lattice_output::{banner_line, make_reporter, paint_teal, OutputMode};
+use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, OutputMode};
 use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure};
 use lattice_workspace::discover_workspaces;
 
@@ -101,6 +101,9 @@ impl RunArgs {
 				mode = OutputMode::Raw;
 			}
 		}
+
+		// The mode is final here, and nothing has printed yet.
+		apply_color_policy(mode);
 
 		let mut workspaces = discover_workspaces(&root, &config)?;
 

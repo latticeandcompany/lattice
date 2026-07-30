@@ -7,24 +7,34 @@ order: 4
 
 # Environment variables
 
-Lattice reads a small set of environment variables to decide its own
-behavior, and sets a small set of its own in the environment of the commands
-it spawns. This page is the exhaustive list of both, plus how a task's
-declared `env` names turn into resolved values and a cache-key input.
+Almost everything Lattice reads from the environment is also a flag. Prefer the
+flag: it scopes to the invocation you typed it on, and it wins where both are
+given. The variables are still read, so an exported value in a CI job keeps
+working.
+
+Lattice also sets a small set of its own in the environment of the commands it
+spawns. This page is the exhaustive list of both, plus how a task's declared
+`env` names turn into resolved values and a cache-key input.
 
 ## What Lattice reads
 
-| Variable | What it does | Counts as set when |
-| --- | --- | --- |
-| `CI` | Forces [`Raw` output](/lattice/docs/output-modes) instead of the interactive TUI, the same as `-l`/`--loquacious`. | Present, any value, including empty |
-| `NO_COLOR` | Disables ANSI color in output. Nothing in `lattice.json` or on the CLI turns color back on once this is set. | Present, any value, including empty |
-| `LATTICE_NO_VERSION_CHECK` | Suppresses both the version-drift nag and the automatic switch-over to a pinned `latticeVersion`. Equivalent to `--no-version-check` for this invocation or `settings.versionCheck: false` for the whole repo — see [Upgrading](/lattice/docs/upgrading) for how the three interact. | Present, any value, including empty |
-| `LATTICE_SWITCHED_FROM` | Internal. Set by Lattice on the process it hands an invocation to after a version switch, so that process doesn't try to switch again. Not meant to be set by hand. | Present, any value |
-| `LATTICE_THEME` | `light` or `dark` (case-insensitive), forces the teal shade used in the splash/logo art. Any other value is ignored. | Recognized value present |
-| `COLORFGBG` | Consulted for the splash theme only when `LATTICE_THEME` is unset. Read as `fg;bg` (or `fg;...;bg`); a trailing `7` or `15` is treated as a light background, anything else as dark. | `LATTICE_THEME` unset and this parses |
-| `LATTICE_RELEASE_BASE_URL` | Overrides the base URL `lattice upgrade` and the automatic version switch download release archives from. A `file://` base makes the install path testable without a network. | Present and not empty/whitespace-only |
-| `LATTICE_RELEASE_LATEST_URL` | Overrides the endpoint used to resolve `lattice upgrade latest`'s newest *stable* release. | Present and not empty/whitespace-only |
-| `LATTICE_RELEASE_LIST_URL` | Overrides the endpoint used as a fallback when the latest-stable endpoint has nothing to name (every release so far is a pre-release). | Present and not empty/whitespace-only |
+| Variable | Flag to prefer | What it does | Counts as set when |
+| --- | --- | --- | --- |
+| `CI` | `-l`/`--loquacious` | Forces [`Raw` output](/lattice/docs/output-modes) instead of the interactive TUI. | Present, any value, including empty |
+| `NO_COLOR` | — | Disables ANSI color in output. Nothing in `lattice.json` or on the CLI turns color back on once this is set. | Present, any value, including empty |
+| `LATTICE_NO_VERSION_CHECK` | `--no-version-check` | Suppresses both the version-drift nag and the automatic switch-over to a pinned `latticeVersion`. `settings.versionCheck: false` does the same for the whole repo — see [Upgrading](/lattice/docs/upgrading) for how the three interact. | Present, any value, including empty |
+| `LATTICE_SWITCHED_FROM` | — | Internal. Set by Lattice on the process it hands an invocation to after a version switch, so that process doesn't try to switch again. Not meant to be set by hand. | Present, any value |
+| `LATTICE_THEME` | `--theme` | `light` or `dark` (case-insensitive), forces the teal shade used in the splash/logo art. Any other value is ignored. | Recognized value present |
+| `COLORFGBG` | `--theme` | Consulted for the splash theme only when neither `--theme` nor `LATTICE_THEME` is set. Read as `fg;bg` (or `fg;...;bg`); a trailing `7` or `15` is treated as a light background, anything else as dark. | Neither of those set and this parses |
+| `LATTICE_RELEASE_BASE_URL` | `--release-base-url` | The base URL `lattice upgrade` and the automatic version switch download release archives from. A `file://` base makes the install path work without a network. | Present and not empty/whitespace-only |
+| `LATTICE_RELEASE_LATEST_URL` | `--release-latest-url` | The endpoint used to resolve `lattice upgrade latest`'s newest *stable* release. | Present and not empty/whitespace-only |
+| `LATTICE_RELEASE_LIST_URL` | `--release-list-url` | The endpoint used as a fallback when the latest-stable endpoint has nothing to name (every release so far is a pre-release). | Present and not empty/whitespace-only |
+
+`--theme` and `--release-base-url` are global: they parse on `lattice` itself
+and on every subcommand, before or after the subcommand name.
+`--release-latest-url` and `--release-list-url` live on `lattice upgrade`,
+because resolving `latest` is the only thing that asks those endpoints
+anything.
 
 Two things worth noting about that "counts as set" column. `CI`,
 `NO_COLOR`, `LATTICE_NO_VERSION_CHECK`, and `LATTICE_SWITCHED_FROM` are all
@@ -32,7 +42,22 @@ checked with presence alone — `CI=` (empty string) counts exactly the same as
 `CI=1` or `CI=false`. The three `LATTICE_RELEASE_*_URL` overrides are the one
 exception: an empty or whitespace-only value is treated as unset and falls
 back to the default, so `LATTICE_RELEASE_BASE_URL=` in an inherited
-environment doesn't silently break the default download path.
+environment doesn't silently break the default download path. The same is true
+of a blank value passed to the matching flag.
+
+## The two that stay variables
+
+`LATTICE_SWITCHED_FROM` has no flag, and that is deliberate. It is how the
+process handling a version switch tells the process it hands the invocation to
+not to switch again. That second process is a *different build* of Lattice, and
+one older than the flag would reject it as unrecognized and fail the handover.
+An environment variable is simply ignored by a build that does not read it.
+
+The same reasoning gives the release URL variables one job the flags can't
+do. The handover passes your whole command line through to the pinned build, so
+if a repo pins a version older than these flags, `--release-base-url` reaches
+that older binary as a parse error. Exporting `LATTICE_RELEASE_BASE_URL`
+instead works across every version.
 
 `CI` and `-l`/`--loquacious` are independent triggers for the same `Raw`
 mode — neither overrides the other, and there's no way to force interactive
@@ -52,7 +77,7 @@ Lattice explicitly sets:
 | --- | --- | --- |
 | `PATH` | The resolved toolchain bin directories for that task, in order, prepended ahead of the inherited `PATH`. | Every task with a provisioned engine, and every `lattice setup` install command |
 | Each name listed in a task's `env` | The value read from Lattice's own environment at the moment the cache key was computed. | Every task that declares `env` |
-| `LATTICE_TOOLCHAIN_DIR` | Absolute path to the toolchain's install directory, both as an env var and literal-substituted into the `installCmd` string itself. | Only while running an engine's `installCmd`, never for the task command that follows |
+| `LATTICE_TOOLCHAIN_DIR` | Absolute path to the toolchain's install directory, both as an env var and literal-substituted into the `installCmd` string itself. This one has no flag equivalent and never will: it is something Lattice hands *to* your `installCmd`, not something you tell Lattice. | Only while running an engine's `installCmd`, never for the task command that follows |
 
 `PATH` is scoped to that one child process — it never touches the shell
 Lattice itself is running in. See [Engines and provisioning](/lattice/docs/engines)

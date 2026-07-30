@@ -196,11 +196,21 @@ commit the change and everyone on the repo moves together.
 | --- | --- |
 | `<VERSION>` | Version to move to (e.g. `0.2.0`), or `latest` for the newest release. Required. |
 
-Plus the [global flags](#global-flags) below (`upgrade` has no flags of its own).
+**Flags**
+
+| Flag | Argument | Default | Description |
+| --- | --- | --- | --- |
+| `--release-latest-url` | `<URL>` | GitHub API | Endpoint that names the newest stable release, for `upgrade latest` |
+| `--release-list-url` | `<URL>` | GitHub API | Endpoint listing every release, used when no release is stable yet |
+
+Both are consulted only by `upgrade latest`; `upgrade 0.2.0` asks neither of
+them anything. The archive itself comes from the global
+`--release-base-url`. Plus the [global flags](#global-flags) below.
 
 ```sh
 lattice upgrade 0.2.0
 lattice upgrade latest
+lattice --release-base-url file:///srv/lattice-mirror upgrade 0.2.0
 ```
 
 If the binary running `upgrade` is not the version it just pinned, it prints
@@ -257,14 +267,24 @@ lattice version --json
 
 ## Global flags
 
-These three are declared `global = true` in clap, so they parse on `lattice`
-itself and on every subcommand — put them before or after the subcommand name.
+These are declared `global = true` in clap, so they parse on `lattice` itself
+and on every subcommand — put them before or after the subcommand name.
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--loquacious` | `-l` | — | off | Stream the plain line-by-line log instead of the interactive UI |
 | `--verbose` | `-v` | — | off | Hidden alias for `--loquacious` |
 | `--no-version-check` | — | — | off | Run this binary even when the repo pins another version |
+| `--theme` | — | `light` \| `dark` | detected | Tune the splash art's teal shade for a light or dark terminal |
+| `--release-base-url` | — | `<URL>` | GitHub releases | Base URL to download release archives from. A `file://` base works offline |
+
+`--theme` takes `light` or `dark` and nothing else; a third value is a parse
+error rather than a silent fall-back to detection. With no flag, Lattice reads
+`LATTICE_THEME`, then the terminal's own `COLORFGBG`.
+
+`--release-base-url` is global rather than an `upgrade` flag because `upgrade`
+is not the only thing that downloads: an invocation in a repo pinning a version
+that isn't installed fetches it too, under whatever command you typed.
 
 `--verbose`/`-v` does not appear in `--help` output — it is a hidden alias,
 kept for muscle memory, that sets exactly the same flag as `--loquacious`.
@@ -280,8 +300,8 @@ version output.
 Wherever a setting can come from more than one place, Lattice resolves it in
 this order, highest first:
 
-1. **CLI flag** — e.g. `-l`, `--no-version-check`
-2. **Environment variable** — e.g. `LATTICE_NO_VERSION_CHECK`
+1. **CLI flag** — e.g. `-l`, `--no-version-check`, `--theme`, `--release-base-url`
+2. **Environment variable** — e.g. `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL`
 3. **`settings` in `lattice.json`** — e.g. `settings.loquacious`, `settings.versionCheck`
 4. **Built-in default**
 

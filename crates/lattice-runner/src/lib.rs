@@ -153,9 +153,18 @@ enum RunnerMsg {
 		task: String,
 		captured: Vec<(bool, String)>,
 	},
-	Warn(String),
-	/// A loquacious-only trace line (hashing / cache decisions).
-	Note(String),
+	/// A warning about one task, label kept separate so the reporter can color it.
+	TaskWarn {
+		workspace: String,
+		task: String,
+		msg: String,
+	},
+	/// A loquacious-only trace line about one task, labeled the same way.
+	TaskNote {
+		workspace: String,
+		task: String,
+		msg: String,
+	},
 }
 
 enum TaskOutcome {
@@ -180,8 +189,16 @@ fn forward(reporter: &dyn Reporter, msg: RunnerMsg) {
 			task,
 			captured,
 		} => reporter.surface_failure(&workspace, &task, &captured),
-		RunnerMsg::Warn(m) => reporter.warn(&m),
-		RunnerMsg::Note(m) => reporter.note(&m),
+		RunnerMsg::TaskWarn {
+			workspace,
+			task,
+			msg,
+		} => reporter.task_warn(&workspace, &task, &msg),
+		RunnerMsg::TaskNote {
+			workspace,
+			task,
+			msg,
+		} => reporter.task_note(&workspace, &task, &msg),
 	}
 }
 
@@ -536,10 +553,11 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 	};
 
 	// Loquacious trace: the computed cache identity for this task.
-	let _ = ctx.tx.send(RunnerMsg::Note(format!(
-		"{ws}:{task}: hash {}",
-		&key[..key.len().min(16)]
-	)));
+	let _ = ctx.tx.send(RunnerMsg::TaskNote {
+		workspace: ws.clone(),
+		task: task.clone(),
+		msg: format!("hash {}", &key[..key.len().min(16)]),
+	});
 
 	if !ctx.no_cache && pt.is_cacheable() {
 		match ctx.store.lookup(&key) {
@@ -557,22 +575,28 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 						return TaskOutcome::Cached;
 					}
 					Err(e) => {
-						let _ = ctx.tx.send(RunnerMsg::Warn(format!(
-							"{ws}:{task}: failed to restore cached outputs: {e}"
-						)));
+						let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+							workspace: ws.clone(),
+							task: task.clone(),
+							msg: format!("failed to restore cached outputs: {e}"),
+						});
 						// Fall through and re-run.
 					}
 				}
 			}
 			Ok(None) => {
-				let _ = ctx
-					.tx
-					.send(RunnerMsg::Note(format!("{ws}:{task}: cache miss")));
+				let _ = ctx.tx.send(RunnerMsg::TaskNote {
+					workspace: ws.clone(),
+					task: task.clone(),
+					msg: "cache miss".to_string(),
+				});
 			}
 			Err(e) => {
-				let _ = ctx.tx.send(RunnerMsg::Warn(format!(
-					"{ws}:{task}: cache lookup failed: {e}"
-				)));
+				let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+					workspace: ws.clone(),
+					task: task.clone(),
+					msg: format!("cache lookup failed: {e}"),
+				});
 			}
 		}
 	}
@@ -676,9 +700,11 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 				pt.outputs.as_deref().unwrap_or(&[]),
 				meta,
 			) {
-				let _ = ctx.tx.send(RunnerMsg::Warn(format!(
-					"{ws}:{task}: failed to cache outputs: {e}"
-				)));
+				let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+					workspace: ws.clone(),
+					task: task.clone(),
+					msg: format!("failed to cache outputs: {e}"),
+				});
 			}
 		}
 		let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::Finished {

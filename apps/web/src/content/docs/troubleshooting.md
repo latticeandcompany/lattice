@@ -213,9 +213,12 @@ output into another tool or a CI log viewer.
 
 ### Colored output shows up somewhere it shouldn't
 
-Color is only ever emitted in `Interactive` mode, and only when `NO_COLOR`
-is unset. Set `NO_COLOR=1` (any value) to suppress it without changing the
-output mode itself.
+Color is emitted only when stdout is a real terminal — that holds in both
+modes, so an `-l` run at your shell has colored `workspace:task` labels while
+the same run piped or redirected has none. Set `NO_COLOR=1` (any value) to
+suppress it everywhere without changing the output mode itself. If you are
+seeing escapes in something that isn't a terminal, whatever is running
+Lattice is presenting itself as one.
 
 ## Running
 

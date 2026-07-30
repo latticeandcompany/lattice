@@ -7,7 +7,7 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use serde_json::{json, Map, Value};
 
-use lattice_output::{logo, teal};
+use lattice_output::{logo_for, teal, Theme};
 
 use crate::cli::BIN_VERSION;
 use crate::schema::SCHEMA_JSON;
@@ -33,7 +33,7 @@ pub struct InitArgs {
 }
 
 impl InitArgs {
-	pub async fn execute(&self) -> Result<()> {
+	pub async fn execute(&self, theme: Theme) -> Result<()> {
 		let cwd = std::env::current_dir()?;
 		let config_path = cwd.join("lattice.json");
 		if config_path.exists() && !self.force {
@@ -47,7 +47,7 @@ impl InitArgs {
 		// Lead an interactive init with the branded mark; skip it for pipes/CI
 		// so scripted `init --yes` output stays clean.
 		if tty {
-			println!("{}", logo());
+			println!("{}", logo_for(theme));
 			println!();
 		}
 

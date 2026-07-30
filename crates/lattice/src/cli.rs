@@ -1,13 +1,14 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use lattice_config::LatticeConfig;
-use lattice_output::OutputMode;
+use lattice_output::{OutputMode, Theme};
 
 use crate::commands::{
 	completions::CompletionsArgs, init::InitArgs, prune::PruneArgs, run::RunArgs, setup::SetupArgs,
 	upgrade::UpgradeArgs, version::VersionArgs,
 };
+use crate::release::ReleaseUrls;
 
 /// The compiled-in binary version.
 pub const BIN_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -37,8 +38,31 @@ pub struct Cli {
 	#[arg(long, global = true)]
 	pub no_version_check: bool,
 
+	/// Tune the splash art's teal shade for a light or dark terminal.
+	#[arg(long, global = true, value_name = "THEME")]
+	pub theme: Option<ThemeArg>,
+
+	/// Base URL to download release archives from. A `file://` base works offline.
+	#[arg(long, global = true, value_name = "URL")]
+	pub release_base_url: Option<String>,
+
 	#[command(subcommand)]
 	pub command: Option<Commands>,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeArg {
+	Light,
+	Dark,
+}
+
+impl From<ThemeArg> for Theme {
+	fn from(arg: ThemeArg) -> Self {
+		match arg {
+			ThemeArg::Light => Theme::Light,
+			ThemeArg::Dark => Theme::Dark,
+		}
+	}
 }
 
 #[derive(Subcommand, Debug)]
@@ -86,28 +110,41 @@ impl Cli {
 		)
 	}
 
+	/// The theme for this invocation: `--theme` if given, else the environment.
+	pub fn effective_theme(&self) -> Theme {
+		self.theme
+			.map(Theme::from)
+			.unwrap_or_else(lattice_output::detect_theme)
+	}
+
 	pub async fn execute(self) -> Result<()> {
 		let flag_loq = self.flag_loquacious();
 		let no_version_check = self.no_version_check;
+		let theme = self.effective_theme();
+		let base_url = self.release_base_url.clone();
 
 		if !self.skips_pin_handover() {
 			if let Some(root) = crate::drift::repo_root() {
-				crate::drift::honor_pin(&root, no_version_check)?;
+				let urls = ReleaseUrls {
+					base: base_url.clone(),
+					..ReleaseUrls::default()
+				};
+				crate::drift::honor_pin(&root, no_version_check, &urls)?;
 			}
 		}
 
 		match self.command {
 			Some(Commands::Run(args)) => args.execute(flag_loq, no_version_check).await,
 			Some(Commands::Setup(args)) => args.execute(flag_loq, no_version_check).await,
-			Some(Commands::Init(args)) => args.execute().await,
+			Some(Commands::Init(args)) => args.execute(theme).await,
 			Some(Commands::Prune(args)) => args.execute().await,
-			Some(Commands::Upgrade(args)) => args.execute().await,
+			Some(Commands::Upgrade(args)) => args.execute(base_url.as_deref()).await,
 			Some(Commands::Completions(args)) => args.execute(),
-			Some(Commands::Version(args)) => args.execute().await,
+			Some(Commands::Version(args)) => args.execute(theme).await,
 			// Bare `lattice`: show the branded splash and point at `--help`
 			// instead of clap's terse "missing subcommand" error.
 			None => {
-				println!("{}", lattice_output::splash(BIN_VERSION));
+				println!("{}", lattice_output::splash(BIN_VERSION, theme));
 				println!();
 				println!(
 					"Run {} to see available commands.",
@@ -192,6 +229,45 @@ mod tests {
 		assert!(effective_loquacious(false, true));
 		assert!(effective_loquacious(true, true));
 		assert!(!effective_loquacious(false, false));
+	}
+
+	/// Parsed from argv rather than constructed, so the flag's spelling and its
+	/// reach past a subcommand are part of what this pins down.
+	#[test]
+	fn the_theme_flag_wins_over_detection() {
+		let cli = Cli::try_parse_from(["lattice", "version", "--theme", "light"]).unwrap();
+		assert_eq!(cli.effective_theme(), Theme::Light);
+		let cli = Cli::try_parse_from(["lattice", "--theme", "dark", "version"]).unwrap();
+		assert_eq!(cli.effective_theme(), Theme::Dark);
+	}
+
+	#[test]
+	fn theme_rejects_a_shade_it_does_not_have() {
+		assert!(Cli::try_parse_from(["lattice", "--theme", "teal"]).is_err());
+	}
+
+	#[test]
+	fn the_release_base_url_flag_reaches_every_subcommand() {
+		// It has to: the handover that downloads a pinned version can happen under
+		// any command, not just `upgrade`.
+		for argv in [
+			vec!["lattice", "run", "build", "--release-base-url", "file:///r"],
+			vec!["lattice", "--release-base-url", "file:///r", "setup"],
+			vec![
+				"lattice",
+				"upgrade",
+				"latest",
+				"--release-base-url",
+				"file:///r",
+			],
+		] {
+			let cli = Cli::try_parse_from(&argv).unwrap();
+			assert_eq!(
+				cli.release_base_url.as_deref(),
+				Some("file:///r"),
+				"{argv:?}"
+			);
+		}
 	}
 
 	#[test]

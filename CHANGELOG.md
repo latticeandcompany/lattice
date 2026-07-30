@@ -10,6 +10,50 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### Flags for what used to be environment variables — 2026-07-29
+
+- `--theme light|dark` replaces `LATTICE_THEME`, and picks the teal shade of the
+  splash art. A value that is neither is now a parse error listing the two that
+  work, rather than a silently ignored string. It is global, so it parses on
+  `lattice` itself and on every subcommand
+- `--release-base-url <URL>` replaces `LATTICE_RELEASE_BASE_URL`. Also global,
+  because `upgrade` is not the only thing that downloads — an invocation in a
+  repo pinning a version that is not installed fetches it under whatever command
+  you typed
+- `--release-latest-url <URL>` and `--release-list-url <URL>` replace
+  `LATTICE_RELEASE_LATEST_URL` and `LATTICE_RELEASE_LIST_URL`. These sit on
+  `lattice upgrade`, the only command that resolves `latest`
+- Every one of those variables still works. The flag wins where both are given,
+  and a blank value at either step falls through to the default rather than
+  building an empty URL
+- `LATTICE_SWITCHED_FROM` stays a variable on purpose. It is read by the process
+  a version switch hands the invocation to, and that process is a different
+  build of Lattice — an older one would reject a flag it has never heard of and
+  fail the handover. For the same reason, a repo pinning a version older than
+  these flags should keep exporting `LATTICE_RELEASE_BASE_URL`: the handover
+  passes the whole command line through, so a flag the pinned build does not
+  know reaches it as an error
+- `LATTICE_TOOLCHAIN_DIR` is unchanged and gets no flag. It is what Lattice hands
+  to an engine's `installCmd`, not something you tell Lattice
+
+### One color per task in the plain stream — 2026-07-29
+
+- The `workspace:task` label leading every line of the plain stream is now
+  colored, one color per task, so the interleaved output of a parallel run can be
+  followed by eye. `web:build`, `web:test`, and `api:build` are three different
+  colors; the eight in the palette are one hue step apart at a fixed saturation,
+  and none of them reads as the red a `FAILED` marker uses
+- Colors are handed out in the order labels are first seen, so the first eight
+  distinct labels in a run never share one. Because tasks start in parallel, which
+  color a task gets can differ between runs — within a run it never changes
+- The loquacious trace lines carry the same colored label, so `lattice:
+  web:build: hash …` and `web:build:`'s own output read as one stream
+- Whether color is emitted now depends on stdout being a real terminal rather than
+  on which mode you got. `-l` at a shell colors labels; the same run piped,
+  redirected, or under `CI` emits no escapes at all and is byte-for-byte what it
+  printed before. `NO_COLOR` still suppresses everything
+- Nothing but the label is styled, and `FAILED` is still the word `FAILED`
+
 ### A run that executes nothing says so — 2026-07-29
 
 - When every task in a run comes back from cache, the summary is followed by

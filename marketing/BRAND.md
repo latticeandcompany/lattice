@@ -129,6 +129,24 @@ Every surface should budget color roughly this way:
 If the accent creeps past ~5 % of a view, pull it back. Restraint reads as
 confidence.
 
+### Terminal label colors — the one exception
+
+`lattice run`'s plain stream colors the `workspace:task` label at the head of
+each line, one color per task, from a palette of eight hues one 45° step apart
+around the wheel (`LABEL_PALETTE` in `crates/lattice-output`). Those hues are
+not brand colors and are not accents.
+
+This is the only surface where color is a functional index rather than an
+accent. A parallel run interleaves lines from every task at once, and the color
+is the only thing that lets a reader follow one of them — there is no layout to
+do it with. Reusing teal would mean every label the same color, which indexes
+nothing; spending crimson and orange here would burn two reserved product
+accents on a log.
+
+It does not license a second palette anywhere else. Interactive mode, the site,
+the docs, and every other surface stay on §2 as written, and even here the rest
+of the line is unstyled: nothing but the label takes a color.
+
 ### Accessibility
 
 - Body text must clear **WCAG AA** (4.5:1). `--ink` on `--paper` passes with

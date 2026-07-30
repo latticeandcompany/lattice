@@ -8,7 +8,7 @@ use lattice_config::find_root;
 use lattice_output::banner_line;
 
 use crate::cli::BIN_VERSION;
-use crate::release;
+use crate::release::{self, ReleaseUrls};
 
 #[derive(Args, Debug)]
 #[command(long_about = "Move this repo to another version of Lattice.\n\n\
@@ -22,10 +22,23 @@ pub struct UpgradeArgs {
 	/// Version to move to (e.g. 0.2.0), or `latest` for the newest release.
 	#[arg(value_name = "VERSION")]
 	pub version: String,
+
+	/// Endpoint that names the newest stable release, for `upgrade latest`.
+	#[arg(long, value_name = "URL")]
+	pub release_latest_url: Option<String>,
+
+	/// Endpoint listing every release, used when no release is stable yet.
+	#[arg(long, value_name = "URL")]
+	pub release_list_url: Option<String>,
 }
 
 impl UpgradeArgs {
-	pub async fn execute(&self) -> Result<()> {
+	pub async fn execute(&self, release_base_url: Option<&str>) -> Result<()> {
+		let urls = ReleaseUrls {
+			base: release_base_url.map(str::to_string),
+			latest: self.release_latest_url.clone(),
+			list: self.release_list_url.clone(),
+		};
 		let cwd = std::env::current_dir()?;
 		let root = find_root(&cwd).ok_or_else(|| {
 			anyhow::anyhow!(
@@ -42,7 +55,7 @@ impl UpgradeArgs {
 		let target = if self.version.eq_ignore_ascii_case("latest") {
 			println!("{}", banner_line("upgrade"));
 			println!("  resolving the newest release ...");
-			let latest = release::resolve_latest()?;
+			let latest = release::resolve_latest(&urls)?;
 			if latest.prerelease {
 				println!(
 					"  {} is a pre-release — no stable release yet",
@@ -65,7 +78,7 @@ impl UpgradeArgs {
 			return Ok(());
 		}
 
-		release::ensure_installed(&root, &target, &mut |line| println!("  {line}"))?;
+		release::ensure_installed(&root, &target, &urls, &mut |line| println!("  {line}"))?;
 		release::link_stable(&root, &target)?;
 
 		if !already_pinned {

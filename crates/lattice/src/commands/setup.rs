@@ -7,7 +7,7 @@ use console::style;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use lattice_config::{find_root, resolve_engines, LOCKFILES};
-use lattice_output::{banner_line, make_reporter, paint_teal, ROSETTE};
+use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, ROSETTE};
 use lattice_workspace::toolchain;
 use lattice_workspace::{discover_workspaces, Workspace};
 
@@ -43,6 +43,7 @@ impl SetupArgs {
 		let config = lattice_config::load_config(&root)?;
 		let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
 		let mode = detect_output_mode(effective_loq);
+		apply_color_policy(mode);
 		let reporter = make_reporter(mode, effective_loq);
 
 		maybe_emit_version_nag(mode, &config, no_version_check);

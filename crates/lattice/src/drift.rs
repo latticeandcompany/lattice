@@ -18,10 +18,14 @@ use std::process::Command;
 use anyhow::{Context, Result};
 
 use crate::cli::BIN_VERSION;
-use crate::release;
+use crate::release::{self, ReleaseUrls};
 
 /// Set on the binary being handed to, naming the version it was chosen for. Its
 /// presence stops a second hop.
+///
+/// This one stays an environment variable rather than becoming a flag: the
+/// process being handed to is a *different* build of Lattice, and one older than
+/// the flag would reject it outright. The environment crosses that gap.
 const SWITCH_ENV: &str = "LATTICE_SWITCHED_FROM";
 
 /// What this invocation should do about the pin.
@@ -98,7 +102,7 @@ fn is_managed(root: &Path, exe: &Path) -> bool {
 
 /// Run the pinned version instead of this one when the repo asks for a different
 /// one. Returns only when this binary should carry on.
-pub fn honor_pin(root: &Path, no_version_check_flag: bool) -> Result<()> {
+pub fn honor_pin(root: &Path, no_version_check_flag: bool, urls: &ReleaseUrls) -> Result<()> {
 	let text = match std::fs::read_to_string(root.join("lattice.json")) {
 		Ok(text) => text,
 		Err(_) => return Ok(()),
@@ -124,7 +128,7 @@ pub fn honor_pin(root: &Path, no_version_check_flag: bool) -> Result<()> {
 		"{}",
 		lattice_output::switching_notice(BIN_VERSION, &version)
 	);
-	let pinned = release::ensure_installed(root, &version, &mut |line| eprintln!("  {line}"))
+	let pinned = release::ensure_installed(root, &version, urls, &mut |line| eprintln!("  {line}"))
 		.with_context(|| {
 			format!(
 				"this repo pins lattice {version}, which is not installed and could not be \

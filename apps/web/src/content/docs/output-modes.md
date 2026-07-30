@@ -117,14 +117,14 @@ only for what went wrong.
 
 The header line, the rule under it, the spinners, and the closing summary are
 all built with `indicatif::MultiProgress` in `InteractiveReporter`
-(`crates/lattice-output/src/lib.rs:419`); nothing in this mode is meant to be
+(`crates/lattice-output/src/lib.rs:613`); nothing in this mode is meant to be
 piped or grepped; it repaints in place and leaves only the settled lines and
 the summary behind once the run ends.
 
 ## Raw / CI mode
 
 Off a terminal, under `CI`, or with `-l`, the same run prints one line per
-event, in the order events arrive, with no cursor movement and no color:
+event, in the order events arrive, with no cursor movement:
 
 ```text
 $ lattice run check | cat
@@ -148,8 +148,8 @@ lattice: 7 tasks, 0 cached, 0 failed, 8.41s
 A cache hit prints `workspace:task: cache hit [<key>]` in place of `done`; a
 skipped task prints `workspace:task: skipped (<reason>)`; a failed one prints
 `workspace:task: FAILED`. This is `CiReporter` in
-`crates/lattice-output/src/lib.rs:311` — every line is
-`println!`/`eprintln!` with no styling, safe to grep or feed to another tool.
+`crates/lattice-output/src/lib.rs:474`. Every line is a `println!`/`eprintln!`
+of the label plus plain text, safe to grep or feed to another tool.
 
 Without `-l`, a task's own output (what its command printed) is collapsed
 here too — you get the `running`/`done` lines but not the command's stdout or
@@ -192,6 +192,34 @@ difference `-l` makes to a piped or CI run is turning on these extra lines.
 line-by-line stream while sitting at an interactive shell — for copying
 output, or watching a dev server's log inline instead of the live display.
 
+### Label colors
+
+On a terminal, the `workspace:task` label at the head of each line is colored,
+and every task in the run gets its own color. That's what the raw stream needs
+most: tasks run in parallel, so their lines interleave, and the color is what
+lets you follow one task down a screen of eight.
+
+Colors come from `LABEL_PALETTE` (`crates/lattice-output/src/lib.rs:126`) —
+eight hues one 45° step apart around the wheel, all at the same saturation and
+lightness so no label shouts louder than its neighbors. The wheel starts at
+25° so nothing in it reads as the red a `FAILED` marker uses.
+
+`LabelColors` (`crates/lattice-output/src/lib.rs:240`) hands them out in the
+order labels are first seen, so the first eight distinct `workspace:task`
+pairs in a run never share a color; a ninth wraps back to the first. Because
+assignment follows first-seen order and tasks start in parallel, which color a
+given task gets can differ between runs. Within one run it never changes.
+
+Both halves of the label count, so `web:build`, `web:test`, and `api:build`
+are three different colors. The trace lines get the same treatment: the
+`web:build` inside `lattice: web:build: hash …` carries that task's color, so
+a task's trace and its output read as one stream.
+
+Nothing else on the line is styled — the message text after the label stays
+your terminal's default, and `FAILED` is still the word `FAILED`, so nothing
+here is conveyed by color alone. Off a terminal the labels print bare and
+every line is byte-for-byte what it was before.
+
 ## Persistent output always streams
 
 A `persistent: true` task's own output streams live the moment it's
@@ -204,23 +232,29 @@ changes about a run beyond its output.
 
 ## Color
 
-Color renders only in interactive mode. `CiReporter` (raw mode) never calls
-into styling at all — its lines are built with plain `format!`, so a piped
-run, a `CI` run, or an `-l` run never emits ANSI escapes regardless of
-terminal capability, and a log file or a CI viewer never has to strip them.
-`InteractiveReporter` styles its output via the `console` crate, which honors
-`NO_COLOR` (any value; see <https://no-color.org/>) automatically: exporting
-it turns color off in an otherwise-interactive session with no other change
-to the mode or the layout. Confirmed by running the same task under a real
-terminal with and without `NO_COLOR=1` — the escape codes disappear, nothing
-else does. `should_enable_color` in `crates/lattice-output/src/lib.rs:41`
-states this as the rule Lattice's output follows: color only for a genuine
-interactive session with `NO_COLOR` unset.
+Color depends on whether stdout is a real terminal, not on which mode you
+got. Both modes color when it is; neither does when it isn't. So an `-l` run
+at your shell has colored labels, and the same run piped into `cat`, into a
+file, or through a CI log emits no escapes at all — nothing downstream has to
+strip them.
+
+`NO_COLOR` (any value; see <https://no-color.org/>) turns color off
+everywhere, in either mode, with no other change to the layout: the escape
+codes disappear and nothing else does. The rule is `should_enable_color` in
+`crates/lattice-output/src/lib.rs`, applied once per run by
+`apply_color_policy` after the mode is final and before anything prints —
+which is why a `persistent: true` task forcing raw mode still keeps its
+color.
+
+What each mode spends color on is different. Interactive mode uses the teal
+accent on the header, the rosette, spinners, and cache hits, plus green
+`✓`/red `✗` on results. Raw mode colors exactly one thing: the
+`workspace:task` label at the head of every line.
 
 ## stdout versus stderr
 
 This is what matters if you're piping a run into something else. In raw
-mode, `CiReporter` (`crates/lattice-output/src/lib.rs:311`) sends:
+mode, `CiReporter` (`crates/lattice-output/src/lib.rs:474`) sends:
 
 - `running`, `cache hit`, `done`, `skipped`, and the final summary line to
   **stdout**
