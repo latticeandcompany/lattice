@@ -274,9 +274,11 @@ there.
 - `lattice run <tasks> --dry-run` — the config parses and the commands are right.
 - `lattice run <tasks> -l` — real run, with each task's hash and cache outcome
   on its own line.
-- Run it a second time. Every task should report a cache hit. If a task misses
-  twice in a row with nothing changed, something in its `inputs` or `env`
-  changes every run.
+- Run it a second time. Every task should report a cache hit, and the run should
+  end with `FULL CACHE` (`lattice: full cache — nothing to run` in plain
+  output) — that line only prints when nothing executed. If a task misses twice
+  in a row with nothing changed, something in its `inputs` or `env` changes
+  every run.
 - `lattice version` — which binary actually ran, which matters when the repo
   pins `latticeVersion`.
 

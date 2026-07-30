@@ -19,6 +19,15 @@ cache miss, because the running version is one of the inputs hashed into every
 task's cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## A run that executes nothing says so — 2026-07-29
+
+A run where every task came back from cache now ends with a `FULL CACHE` line
+under the summary, so "nothing ran" is one thing to look at instead of a count
+to compare against another count. Plain output carries the same line without
+color, greppable in a CI log. See
+[Output and logging](/lattice/docs/output-modes) and
+[Caching](/lattice/docs/caching).
+
 ## The toolchain table, filled in — 2026-07-29
 
 CocoaPods, pip, NuGet, and Kotlin are supported end to end, `deno` and `bun` are

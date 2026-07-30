@@ -30,6 +30,11 @@ the tasks that do exist.
 commands as written — an engine failure only surfaces on a real run or under
 `lattice setup`.
 
+When every task the run scheduled came back from cache, a `FULL CACHE` line
+follows the summary (`lattice: full cache — nothing to run` in plain output).
+It requires at least one task, zero failures, and zero tasks that actually
+executed, so a filter matching nothing does not print it.
+
 ## `lattice setup [OPTIONS] [WORKSPACES]...`
 
 Provisions the toolchains declared under `engines` (root first, so dependency

@@ -367,6 +367,23 @@ late "STRESS_VAR=alpha" "$PROD" run envtask --filter core ; t_ok "envtask (alpha
 late "STRESS_VAR=alpha" "$PROD" run envtask --filter core ; t_has "same env value → cache hit" "cache hit"
 late "STRESS_VAR=beta"  "$PROD" run envtask --filter core ; t_hasnt "changed env value → cache miss" "cache hit"
 
+# Full cache: a run where every scheduled task came back from cache is called
+# out; a partial hit and a run that scheduled nothing are not.
+lat "$PROD" run build ; t_ok "run build (whole repo, prime) exits 0"
+lat "$PROD" run build ; t_ok "run build (whole repo, all cached) exits 0"
+t_has "a fully-cached run is called out" "full cache"
+
+# `docs` depends on nothing, so busting it leaves every other task a hit.
+w "$PROD/docs/src/page.src" "docs page v1
+"
+lat "$PROD" run build ; t_ok "run build after leaf edit exits 0"
+t_has   "the busted leaf re-ran"                "docs:build"
+t_has   "its siblings still hit the cache"      "cache hit"
+t_hasnt "a partial hit is not a full cache"     "full cache"
+lat "$PROD" run build ; t_has "the leaf edit settles back to a full cache" "full cache"
+
+lat "$PROD" run build --filter nonexistent ; t_hasnt "a run that scheduled nothing is not a full cache" "full cache"
+
 # =========================================================================
 # 7. run: PATH injection, concurrency, loquacious, other tasks.
 # =========================================================================

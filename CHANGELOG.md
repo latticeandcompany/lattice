@@ -10,6 +10,16 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### A run that executes nothing says so — 2026-07-29
+
+- When every task in a run comes back from cache, the summary is followed by
+  `❖❖❖ FULL CACHE`, painted across the teal ramp a character at a time. Plain
+  output gets the same signal without color, as `lattice: full cache — nothing
+  to run`, so a CI log can be grepped for it
+- It requires at least one scheduled task, zero failures, and zero tasks that
+  ran, so a filter that matched nothing stays quiet and a graph with a
+  `persistent: true` task never qualifies
+
 ### The toolchain table, filled in — 2026-07-29
 
 - CocoaPods, pip, NuGet, and Kotlin are now fully wired rather than half-known.

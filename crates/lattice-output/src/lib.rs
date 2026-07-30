@@ -47,6 +47,12 @@ pub fn should_enable_color(mode: OutputMode, no_color_set: bool) -> bool {
 pub const TEAL: (u8, u8, u8) = (0x1B, 0x99, 0x8B);
 /// The teal tint (`teal-300`) used for the rosette art fill on dark terminals.
 pub const TEAL_300: (u8, u8, u8) = (0x63, 0xC4, 0xB8);
+/// The teal shade (`teal-700`), the dark end of the accent ramp.
+pub const TEAL_700: (u8, u8, u8) = (0x13, 0x6E, 0x64);
+
+/// The accent ramp, dark to light. The full-cache banner is the only surface
+/// that walks it; everywhere else picks a single shade.
+const TEAL_RAMP: [(u8, u8, u8); 3] = [TEAL_700, TEAL, TEAL_300];
 
 /// Which terminal background the splash art should be tuned for. The mark keeps
 /// its teal identity but swaps shade so it does not wash out: the lighter
@@ -141,6 +147,60 @@ fn paint_rgb(s: &str, (r, g, b): (u8, u8, u8)) -> String {
 	} else {
 		s.to_string()
 	}
+}
+
+/// The color `t` of the way along `stops`, `t` clamped to `0.0..=1.0`. Segments
+/// are equal-width, so a three-stop ramp puts the middle stop exactly at 0.5.
+fn ramp_at(stops: &[(u8, u8, u8)], t: f64) -> (u8, u8, u8) {
+	let t = t.clamp(0.0, 1.0);
+	let last = stops.len() - 1;
+	let scaled = t * last as f64;
+	let i = (scaled.floor() as usize).min(last.saturating_sub(1));
+	let f = scaled - i as f64;
+	let (a, b) = (stops[i], stops[i + 1]);
+	let mix = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * f).round() as u8;
+	(mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
+}
+
+/// Paint `s` along `stops`, one step per character. Whitespace is left
+/// unpainted so the escapes only wrap glyphs that show the color.
+fn paint_gradient(s: &str, stops: &[(u8, u8, u8)]) -> String {
+	if !console::colors_enabled() || stops.len() < 2 {
+		return s.to_string();
+	}
+	gradient_escapes(s, stops)
+}
+
+fn gradient_escapes(s: &str, stops: &[(u8, u8, u8)]) -> String {
+	let n = s.chars().count();
+	let span = (n.saturating_sub(1)).max(1) as f64;
+	let mut out = String::with_capacity(s.len() + n * 20);
+	for (i, ch) in s.chars().enumerate() {
+		if ch.is_whitespace() {
+			out.push(ch);
+			continue;
+		}
+		let (r, g, b) = ramp_at(stops, i as f64 / span);
+		out.push_str(&format!("\u{1b}[38;2;{r};{g};{b}m{ch}"));
+	}
+	out.push_str("\u{1b}[39m");
+	out
+}
+
+/// True when the run executed nothing: every task it scheduled came back from
+/// cache. An empty run (no workspace matched the filter) does not qualify —
+/// there was no work to skip.
+pub fn is_full_cache(total: usize, cached: usize, failed: usize) -> bool {
+	total > 0 && failed == 0 && cached == total
+}
+
+/// The banner printed under the summary when the whole run came from cache,
+/// walking the teal ramp a character at a time.
+pub fn full_cache_banner() -> String {
+	paint_gradient(
+		&format!("{ROSETTE}{ROSETTE}{ROSETTE} FULL CACHE"),
+		&TEAL_RAMP,
+	)
 }
 
 /// The lowercase `lattice` wordmark, bold. The wordmark stays ink/paper; only
@@ -397,6 +457,9 @@ impl Reporter for CiReporter {
 			failed,
 			fmt_secs(elapsed_ms)
 		);
+		if is_full_cache(total, cached, failed) {
+			println!("lattice: full cache — nothing to run");
+		}
 	}
 
 	fn note(&self, msg: &str) {
@@ -594,6 +657,9 @@ impl Reporter for InteractiveReporter {
 			style(fmt_secs(elapsed_ms)).dim()
 		);
 		self.mp.println(line).ok();
+		if is_full_cache(total, cached, failed) {
+			self.mp.println(format!("\n{}", full_cache_banner())).ok();
+		}
 	}
 
 	fn note(&self, msg: &str) {
@@ -860,6 +926,91 @@ mod tests {
 		let dark = logo_for(Theme::Dark);
 		assert_eq!(light.lines().count(), ROSETTE_ART.lines().count());
 		assert_eq!(dark.lines().count(), ROSETTE_ART.lines().count());
+	}
+
+	#[test]
+	fn full_cache_needs_every_task_cached_and_none_failed() {
+		assert!(is_full_cache(6, 6, 0));
+		assert!(is_full_cache(1, 1, 0));
+		// One task actually ran.
+		assert!(!is_full_cache(6, 5, 0));
+		// Everything cached but something still failed.
+		assert!(!is_full_cache(6, 6, 1));
+		// Nothing scheduled: no work was skipped, so nothing to celebrate.
+		assert!(!is_full_cache(0, 0, 0));
+	}
+
+	#[test]
+	fn full_cache_banner_carries_the_phrase() {
+		let b = full_cache_banner();
+		assert!(b.contains("FULL CACHE"));
+		assert_eq!(b.matches(ROSETTE).count(), 3);
+	}
+
+	#[test]
+	fn ramp_hits_each_stop_exactly() {
+		assert_eq!(ramp_at(&TEAL_RAMP, 0.0), TEAL_700);
+		assert_eq!(ramp_at(&TEAL_RAMP, 0.5), TEAL);
+		assert_eq!(ramp_at(&TEAL_RAMP, 1.0), TEAL_300);
+		// Out-of-range t clamps to the ends rather than extrapolating.
+		assert_eq!(ramp_at(&TEAL_RAMP, -1.0), TEAL_700);
+		assert_eq!(ramp_at(&TEAL_RAMP, 2.0), TEAL_300);
+	}
+
+	#[test]
+	fn ramp_interpolates_between_stops() {
+		// Quarter of the way is halfway through the first segment.
+		let (r, g, b) = ramp_at(&TEAL_RAMP, 0.25);
+		assert_eq!(
+			(r, g, b),
+			(
+				(TEAL_700.0 as u16 + TEAL.0 as u16).div_ceil(2) as u8,
+				(TEAL_700.1 as u16 + TEAL.1 as u16).div_ceil(2) as u8,
+				(TEAL_700.2 as u16 + TEAL.2 as u16).div_ceil(2) as u8,
+			)
+		);
+	}
+
+	#[test]
+	fn gradient_emits_no_escapes_when_color_is_off() {
+		// Tests run without a TTY, so `colors_enabled()` is false here and the
+		// banner has to degrade to bare text a log can carry.
+		assert_eq!(paint_gradient("FULL CACHE", &TEAL_RAMP), "FULL CACHE");
+		assert!(!full_cache_banner().contains('\u{1b}'));
+	}
+
+	#[test]
+	fn gradient_walks_the_ramp_end_to_end() {
+		let painted = gradient_escapes("ab", &TEAL_RAMP);
+		// Two chars: first takes the dark end, second the light end.
+		assert_eq!(
+			painted,
+			format!(
+				"\u{1b}[38;2;{};{};{}ma\u{1b}[38;2;{};{};{}mb\u{1b}[39m",
+				TEAL_700.0, TEAL_700.1, TEAL_700.2, TEAL_300.0, TEAL_300.1, TEAL_300.2
+			)
+		);
+	}
+
+	#[test]
+	fn gradient_leaves_whitespace_unpainted_and_resets_once() {
+		// The space rides the preceding color instead of getting an escape of its
+		// own, and the whole string resets exactly once at the end.
+		assert_eq!(
+			gradient_escapes("a b", &TEAL_RAMP),
+			format!(
+				"\u{1b}[38;2;{};{};{}ma \u{1b}[38;2;{};{};{}mb\u{1b}[39m",
+				TEAL_700.0, TEAL_700.1, TEAL_700.2, TEAL_300.0, TEAL_300.1, TEAL_300.2
+			)
+		);
+	}
+
+	#[test]
+	fn gradient_handles_a_single_character() {
+		// span guards against a divide-by-zero on a one-char string.
+		let painted = gradient_escapes("x", &TEAL_RAMP);
+		assert!(painted.contains('x'));
+		assert_eq!(painted.matches("\u{1b}[38;2;").count(), 1);
 	}
 
 	#[test]

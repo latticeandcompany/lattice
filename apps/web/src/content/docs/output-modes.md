@@ -87,6 +87,25 @@ short cache key in place of the duration:
 ● lattice-cache:check          cache hit [155cfd2a]
 ```
 
+When every task in the run came back from cache, one more line follows the
+summary — `❖❖❖ FULL CACHE`, painted across the teal ramp (`teal-700` →
+`teal-500` → `teal-300`) a character at a time:
+
+```text
+● lattice-cache:check          cache hit [155cfd2a]
+● lattice:check                cache hit [536a1348]
+────────────────────────────────────────────────────
+❖  7 tasks · 7 cached · 0 failed  0.07s
+
+❖❖❖ FULL CACHE
+```
+
+It prints only when nothing executed: at least one task was scheduled, none
+failed, and every one of them was a hit. A run with a single miss, a failure,
+or a `persistent: true` task in the graph does not get it, and neither does a
+filter that matched no workspace — there was no work to skip. The rule is
+`is_full_cache` in `crates/lattice-output/src/lib.rs`.
+
 A skipped task (a dependency of a failed task, under `--continue`) settles
 with a dim `○`; a failed one with a red `✗` and `FAILED` in place of the
 duration. Whatever a task printed while it ran is not shown live — it's
@@ -159,7 +178,12 @@ dagger:check: cache hit [7639609d]
 lattice-workspace:check: cache hit [83711b2f]
 lattice-output:check: cache hit [3ac2770f]
 lattice: 7 tasks, 7 cached, 0 failed, 0.08s
+lattice: full cache — nothing to run
 ```
+
+That last line is the raw-mode form of interactive mode's `FULL CACHE` banner,
+under the same rule and with no color, so a piped run or a CI log can be
+grepped for it.
 
 `-l` and raw-because-not-a-terminal are the same reporter; the only
 difference `-l` makes to a piped or CI run is turning on these extra lines.

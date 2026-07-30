@@ -165,6 +165,17 @@ thing — it's a plain alias, not a stricter mode. Reach for either when you
 suspect a stale result and want to confirm by re-running from scratch without
 disturbing what's already stored.
 
+## When the whole run is a hit
+
+A run where every scheduled task came back from cache ends with a `FULL CACHE`
+line under the summary (`lattice: full cache — nothing to run` when output is
+plain). It's a single signal that no command ran at all, which is the state
+you're checking for when you run a task twice to confirm its `inputs` are
+declared correctly. One miss, one failure, or a `persistent: true` task in the
+graph is enough to withhold it. See
+[Output and logging](/lattice/docs/output-modes) for how it renders in each
+mode.
+
 ## The integrity rule
 
 A lookup is a hit only if the stored metadata parses, the stored tarball
