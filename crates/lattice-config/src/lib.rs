@@ -7,17 +7,116 @@ use std::str::FromStr;
 
 pub const CONFIG_FILE: &str = "lattice.json";
 
-/// The canonical list of engine names Lattice knows how to version-check with a
-/// built-in rule. A string-form engine whose name is not in this set is rejected;
-/// it must use the object form with an explicit `versionCmd`.
-pub const WELL_KNOWN_ENGINES: &[&str] = &[
-	"node", "deno", "bun", "pnpm", "yarn", "npm", "rust", "cargo", "go", "python", "python3",
-	"ruby", "bundler", "java", "gradle", "maven", "dotnet",
+/// The canonical engine table, as `(engine name, version command)`: every name
+/// accepted in the bare-string engine form, paired with the command Lattice runs
+/// to read that tool's version. A string-form engine whose name is absent here
+/// is rejected; it must use the object form with an explicit `versionCmd`.
+pub const WELL_KNOWN_ENGINES: &[(&str, &str)] = &[
+	// JavaScript and TypeScript
+	("node", "node --version"),
+	("deno", "deno --version"),
+	("bun", "bun --version"),
+	("pnpm", "pnpm --version"),
+	("yarn", "yarn --version"),
+	("npm", "npm --version"),
+	// Rust
+	("rust", "rustc --version"),
+	("cargo", "cargo --version"),
+	// Go
+	("go", "go version"),
+	// Python
+	("python", "python --version"),
+	("python3", "python3 --version"),
+	("pip", "pip --version"),
+	("uv", "uv --version"),
+	("poetry", "poetry --version"),
+	("pdm", "pdm --version"),
+	("pipenv", "pipenv --version"),
+	// Ruby
+	("ruby", "ruby --version"),
+	("bundler", "bundle --version"),
+	("rake", "rake --version"),
+	// The JVM
+	("java", "java -version"),
+	("kotlin", "kotlinc -version"),
+	("gradle", "gradle --version"),
+	("maven", "mvn --version"),
+	// .NET
+	("dotnet", "dotnet --version"),
+	// nuget.exe has no --version flag; `help` prints "NuGet Version: x.y.z" first.
+	("nuget", "nuget help"),
+	// Swift and Objective-C
+	("swift", "swift --version"),
+	("pod", "pod --version"),
+	// PHP
+	("php", "php --version"),
+	("composer", "composer --version"),
+	// Elixir
+	("elixir", "elixir --version"),
+	("mix", "mix --version"),
+	// Dart
+	("dart", "dart --version"),
+	// Haskell
+	("haskell", "ghc --version"),
+	("ghc", "ghc --version"),
+	("stack", "stack --version"),
+	("cabal", "cabal --version"),
+	// Language-agnostic task runners
+	("just", "just --version"),
+	("task", "task --version"),
+	("turbo", "turbo --version"),
+	("nx", "nx --version"),
 ];
 
-pub fn is_well_known_engine(name: &str) -> bool {
-	WELL_KNOWN_ENGINES.contains(&name)
+/// The built-in version command for a well-known engine, if there is one.
+pub fn builtin_version_cmd(name: &str) -> Option<&'static str> {
+	WELL_KNOWN_ENGINES
+		.iter()
+		.find(|(engine, _)| *engine == name)
+		.map(|(_, cmd)| *cmd)
 }
+
+pub fn is_well_known_engine(name: &str) -> bool {
+	builtin_version_cmd(name).is_some()
+}
+
+/// Every well-known engine name, in table order.
+pub fn well_known_engine_names() -> Vec<&'static str> {
+	WELL_KNOWN_ENGINES
+		.iter()
+		.map(|(engine, _)| *engine)
+		.collect()
+}
+
+/// Files that record resolved dependency state. Each one present in a workspace
+/// is hashed into that workspace's cache keys, and its mtime decides whether
+/// `lattice setup` reinstalls dependencies. Order is fixed: it is part of the
+/// cache key.
+pub const LOCKFILES: &[&str] = &[
+	"package-lock.json",
+	"yarn.lock",
+	"pnpm-lock.yaml",
+	"bun.lockb",
+	"bun.lock",
+	"Cargo.lock",
+	"go.sum",
+	"poetry.lock",
+	"uv.lock",
+	"Gemfile.lock",
+	"npm-shrinkwrap.json",
+	"deno.lock",
+	"pdm.lock",
+	"Pipfile.lock",
+	"requirements.txt",
+	"Podfile.lock",
+	"packages.lock.json",
+	"composer.lock",
+	"mix.lock",
+	"pubspec.lock",
+	"Package.resolved",
+	"stack.yaml.lock",
+	"cabal.project.freeze",
+];
 
 fn default_true() -> bool {
 	true
@@ -575,6 +674,36 @@ mod tests {
 		config
 			.validate()
 			.expect("well-known string engine must be accepted");
+	}
+
+	#[test]
+	fn engine_table_is_unique_and_names_a_version_command() {
+		let mut seen = std::collections::HashSet::new();
+		for (engine, version_cmd) in WELL_KNOWN_ENGINES {
+			assert!(seen.insert(*engine), "duplicate engine '{engine}' in table");
+			assert!(
+				version_cmd.split_whitespace().count() >= 2,
+				"engine '{engine}' has no version arguments: '{version_cmd}'"
+			);
+			assert_eq!(builtin_version_cmd(engine), Some(*version_cmd));
+		}
+		assert_eq!(well_known_engine_names().len(), WELL_KNOWN_ENGINES.len());
+	}
+
+	#[test]
+	fn python3_checks_python3_not_python() {
+		// `python` on PATH may be a different interpreter entirely, so a
+		// `python3` constraint has to be checked against `python3`.
+		assert_eq!(builtin_version_cmd("python3"), Some("python3 --version"));
+		assert_eq!(builtin_version_cmd("python"), Some("python --version"));
+	}
+
+	#[test]
+	fn lockfile_table_is_unique() {
+		let mut seen = std::collections::HashSet::new();
+		for lf in LOCKFILES {
+			assert!(seen.insert(*lf), "duplicate lockfile '{lf}' in table");
+		}
 	}
 
 	#[test]

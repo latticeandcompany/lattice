@@ -1,0 +1,117 @@
+---
+import Layout from '../layouts/Layout.astro';
+import CopyCommand from '../components/copyCommand';
+import { githubUrl, skillInstallCommand, skillUseCommand } from '../lib/nav';
+import { withBase } from '../lib/base';
+
+const skillUrl = `${githubUrl}/blob/HEAD/skills/lattice/SKILL.md`;
+
+const contents = [
+	{
+		file: 'SKILL.md',
+		blurb:
+			'How to orient in a repo that uses Lattice, run and preview tasks, declare a workspace, and decide what to cache.',
+	},
+	{
+		file: 'references/configuration.md',
+		blurb: 'Every lattice.json field, its type, its default, and the error it raises when it is wrong.',
+	},
+	{
+		file: 'references/cli.md',
+		blurb: 'Every command and flag, the exit codes, the environment variables, and the precedence between them.',
+	},
+	{
+		file: 'references/toolchains.md',
+		blurb: 'The built-in driver table, the engines that can be version-checked by name, and how provisioning works.',
+	},
+	{
+		file: 'references/troubleshooting.md',
+		blurb: 'Symptom to cause to fix, for the failures a run actually produces.',
+	},
+];
+---
+
+<Layout
+	title="For agents · Lattice"
+	description="Install the Lattice skill so your coding agent knows how to read a lattice.json, run tasks, and read a failure."
+>
+	<section class="px-3 pt-5 pb-4">
+		<div class="mx-auto" style="max-width: 48rem;">
+			<h1 class="fw-bold mb-3" style="font-size: clamp(2.5rem, 6vw, 3.75rem); letter-spacing: -0.03em;">
+				For agents
+			</h1>
+			<p class="fs-5 mb-0" style="color: var(--text-muted);">
+				Lattice is new, so a coding agent has no working knowledge of it and will guess at
+				<code>lattice.json</code> from the shape of other config files. This skill replaces the guess:
+				the commands, the fields, the tables, and the failures, written for an agent to read.
+			</p>
+		</div>
+	</section>
+
+	<section class="px-3 pb-5">
+		<div class="mx-auto" style="max-width: 48rem;">
+			<h2 class="h4 fw-bold mb-3">Install it</h2>
+			<CopyCommand client:visible command={skillInstallCommand} />
+			<p class="mt-3 mb-4" style="color: var(--text-subtle); line-height: 1.65;">
+				Run it in the repo you want the skill in. The CLI finds the agents you have installed and writes
+				the skill where each of them looks for it, then records what it installed in
+				<code>skills-lock.json</code>. Add <code>--global</code> to install it once for every project
+				instead, or <code>npx skills update lattice</code> later to pull a newer copy.
+			</p>
+
+			<h2 class="h4 fw-bold mb-3">Or load it for one session</h2>
+			<CopyCommand client:visible command={skillUseCommand} />
+			<p class="mt-3 mb-0" style="color: var(--text-subtle); line-height: 1.65;">
+				This prints the skill as a prompt without writing anything to disk — useful for a one-off task or
+				for an agent the installer doesn't know about.
+			</p>
+		</div>
+	</section>
+
+	<section class="px-3 pb-5">
+		<div class="mx-auto" style="max-width: 48rem;">
+			<h2 class="h4 fw-bold mb-3">What it covers</h2>
+			<p class="mb-4" style="color: var(--text-subtle); line-height: 1.65;">
+				One instruction file plus four references the agent reads only when it needs them. Everything in
+				them is drawn from the same source as these docs, so an agent working from the skill and a person
+				working from the site get the same answer.
+			</p>
+			<div class="list-group list-group-flush">
+				{
+					contents.map((item) => (
+						<div class="list-group-item px-0 py-3" style="background: transparent; border-color: var(--border-subtle);">
+							<code class="d-block mb-1" style="color: var(--text); font-size: 0.85rem;">
+								{item.file}
+							</code>
+							<span class="d-block" style="color: var(--text-subtle); line-height: 1.6;">
+								{item.blurb}
+							</span>
+						</div>
+					))
+				}
+			</div>
+			<p class="mt-4 mb-0" style="color: var(--text-subtle); line-height: 1.65;">
+				The source lives in the repo at
+				<a href={skillUrl} target="_blank" rel="noopener noreferrer"><code>skills/lattice/</code></a>. Read it
+				yourself before you install it — it is a few pages of plain Markdown, and it is the same file your
+				agent will act on.
+			</p>
+		</div>
+	</section>
+
+	<section class="px-3 pb-5">
+		<div class="mx-auto" style="max-width: 48rem;">
+			<h2 class="h4 fw-bold mb-3">Without the skill</h2>
+			<p class="mb-0" style="color: var(--text-subtle); line-height: 1.65;">
+				An agent that can read files and run commands can get most of the way on its own. Point it at
+				<code>lattice.json</code>, then have it run
+				<code>lattice run &lt;task&gt; --dry-run</code>, which validates the config and prints every
+				resolved command without executing anything. <code>lattice --help</code> and each subcommand's
+				<code>--help</code> are the authoritative flag list. The
+				<a href={withBase('/docs/configuration')}>configuration</a> and
+				<a href={withBase('/docs/cli')}>CLI</a> pages are the same reference material the skill carries,
+				and every page on this site is Markdown in the repo.
+			</p>
+		</div>
+	</section>
+</Layout>

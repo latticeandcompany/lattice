@@ -42,6 +42,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test
+        run: npm test
+
+      # `build` also runs the post-build link check, which fails on any internal link
+      # or search result that would 404 under the site's subpath.
       - name: Build
         run: npm run build
 

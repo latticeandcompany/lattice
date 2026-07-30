@@ -119,6 +119,16 @@ Persistent tasks such as dev servers and watchers stream their output live and s
 
 Full documentation: **[latticeandcompany.github.io/lattice/docs](https://latticeandcompany.github.io/lattice/docs)** — [getting started](https://latticeandcompany.github.io/lattice/docs/getting-started) · [configuration](https://latticeandcompany.github.io/lattice/docs/configuration) · [caching](https://latticeandcompany.github.io/lattice/docs/caching) · [toolchains](https://latticeandcompany.github.io/lattice/docs/toolchains) · [CLI](https://latticeandcompany.github.io/lattice/docs/cli)
 
+## For agents
+
+Lattice is new enough that a coding agent will guess at `lattice.json` from the shape of other config files. [`skills/lattice/`](../skills/lattice/SKILL.md) is a skill that replaces the guess — the commands, the fields, the driver and engine tables, and the failures a run actually produces:
+
+```bash
+npx skills add latticeandcompany/lattice
+```
+
+See [for-agents](https://latticeandcompany.github.io/lattice/for-agents) for what it contains and how to load it for a single session instead.
+
 ## Development
 
 **Requires:** Rust 1.86+ with `rustfmt` and `clippy`. Node 26+ only for the docs site.

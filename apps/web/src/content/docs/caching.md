@@ -26,10 +26,12 @@ A task's cache key is a hash over:
 - the task name and its fully resolved command
 - every file matched by `inputs`, minus anything matched by `ignore` —
   contents, not just paths
-- any tool-unique lockfile present in the workspace (`package-lock.json`,
-  `pnpm-lock.yaml`, `Cargo.lock`, `poetry.lock`, and similar), so a dependency
-  bump invalidates the cache even if you forgot to list the lockfile in
-  `inputs`
+- any lockfile present in the workspace (`package-lock.json`,
+  `pnpm-lock.yaml`, `Cargo.lock`, `poetry.lock`, `composer.lock`,
+  `packages.lock.json`, and every other one on the
+  [full list](/lattice/docs/cache-internals#cache-key-composition)), so a
+  dependency bump invalidates the cache even if you forgot to list the lockfile
+  in `inputs`
 - the resolved value of every environment variable named in `env`
 - the identity of the resolved toolchain for the task (see
   [Engines and provisioning](/lattice/docs/engines))

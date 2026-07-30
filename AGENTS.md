@@ -18,6 +18,7 @@ Each part can be used together or separately. You can use one and not the other.
 
 - Skills have been provided for you. Please use them. Look at @.agents/skills
 - Whenever adding, removing, changing anything, update the stress test file. This is our ultimate E2E test that validates everything about Lattice, and it must stay up to date
+- We ship an agent skill at @skills/lattice — this is what other people's agents learn Lattice from. Change a command, a flag, a `lattice.json` field, or an error message, and it is part of the change, same as the docs. It is symlinked into `.agents/skills/` so we use the copy we publish
 - Write tests for all changes
 - Look at @.agents/GLOBAL_AGENTS.md @.agents/CODESTYLE.md for how you should generally act
 - Remain agnostic of the developer's choice. We never prescribe a tool, solution, or way of working for our end users. This is an engineering rule, not a talking point — build it, don't write copy about it

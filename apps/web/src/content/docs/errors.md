@@ -63,7 +63,7 @@ The first wraps a filesystem error (permissions, a directory named
 `lattice.json`, and so on); the second wraps the underlying `serde_json` error
 (with the line/column) when the file exists but is not valid JSON, or fails to
 match the shape of `LatticeConfig`. Both fatal, both from `load_config`
-(`crates/lattice-config/src/lib.rs:328-336`).
+(`crates/lattice-config/src/lib.rs:427-435`).
 
 ### Engine declared in unsupported string form
 
@@ -76,7 +76,7 @@ with an explicit `versionCmd`, e.g. "alpes": { "version": ">=1.0.0", "versionCmd
 
 Raised by `LatticeConfig::validate` when an `engines` entry (root or
 per-workspace) is a bare version string but its name is not in
-`WELL_KNOWN_ENGINES` (`crates/lattice-config/src/lib.rs:304-316`; the full list
+`WELL_KNOWN_ENGINES` (`crates/lattice-config/src/lib.rs:403-415`; the full list
 is on [Toolchains](/lattice/docs/toolchains)). Fatal. Fix by switching to the
 object form with an explicit `versionCmd`, exactly as the message shows.
 
@@ -87,7 +87,7 @@ workspace 'web' has an empty path
 ```
 
 The `path` field of a workspace is present but blank or whitespace-only.
-Fatal. `crates/lattice-config/src/lib.rs:289`.
+Fatal. `crates/lattice-config/src/lib.rs:388`.
 
 ### Duplicate workspace name (config-level)
 
@@ -96,13 +96,13 @@ duplicate workspace name 'web': workspace names must be unique
 ```
 
 Two entries in the `workspaces` array share a `name`. Fatal.
-`crates/lattice-config/src/lib.rs:292-296`. (A second, textually different
+`crates/lattice-config/src/lib.rs:391-395`. (A second, textually different
 check for the same condition exists at the discovery stage — see [Duplicate
 workspace name (discovery)](#duplicate-workspace-name-or-path-discovery) below.)
 
 ### Invalid or missing cache size
 
-Raised by `CacheSize::parse` (`crates/lattice-config/src/lib.rs:143-176`),
+Raised by `CacheSize::parse` (`crates/lattice-config/src/lib.rs:242-275`),
 used for both `settings.maxCacheSize` in `lattice.json` and `lattice prune
 --max-size`:
 
@@ -141,7 +141,7 @@ detection](/lattice/docs/drivers) for the model.
 ### Ambiguous or undeclared task driver
 
 The evidence ladder's halt condition, `AmbiguityError`
-(`crates/lattice-workspace/src/lib.rs:355-386`). Fatal, and it is the only
+(`crates/lattice-workspace/src/lib.rs:399-430`). Fatal, and it is the only
 error whose text is built dynamically from what Lattice actually found in the
 workspace directory. Three shapes:
 
@@ -187,7 +187,7 @@ literal directories, not globs
 ```
 
 Raised by `discover_workspaces` when a configured `path` doesn't resolve to an
-existing directory (`crates/lattice-workspace/src/lib.rs:736-742`). Fatal. A
+existing directory (`crates/lattice-workspace/src/lib.rs:812-818`). Fatal. A
 common cause is treating `path` as a glob — it never is; see
 [Workspaces](/lattice/docs/workspaces).
 
@@ -200,7 +200,7 @@ duplicate workspace name 'web' in lattice.json
 duplicate workspace path 'apps/web' in lattice.json
 ```
 
-Raised during discovery (`crates/lattice-workspace/src/lib.rs:745-751`), after
+Raised during discovery (`crates/lattice-workspace/src/lib.rs:821-823`), after
 the config-level uniqueness check already described above. The second form
 fires even when two workspace entries have different `name`s but the same
 resolved directory (after canonicalization). Both fatal.
@@ -303,7 +303,7 @@ engine 'alpes' 1.4.0 on PATH does not satisfy constraint '>=2.0.0'
 The tool is present and its version parsed, but doesn't satisfy the
 constraint. Install/upgrade the tool on `PATH`, or loosen the constraint.
 
-All four fatal. `crates/lattice-workspace/src/toolchain.rs:260-289`.
+All four fatal. `crates/lattice-workspace/src/toolchain.rs:222-251`.
 
 ### Provisioning failures
 
@@ -345,7 +345,7 @@ engine 'alpes' provisioned 1.4.0 does not satisfy '>=2.0.0'
 The freshly installed tool's own version doesn't satisfy the declared
 constraint — the `installCmd` installed the wrong version.
 
-All five fatal. `crates/lattice-workspace/src/toolchain.rs:296-389`. A rarer,
+All five fatal. `crates/lattice-workspace/src/toolchain.rs:258-351`. A rarer,
 underlying failure from either mode:
 
 ```text
@@ -353,7 +353,7 @@ failed to spawn `alpes --version`
 ```
 
 Wraps an OS error spawning the shell that runs the version/install command
-(in practice, `sh` itself missing). `crates/lattice-workspace/src/toolchain.rs:145-147`.
+(in practice, `sh` itself missing). `crates/lattice-workspace/src/toolchain.rs:107-109`.
 
 ## Cache operations
 
@@ -384,7 +384,7 @@ failed to read input file <path>
 failed to read lockfile <path>
 ```
 
-Both from `crates/lattice-cache/src/lib.rs:389-403`. This is the one cache
+Both from `crates/lattice-cache/src/lib.rs:376-390`. This is the one cache
 error that fails the task outright (`crates/lattice-runner/src/lib.rs:518-536`);
 every other cache failure below is a non-fatal warning.
 
@@ -408,7 +408,7 @@ These wrap `LocalStore`'s own errors — `failed to parse cache metadata at
 `failed to create cache dir <path>`, `failed to create artifact <path>`,
 `failed to add <path> to artifact`, `failed to digest artifact <path>`,
 `failed to open artifact <path>`, `failed to unpack artifact into <path>`
-(`crates/lattice-cache/src/lib.rs:112-228`). A lookup failure or a restore
+(`crates/lattice-cache/src/lib.rs:99-108`). A lookup failure or a restore
 failure both fall through to running the task fresh; a store failure just
 warns after a successful run. None of these fail the build.
 
@@ -419,7 +419,7 @@ failed to read cache dir /repo/.lattice/cache
 ```
 
 `LocalStore::prune` treats a missing cache directory as nothing to prune, but
-any other read error (permissions) is fatal. `crates/lattice-cache/src/lib.rs:259-264`.
+any other read error (permissions) is fatal. `crates/lattice-cache/src/lib.rs:246-251`.
 
 ## Task execution
 

@@ -10,6 +10,92 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The toolchain table, filled in — 2026-07-29
+
+- CocoaPods, pip, NuGet, and Kotlin are now fully wired rather than half-known.
+  `pod` had a driver row but no engine rule and no installer; `pip` had an
+  installer that no driver could ever reach; `nuget` and `kotlin` were absent.
+  All four are drivers, well-known engines, and known to `lattice setup` now
+- `deno` and `bun` are runtimes as well as a task runner and a package manager,
+  and `mix` is a package manager as well as a task runner. A driver declares
+  every role it fills and competes with its highest-ranked one, so what drives a
+  workspace is unchanged — `deno` still drives as a task runner, `bun` as a
+  package manager — but a dual-role tool no longer reads as a lie in the table
+- The well-known engine list and the built-in version commands were two separate
+  tables that disagreed. `uv`, `poetry`, `just`, `turbo`, `nx`, `swift`, `dart`,
+  `composer`, `mix`, `stack`, `cabal`, `pdm`, and `pipenv` all had a version rule
+  but were rejected in string form, so `"engines": { "uv": ">=0.5" }` failed to
+  load for no reason. They are one table now, in `lattice-config`, and every
+  driver is guaranteed a row in it
+- `"python3": ">=3.12"` was checked by running `python --version`, which on many
+  machines is a different interpreter — or Python 2. It runs `python3 --version`
+- `lattice setup` knows how to install dependencies for 11 more drivers:
+  `dotnet restore`, `nuget restore`, `pod install`, `swift package resolve`,
+  `composer install`, `mix deps.get`, `dart pub get`, `pdm install`,
+  `pipenv install`, `stack build --only-dependencies`, and
+  `cabal build --only-download`. A `.csproj` workspace used to report "no known
+  dependency installer" and skip
+- 13 more lockfiles feed cache keys, including `deno.lock`, `composer.lock`,
+  `mix.lock`, `pubspec.lock`, `Package.resolved`, `Podfile.lock`,
+  `packages.lock.json`, `pdm.lock`, `Pipfile.lock`, and `requirements.txt`. A
+  dependency bump in those ecosystems used to hit a stale cache entry. The cache
+  and `setup` read one shared list, so they can't drift apart
+- `npm-shrinkwrap.json` is npm evidence, alongside `package-lock.json`
+- An ambiguity error suggests better candidates. A bare `Cargo.toml`, `go.mod`,
+  `composer.json`, `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`,
+  `cabal.project`, or `.csproj` used to produce an empty candidate list; each
+  now names the tools that could plausibly have been meant
+- Two drivers have no fingerprint on purpose. A `requirements.txt` is read by
+  pip, uv, and pip-tools alike, and a Kotlin project is driven by gradle or
+  maven — so `pip` and `kotlin` are selected by declaration, never by guessing.
+  For the same reason `packages.lock.json` is not nuget evidence: an SDK-style
+  project can carry one and still be a `dotnet` workspace
+
+### An agent skill, so a coding agent stops guessing at lattice.json — 2026-07-29
+
+- New `skills/lattice/`: a `SKILL.md` plus four references — the `lattice.json`
+  field reference, the CLI surface, the driver and engine tables, and
+  symptom-to-fix troubleshooting. Install it with
+  `npx skills add latticeandcompany/lattice`, or load it for one session with
+  `npx skills use latticeandcompany/lattice@lattice`
+- It leads with the traps an agent actually falls into: a persistent task blocks
+  until it is interrupted, `--filter` never pulls in dependencies, a task with no
+  `inputs` hits the cache after you edit its source, and a typo'd key in
+  `lattice.json` is silently ignored by the parser
+- The skill is symlinked into `.agents/skills/` and `.claude/skills/`, so the
+  agents working on this repo use the copy we publish rather than a second one
+  that drifts
+- The hero's copyable command is now a two-tab control: `Install` by default,
+  `For agents` for the skill. New `/for-agents` page, in the navbar and the
+  footer, covers what each file in the skill contains and how to load it for a
+  single session
+- The stress test now checks the skill against the binary: every subcommand and
+  long flag in `--help` has to be documented and vice versa, every engine the
+  skill calls well-known has to be accepted in string form (and every one it
+  doesn't, rejected), and every Build Tool row of its driver table is verified
+  from its own fingerprint through `--dry-run`
+
+### Links that go where they say, and a Get started page — 2026-07-29
+
+- Search results 404'd. Pagefind derives its own base by stripping `pagefind/`
+  off the path its bundle loads from, so the URLs it hands back already carry
+  the site's `/lattice` prefix; the dialog was adding it a second time and
+  sending readers to `/lattice/lattice/docs/…`. It now passes those URLs
+  through untouched
+- The footer's License link pointed at `blob/main/LICENSE`, and this repo's
+  default branch is not `main`. Repo links resolve through `blob/HEAD` now, so
+  they survive a branch rename
+- New `/get-started` page: six steps from an empty repo to a build that comes
+  back from cache, with every terminal transcript captured from a real run
+  rather than written by hand. Every "Get started" button on the site points
+  there instead of at the docs
+- The footer drops to two columns of destinations someone would actually look
+  for. Deep docs pages belong in the docs sidebar, not the footer
+- `npm run build` now ends in a link check that fails on any internal link or
+  indexed search result that would 404 under the site's subpath, or any repo
+  link that pins a branch name. The URL shaping behind the search dialog moved
+  to `src/lib/search.ts` and has unit tests (`npm test` in `apps/web`)
+
 ### Dependency bumps, and auto-merge that can actually merge — 2026-07-28
 
 - `displaydoc` 0.2.6 → 0.2.7

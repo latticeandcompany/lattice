@@ -13,7 +13,7 @@ engines under the root `engines` key, a workspace's own `engines` key, or
 both. Lattice never guesses a version policy for you: the *shape* of the
 constraint you write is the only thing that decides what Lattice does with
 it, and that shape alone selects one of three modes
-(`crates/lattice-workspace/src/toolchain.rs:80-100`).
+(`crates/lattice-workspace/src/toolchain.rs:42-62`).
 
 ## Three modes, chosen by shape
 
@@ -60,7 +60,7 @@ the host, parses the version out of the output, and checks it against
 engine 'node' 18.19.0 on PATH does not satisfy constraint '>=20.0.0'
 ```
 
-(`crates/lattice-workspace/src/toolchain.rs:283-286`.) Nothing is installed —
+(`crates/lattice-workspace/src/toolchain.rs:244-248`.) Nothing is installed —
 validate-only mode only ever checks.
 
 ### Provisioned: an `installCmd`
@@ -89,7 +89,7 @@ lives](#where-a-provisioned-tool-lives) below for the exact layout.
 
 `"node": ">=20.0.0"` is the string form: a bare version constraint, nothing
 else. It only works for a fixed set of tools Lattice already knows how to
-version-check — `WELL_KNOWN_ENGINES` in `crates/lattice-config/src/lib.rs:13`
+version-check — `WELL_KNOWN_ENGINES` in `crates/lattice-config/src/lib.rs:14`
 (`node`, `rust`, `go`, `python`, `java`, and the rest of that list; the full
 set is the [Toolchains](/lattice/docs/toolchains) reference). Anything else
 must use the object form:
@@ -103,7 +103,7 @@ must use the object form:
 ```
 
 The object form is `{ version, versionCmd, installCmd, bin }`, all optional
-(`crates/lattice-config/src/lib.rs:76-83`). `versionCmd` exists because
+(`crates/lattice-config/src/lib.rs:175-182`). `versionCmd` exists because
 Lattice can't guess how to check the version of a tool it doesn't know —
 guessing would mean silently trusting an unverifiable claim, so it errors
 instead.
@@ -118,7 +118,7 @@ object form with an explicit `versionCmd`, e.g. "protoc": { "version":
 ">=1.0.0", "versionCmd": "protoc --version" }
 ```
 
-(`crates/lattice-config/src/lib.rs:304-316`.) If you use the object form but
+(`crates/lattice-config/src/lib.rs:403-415`.) If you use the object form but
 still omit `versionCmd` for a tool Lattice has no built-in rule for, the
 failure moves to run time instead, when Lattice actually needs to check the
 version:
@@ -128,7 +128,7 @@ engine 'protoc' has a version constraint but no way to check it (not a
 well-known engine and no `versionCmd`)
 ```
 
-(`crates/lattice-workspace/src/toolchain.rs:276-279`.) Either way, an unknown
+(`crates/lattice-workspace/src/toolchain.rs:238-241`.) Either way, an unknown
 tool with a version constraint needs an explicit `versionCmd` — there's no
 path that lets Lattice skip it.
 
@@ -149,7 +149,7 @@ characters of `sha256(installCmd)`:
 While `installCmd` is running, Lattice hasn't resolved a version yet, so it
 builds into a temporary `tmp-<hash>` directory first and renames it to
 `<version>-<hash>` only after the freshly installed tool passes its version
-check (`crates/lattice-workspace/src/toolchain.rs:314-374`). `pins.json`
+check (`crates/lattice-workspace/src/toolchain.rs:276-336`). `pins.json`
 records what produced that directory:
 
 ```json
@@ -161,13 +161,13 @@ records what produced that directory:
 }
 ```
 
-(`ToolchainPins`, `crates/lattice-workspace/src/toolchain.rs:111-118`.) Before
+(`ToolchainPins`, `crates/lattice-workspace/src/toolchain.rs:73-80`.) Before
 installing anything, Lattice looks for an existing `<version>-<hash>`
 directory whose `pins.json` matches the current `installCmd` hash and whose
 `bin` directory still exists — and, when a version command is available,
 re-checks that the installed version still satisfies the constraint. A match
 is reused; installation happens exactly once per distinct `installCmd`
-content (`crates/lattice-workspace/src/toolchain.rs:194-240`).
+content (`crates/lattice-workspace/src/toolchain.rs:156-202`).
 
 Hashing on the literal `installCmd` string, rather than on the engine name
 and version alone, means changing the install command — a different
@@ -179,7 +179,7 @@ silently reusing a stale one.
 Lattice passes the target directory to `installCmd` two ways at once: as the
 `LATTICE_TOOLCHAIN_DIR` environment variable, and by substituting the literal
 string `$LATTICE_TOOLCHAIN_DIR` inside the command before running it
-(`crates/lattice-workspace/src/toolchain.rs:325-330`). That's why the `just`
+(`crates/lattice-workspace/src/toolchain.rs:287-292`). That's why the `just`
 example above works whether the installer reads an env var or expects the
 path spelled out on its command line — both resolve to the same directory.
 
@@ -206,7 +206,7 @@ under that tree and nowhere else.
 
 A workspace's `engines` map merges with the root `engines`; the workspace's
 entries win per key (`resolve_engines`,
-`crates/lattice-config/src/lib.rs:319-325`):
+`crates/lattice-config/src/lib.rs:418-424`):
 
 ```json
 {

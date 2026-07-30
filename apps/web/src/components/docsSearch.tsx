@@ -1,25 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { withBase } from '../lib/base';
+import { maxPages, toHits, type PagefindData, type SearchHit } from '../lib/search';
 
 // Pagefind builds a static WASM-backed index into dist/pagefind at build time, so the
 // bundle only exists in a built site. It is fetched at runtime (never bundled), hence
 // the @vite-ignore: Vite must not try to resolve this path during the Astro build.
+// This path is also what Pagefind derives its own result base from — see toHits.
 const bundlePath = withBase('/pagefind/pagefind.js');
-const maxPages = 6;
-const maxSections = 3;
-
-interface PagefindSubResult {
-	title: string;
-	url: string;
-	excerpt: string;
-}
-
-interface PagefindData {
-	url: string;
-	excerpt: string;
-	meta: { title?: string };
-	sub_results: PagefindSubResult[];
-}
 
 interface PagefindResult {
 	id: string;
@@ -35,30 +22,7 @@ interface PagefindApi {
 	) => Promise<{ results: PagefindResult[] } | null>;
 }
 
-export interface SearchHit {
-	title: string;
-	href: string;
-	excerpt: string;
-	section?: string;
-}
-
 type Status = 'idle' | 'searching' | 'ready' | 'unavailable';
-
-// One hit per page, plus its strongest heading matches, so a long page can point at
-// the section that actually matched instead of just its title.
-const toHits = (pages: PagefindData[]): SearchHit[] =>
-	pages.flatMap((page) => {
-		const title = page.meta.title ?? page.url;
-		// Pagefind indexes dist/ as the root, so its URLs come back without the site base.
-		const pageHref = withBase(page.url);
-		const head: SearchHit = { title, href: pageHref, excerpt: page.excerpt };
-		// Pagefind emits a sub-result for the h1 too, which just restates the page hit.
-		const sections = page.sub_results
-			.filter((sub) => sub.url !== page.url && sub.title !== title)
-			.slice(0, maxSections)
-			.map((sub) => ({ title, href: withBase(sub.url), excerpt: sub.excerpt, section: sub.title }));
-		return [head, ...sections];
-	});
 
 const isTypingTarget = (target: EventTarget | null) => {
 	if (!(target instanceof HTMLElement)) return false;

@@ -35,7 +35,7 @@ workspaces.
 Command resolution has a fixed precedence: an explicit entry in a
 workspace's `scripts` map always wins; only a task with **no** entry there
 falls back to the driver's inferred invocation
-(`crates/lattice-workspace/src/lib.rs:770-789`). For JavaScript-family
+(`crates/lattice-workspace/src/lib.rs:846-851`). For JavaScript-family
 drivers, inference requires the task name to exist in the manifest's own
 `scripts`/`tasks` map — Lattice never invents a script your `package.json`
 doesn't have. For direct-invoke drivers (`cargo`, `go`, and similar),
@@ -98,7 +98,7 @@ The cache key is a hash over the task name, its resolved command, every
 file matched by that task's `inputs` globs, tool-unique lockfiles in the
 workspace, the current values of any env vars listed in the task's `env`,
 the resolved toolchain identity, and the Lattice version
-(`crates/lattice-cache/src/lib.rs:349-352`). If the key changes on every run
+(`crates/lattice-cache/src/lib.rs:336-339`). If the key changes on every run
 even though nothing you'd call "the code" changed, the usual cause is
 something feeding the hash that shouldn't:
 

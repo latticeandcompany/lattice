@@ -1,7 +1,6 @@
 ---
 import CopyCommand from './copyCommand';
-import { githubUrl, installCommand } from '../lib/nav';
-import { withBase } from '../lib/base';
+import { getStartedUrl, githubUrl, installCommand } from '../lib/nav';
 ---
 
 <section class="px-3 py-5">
@@ -17,7 +16,7 @@ import { withBase } from '../lib/base';
 				<CopyCommand client:visible command={installCommand} />
 			</div>
 			<div class="d-flex flex-wrap gap-2 justify-content-center">
-				<a href={withBase('/docs/getting-started')} class="btn btn-contrast px-4">Get started</a>
+				<a href={getStartedUrl} class="btn btn-contrast px-4">Get started</a>
 				<a href={githubUrl} target="_blank" rel="noopener noreferrer" class="btn btn-secondary px-4">
 					<i class="bi bi-github me-2" aria-hidden="true"></i>View on GitHub
 				</a>

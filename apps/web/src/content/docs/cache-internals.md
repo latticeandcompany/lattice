@@ -31,11 +31,16 @@ A task's cache key is a 64-character lowercase hex SHA-256 digest, computed by
 6. `input.path` / `input.content` — one pair per file matched by the task's
    `inputs` globs (after removing anything matched by `ignore`), sorted by
    path relative to the workspace, with the file's full contents hashed in.
-7. `lockfile.name` / `lockfile.content` — one pair for each tool-unique
-   lockfile that exists in the workspace, checked in this fixed order:
+7. `lockfile.name` / `lockfile.content` — one pair for each dependency-state
+   file that exists in the workspace, checked in this fixed order:
    `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`,
    `bun.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`, `uv.lock`,
-   `Gemfile.lock`.
+   `Gemfile.lock`, `npm-shrinkwrap.json`, `deno.lock`, `pdm.lock`,
+   `Pipfile.lock`, `requirements.txt`, `Podfile.lock`, `packages.lock.json`,
+   `composer.lock`, `mix.lock`, `pubspec.lock`, `Package.resolved`,
+   `stack.yaml.lock`, `cabal.project.freeze`. The same list decides whether
+   `lattice setup` reinstalls dependencies, so the two never disagree
+   (`LOCKFILES`, `crates/lattice-config/src/lib.rs:95-119`).
 
 Every list (env pairs, input files, lockfiles present) is sorted before
 hashing, so the key does not depend on filesystem iteration order or on the

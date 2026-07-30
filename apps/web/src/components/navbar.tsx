@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { withBase } from '../lib/base';
-import { navLinks } from '../lib/nav';
+import { getStartedUrl, navLinks } from '../lib/nav';
 import Rosette from './rosette';
 import ThemeControl from './themeControl';
 
@@ -62,7 +62,7 @@ const Navbar = () => {
 							<ThemeControl />
 						</li>
 						<li className="nav-item mt-2 mt-md-0 ms-md-1">
-							<a href={withBase('/docs/getting-started')} className="btn btn-contrast btn-sm px-3 py-2" onClick={() => setOpen(false)}>
+							<a href={getStartedUrl} className="btn btn-contrast btn-sm px-3 py-2" onClick={() => setOpen(false)}>
 								Get started
 							</a>
 						</li>

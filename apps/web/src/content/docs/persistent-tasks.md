@@ -30,7 +30,7 @@ see [Output and logging](/lattice/docs/output-modes).
 ```
 
 `persistent` lives on the `PipelineTask` alongside `dependsOn`, `inputs`,
-`outputs`, `env`, and `cache` (`crates/lattice-config/src/lib.rs:110-118`).
+`outputs`, `env`, and `cache` (`crates/lattice-config/src/lib.rs:209-217`).
 There's no per-workspace override — it's a property of the task itself,
 true for every workspace that runs it.
 
@@ -42,7 +42,7 @@ pub fn is_cacheable(&self) -> bool {
 }
 ```
 
-(`crates/lattice-config/src/lib.rs:126-129`.) `persistent: true` alone is
+(`crates/lattice-config/src/lib.rs:225-228`.) `persistent: true` alone is
 enough to disqualify a task from caching — you don't also need `cache:
 false`. That's the right call anyway: a dev server has no output to hash,
 and it doesn't produce a cacheable "result" in the first place, it produces a

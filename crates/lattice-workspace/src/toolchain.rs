@@ -31,50 +31,12 @@ pub enum EngineMode {
 	},
 }
 
-/// The built-in version command for a well-known engine, if any.
-fn builtin_version_cmd(name: &str) -> Option<&'static str> {
-	Some(match name {
-		"node" => "node --version",
-		"deno" => "deno --version",
-		"bun" => "bun --version",
-		"pnpm" => "pnpm --version",
-		"yarn" => "yarn --version",
-		"npm" => "npm --version",
-		"cargo" => "cargo --version",
-		"rust" => "rustc --version",
-		"go" => "go version",
-		"python" | "python3" => "python --version",
-		"ruby" => "ruby --version",
-		"bundler" => "bundle --version",
-		"java" => "java -version",
-		"gradle" => "gradle --version",
-		"maven" => "mvn --version",
-		"dotnet" => "dotnet --version",
-		"php" => "php --version",
-		"composer" => "composer --version",
-		"elixir" => "elixir --version",
-		"mix" => "mix --version",
-		"dart" => "dart --version",
-		"swift" => "swift --version",
-		"haskell" | "ghc" => "ghc --version",
-		"stack" => "stack --version",
-		"cabal" => "cabal --version",
-		"pdm" => "pdm --version",
-		"pipenv" => "pipenv --version",
-		"just" => "just --version",
-		"task" => "task --version",
-		"turbo" => "turbo --version",
-		"nx" => "nx --version",
-		_ => return None,
-	})
-}
-
 /// The version command for an engine: explicit `versionCmd` wins, else the
-/// built-in for a well-known engine.
+/// built-in rule from [`lattice_config::WELL_KNOWN_ENGINES`].
 fn version_cmd_for(name: &str, spec: &EngineSpec) -> Option<String> {
 	spec.version_cmd()
 		.map(String::from)
-		.or_else(|| builtin_version_cmd(name).map(String::from))
+		.or_else(|| lattice_config::builtin_version_cmd(name).map(String::from))
 }
 
 /// Classify one engine spec into an [`EngineMode`].

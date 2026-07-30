@@ -1,33 +1,29 @@
 ---
 import Rosette from './rosette';
-import { githubUrl } from '../lib/nav';
+import { getStartedUrl, githubUrl, licenseUrl, releasesUrl } from '../lib/nav';
 import { withBase } from '../lib/base';
 
 const year = new Date().getFullYear();
 
+// Two short columns of destinations someone would actually go looking for. Deep
+// docs pages belong in the docs sidebar, not here.
 const columns = [
 	{
 		title: 'Product',
 		links: [
+			{ name: 'Get started', href: getStartedUrl },
 			{ name: 'Why Lattice', href: withBase('/#why') },
-			{ name: 'Get started', href: withBase('/docs/getting-started') },
-			{ name: 'Toolchains', href: withBase('/docs/toolchains') },
-		],
-	},
-	{
-		title: 'Docs',
-		links: [
-			{ name: 'Introduction', href: withBase('/docs') },
-			{ name: 'Configuration', href: withBase('/docs/configuration') },
-			{ name: 'Caching', href: withBase('/docs/caching') },
+			{ name: 'Documentation', href: withBase('/docs') },
+			{ name: 'For agents', href: withBase('/for-agents') },
 		],
 	},
 	{
 		title: 'Project',
 		links: [
 			{ name: 'GitHub', href: githubUrl, external: true },
+			{ name: 'Releases', href: releasesUrl, external: true },
 			{ name: 'Changelog', href: withBase('/docs/changelog') },
-			{ name: 'License', href: `${githubUrl}/blob/main/LICENSE`, external: true },
+			{ name: 'License', href: licenseUrl, external: true },
 		],
 	},
 ];
@@ -36,7 +32,7 @@ const columns = [
 <footer class="px-3 pt-5 pb-4" style="border-top: 1px solid var(--border);">
 	<div class="mx-auto" style="max-width: 72rem;">
 		<div class="row g-4">
-			<div class="col-12 col-lg-4">
+			<div class="col-12 col-lg-5">
 				<a href={withBase('/')} class="d-inline-flex align-items-center gap-2 text-decoration-none mb-3" style="color: var(--text);">
 					<Rosette size="1.75rem" animate={false} />
 					<span class="footer-wordmark">lattice <span class="footer-build">build</span></span>
@@ -47,8 +43,8 @@ const columns = [
 			</div>
 
 			{
-				columns.map((col) => (
-					<div class="col-6 col-lg-2 offset-lg-0">
+				columns.map((col, i) => (
+					<div class:list={['col-6 col-lg-3', i === 0 && 'offset-lg-1']}>
 						<h3 class="text-uppercase mb-3" style="font-size: 0.75rem; letter-spacing: 0.08em; color: var(--text-muted);">
 							{col.title}
 						</h3>

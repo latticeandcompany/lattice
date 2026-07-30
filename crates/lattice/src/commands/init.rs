@@ -238,10 +238,10 @@ fn interactive_wizard() -> Result<Value> {
 /// Prompt for a well-known engine name + a version constraint. The wizard only
 /// emits well-known, string-form engines.
 fn pick_engine(theme: &ColorfulTheme) -> Result<(String, String)> {
-	let engines = lattice_config::WELL_KNOWN_ENGINES;
+	let engines = lattice_config::well_known_engine_names();
 	let idx = Select::with_theme(theme)
 		.with_prompt("engine")
-		.items(engines)
+		.items(&engines)
 		.default(0)
 		.interact()?;
 	let name = engines[idx].to_string();

@@ -6,7 +6,7 @@ use clap::Args;
 use console::style;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use lattice_config::{find_root, resolve_engines};
+use lattice_config::{find_root, resolve_engines, LOCKFILES};
 use lattice_output::{banner_line, make_reporter, paint_teal, ROSETTE};
 use lattice_workspace::toolchain;
 use lattice_workspace::{discover_workspaces, Workspace};
@@ -174,8 +174,19 @@ pub fn install_command_for(tool: &str, has_wrapper: bool) -> Option<String> {
 		"go" => "go mod download",
 		"poetry" => "poetry install",
 		"uv" => "uv sync",
-		"bundler" => "bundle install",
+		"pdm" => "pdm install",
+		"pipenv" => "pipenv install",
 		"pip" => "pip install -r requirements.txt",
+		"bundler" => "bundle install",
+		"dotnet" => "dotnet restore",
+		"nuget" => "nuget restore",
+		"pod" => "pod install",
+		"swift" => "swift package resolve",
+		"composer" => "composer install",
+		"mix" => "mix deps.get",
+		"dart" => "dart pub get",
+		"stack" => "stack build --only-dependencies",
+		"cabal" => "cabal build --only-download",
 		"gradle" => {
 			return Some(
 				if has_wrapper {
@@ -200,21 +211,6 @@ pub fn install_command_for(tool: &str, has_wrapper: bool) -> Option<String> {
 	};
 	Some(cmd.to_string())
 }
-
-/// Lockfiles whose mtime is compared against the setup marker to decide whether
-/// dependencies need reinstalling.
-const LOCKFILES: &[&str] = &[
-	"package-lock.json",
-	"yarn.lock",
-	"pnpm-lock.yaml",
-	"bun.lockb",
-	"bun.lock",
-	"Cargo.lock",
-	"go.sum",
-	"poetry.lock",
-	"uv.lock",
-	"Gemfile.lock",
-];
 
 fn lockfile_changed(workspace_path: &Path) -> bool {
 	let marker = workspace_path.join(".lattice-setup-marker");
@@ -367,9 +363,29 @@ mod tests {
 	}
 
 	#[test]
+	fn every_package_manager_and_build_tool_driver_has_an_installer() {
+		// A driver that resolves dependencies must know how; only pure runtimes
+		// and task runners (which sit above one) have no install step.
+		for spec in lattice_workspace::DriverRegistry::known() {
+			let installs = spec.roles.iter().any(|r| {
+				matches!(
+					r,
+					lattice_workspace::Role::PackageManager | lattice_workspace::Role::BuildTool
+				)
+			});
+			assert_eq!(
+				install_command_for(spec.tool, false).is_some(),
+				installs,
+				"install command for '{}' does not match its role",
+				spec.tool
+			);
+		}
+	}
+
+	#[test]
 	fn unknown_tool_has_no_installer() {
 		assert_eq!(install_command_for("rake", false), None);
-		assert_eq!(install_command_for("pod", false), None);
+		assert_eq!(install_command_for("alpes", false), None);
 		assert_eq!(install_command_for("node", false), None);
 	}
 }

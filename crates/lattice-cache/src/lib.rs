@@ -12,22 +12,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use lattice_config::PipelineTask;
-
-/// Lockfiles hashed into a task's cache key when present in the workspace,
-/// since their contents change what a build produces.
-const LOCKFILES: &[&str] = &[
-	"package-lock.json",
-	"yarn.lock",
-	"pnpm-lock.yaml",
-	"bun.lockb",
-	"bun.lock",
-	"Cargo.lock",
-	"go.sum",
-	"poetry.lock",
-	"uv.lock",
-	"Gemfile.lock",
-];
+// Lockfiles are hashed into a task's cache key when present in the workspace,
+// since their contents change what a build produces.
+use lattice_config::{PipelineTask, LOCKFILES};
 
 /// Metadata recorded alongside every cached artifact.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -12,9 +12,12 @@
 //! * (d) otherwise, stop and ask ([`AmbiguityError`]). A bare generic ecosystem
 //!   marker (a lone `package.json`, `pom.xml`, …) is not enough on its own.
 //!
-//! Tools carry a [`Role`]. Tools with *different* roles compose into a stack
-//! (a node runtime plus a pnpm package-manager); only tools competing for the
-//! *same* role are a conflict.
+//! Tools carry one or more [`Role`]s. Tools with *different* driving roles
+//! compose into a stack (a node runtime plus a pnpm package-manager); only tools
+//! competing for the *same* driving role are a conflict. A tool can fill more
+//! than one role — deno and bun are runtimes as well as a task runner and a
+//! package manager — in which case the highest-ranked role is the one it drives
+//! with.
 
 use std::path::{Path, PathBuf};
 
@@ -52,8 +55,12 @@ pub struct DriverRegistry;
 /// One known tool: how to recognize it, version-check it, and invoke a task.
 pub struct DriverSpec {
 	pub tool: &'static str,
-	pub role: Role,
-	/// Files that identify this tool when present in a workspace dir.
+	/// Every job this tool does. A tool that fills more than one role drives
+	/// with its highest-ranked one ([`DriverSpec::drive_role`]).
+	pub roles: &'static [Role],
+	/// Files that identify this tool when present in a workspace dir. Empty for
+	/// a tool with no artifact only it produces: it can still be named in
+	/// `engines` or a `.tool-versions` file, which is stronger evidence anyway.
 	pub fingerprint: &'static [&'static str],
 	/// Command that prints the tool's version.
 	pub version_cmd: &'static str,
@@ -65,222 +72,259 @@ impl DriverSpec {
 	pub fn invoke(&self, task: &str) -> String {
 		self.invoke_tpl.replace("{task}", task)
 	}
+
+	/// The role this tool competes for as a task driver: its highest-ranked one.
+	pub fn drive_role(&self) -> Role {
+		self.roles
+			.iter()
+			.copied()
+			.max_by_key(|r| r.drive_rank())
+			.expect("every driver declares at least one role")
+	}
 }
 
 static DRIVERS: &[DriverSpec] = &[
 	DriverSpec {
 		tool: "node",
-		role: Role::Runtime,
+		roles: &[Role::Runtime],
 		fingerprint: &[".nvmrc"],
 		version_cmd: "node --version",
 		invoke_tpl: "node {task}",
 	},
 	DriverSpec {
 		tool: "deno",
-		role: Role::TaskRunner,
+		roles: &[Role::Runtime, Role::PackageManager, Role::TaskRunner],
 		fingerprint: &["deno.json", "deno.jsonc", "deno.lock"],
 		version_cmd: "deno --version",
 		invoke_tpl: "deno task {task}",
 	},
 	DriverSpec {
 		tool: "bun",
-		role: Role::PackageManager,
+		roles: &[Role::Runtime, Role::PackageManager],
 		fingerprint: &["bun.lockb", "bun.lock"],
 		version_cmd: "bun --version",
 		invoke_tpl: "bun run {task}",
 	},
 	DriverSpec {
 		tool: "pnpm",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["pnpm-lock.yaml"],
 		version_cmd: "pnpm --version",
 		invoke_tpl: "pnpm run {task}",
 	},
 	DriverSpec {
 		tool: "yarn",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["yarn.lock"],
 		version_cmd: "yarn --version",
 		invoke_tpl: "yarn {task}",
 	},
 	DriverSpec {
 		tool: "npm",
-		role: Role::PackageManager,
-		fingerprint: &["package-lock.json"],
+		roles: &[Role::PackageManager],
+		fingerprint: &["package-lock.json", "npm-shrinkwrap.json"],
 		version_cmd: "npm --version",
 		invoke_tpl: "npm run {task}",
 	},
 	DriverSpec {
 		tool: "cargo",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["Cargo.lock", "rust-toolchain.toml", "rust-toolchain"],
 		version_cmd: "cargo --version",
 		invoke_tpl: "cargo {task}",
 	},
 	DriverSpec {
 		tool: "go",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["go.sum"],
 		version_cmd: "go version",
 		invoke_tpl: "go {task}",
 	},
 	DriverSpec {
 		tool: "uv",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["uv.lock"],
 		version_cmd: "uv --version",
 		invoke_tpl: "uv run {task}",
 	},
 	DriverSpec {
 		tool: "poetry",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["poetry.lock"],
 		version_cmd: "poetry --version",
 		invoke_tpl: "poetry run {task}",
 	},
 	DriverSpec {
 		tool: "pdm",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["pdm.lock"],
 		version_cmd: "pdm --version",
 		invoke_tpl: "pdm run {task}",
 	},
 	DriverSpec {
 		tool: "pipenv",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["Pipfile.lock"],
 		version_cmd: "pipenv --version",
 		invoke_tpl: "pipenv run {task}",
 	},
 	DriverSpec {
+		tool: "pip",
+		roles: &[Role::PackageManager],
+		// A `requirements.txt` names no tool — pip, uv, and pip-tools all read it
+		// — so pip is only ever selected by declaration.
+		fingerprint: &[],
+		version_cmd: "pip --version",
+		invoke_tpl: "pip {task}",
+	},
+	DriverSpec {
 		tool: "python",
-		role: Role::Runtime,
+		roles: &[Role::Runtime],
 		fingerprint: &[".python-version"],
 		version_cmd: "python --version",
 		invoke_tpl: "python -m {task}",
 	},
 	DriverSpec {
 		tool: "bundler",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["Gemfile.lock"],
 		version_cmd: "bundle --version",
 		invoke_tpl: "bundle exec {task}",
 	},
 	DriverSpec {
 		tool: "rake",
-		role: Role::TaskRunner,
+		roles: &[Role::TaskRunner],
 		fingerprint: &["Rakefile"],
 		version_cmd: "rake --version",
 		invoke_tpl: "rake {task}",
 	},
 	DriverSpec {
 		tool: "ruby",
-		role: Role::Runtime,
+		roles: &[Role::Runtime],
 		fingerprint: &[".ruby-version"],
 		version_cmd: "ruby --version",
 		invoke_tpl: "ruby {task}",
 	},
 	DriverSpec {
 		tool: "gradle",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["gradlew"],
 		version_cmd: "gradle --version",
 		invoke_tpl: "./gradlew {task}",
 	},
 	DriverSpec {
 		tool: "maven",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["mvnw"],
 		version_cmd: "mvn --version",
 		invoke_tpl: "./mvnw {task}",
 	},
 	DriverSpec {
 		tool: "java",
-		role: Role::Runtime,
+		roles: &[Role::Runtime],
 		fingerprint: &[".java-version"],
 		version_cmd: "java -version",
 		invoke_tpl: "java {task}",
 	},
 	DriverSpec {
+		tool: "kotlin",
+		roles: &[Role::Runtime],
+		// Kotlin projects are driven by gradle or maven; nothing on disk names
+		// the Kotlin toolchain itself except a `.tool-versions` entry.
+		fingerprint: &[],
+		version_cmd: "kotlinc -version",
+		invoke_tpl: "kotlin {task}",
+	},
+	DriverSpec {
 		tool: "dotnet",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["global.json"],
 		version_cmd: "dotnet --version",
 		invoke_tpl: "dotnet {task}",
 	},
 	DriverSpec {
+		tool: "nuget",
+		roles: &[Role::PackageManager],
+		// `packages.lock.json` is deliberately absent: an SDK-style project can
+		// have one and still be driven by `dotnet`. `packages.config` is the
+		// legacy layout nuget.exe alone restores.
+		fingerprint: &["packages.config"],
+		version_cmd: "nuget help",
+		invoke_tpl: "nuget {task}",
+	},
+	DriverSpec {
 		tool: "pod",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["Podfile", "Podfile.lock"],
 		version_cmd: "pod --version",
 		invoke_tpl: "pod {task}",
 	},
 	DriverSpec {
+		tool: "swift",
+		roles: &[Role::BuildTool],
+		fingerprint: &["Package.resolved"],
+		version_cmd: "swift --version",
+		invoke_tpl: "swift {task}",
+	},
+	DriverSpec {
 		tool: "composer",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["composer.lock"],
 		version_cmd: "composer --version",
 		invoke_tpl: "composer {task}",
 	},
 	DriverSpec {
 		tool: "mix",
-		role: Role::TaskRunner,
+		roles: &[Role::PackageManager, Role::TaskRunner],
 		fingerprint: &["mix.lock"],
 		version_cmd: "mix --version",
 		invoke_tpl: "mix {task}",
 	},
 	DriverSpec {
 		tool: "dart",
-		role: Role::PackageManager,
+		roles: &[Role::PackageManager],
 		fingerprint: &["pubspec.lock"],
 		version_cmd: "dart --version",
 		invoke_tpl: "dart pub {task}",
 	},
 	DriverSpec {
-		tool: "swift",
-		role: Role::BuildTool,
-		fingerprint: &["Package.resolved"],
-		version_cmd: "swift --version",
-		invoke_tpl: "swift {task}",
-	},
-	DriverSpec {
 		tool: "stack",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["stack.yaml.lock"],
 		version_cmd: "stack --version",
 		invoke_tpl: "stack {task}",
 	},
 	DriverSpec {
 		tool: "cabal",
-		role: Role::BuildTool,
+		roles: &[Role::BuildTool],
 		fingerprint: &["cabal.project.freeze"],
 		version_cmd: "cabal --version",
 		invoke_tpl: "cabal {task}",
 	},
 	DriverSpec {
 		tool: "just",
-		role: Role::TaskRunner,
+		roles: &[Role::TaskRunner],
 		fingerprint: &["justfile", ".justfile"],
 		version_cmd: "just --version",
 		invoke_tpl: "just {task}",
 	},
 	DriverSpec {
 		tool: "task",
-		role: Role::TaskRunner,
+		roles: &[Role::TaskRunner],
 		fingerprint: &["Taskfile.yml", "Taskfile.yaml"],
 		version_cmd: "task --version",
 		invoke_tpl: "task {task}",
 	},
 	DriverSpec {
 		tool: "turbo",
-		role: Role::TaskRunner,
+		roles: &[Role::TaskRunner],
 		fingerprint: &["turbo.json"],
 		version_cmd: "turbo --version",
 		invoke_tpl: "turbo run {task}",
 	},
 	DriverSpec {
 		tool: "nx",
-		role: Role::TaskRunner,
+		roles: &[Role::TaskRunner],
 		fingerprint: &["nx.json"],
 		version_cmd: "nx --version",
 		invoke_tpl: "nx run {task}",
@@ -385,25 +429,57 @@ impl std::fmt::Display for AmbiguityError {
 
 impl std::error::Error for AmbiguityError {}
 
+/// Generic ecosystem markers: files that name a language but not a tool. Each
+/// maps to the tools that could plausibly drive such a workspace; the first
+/// marker found wins.
+static ECOSYSTEM_MARKERS: &[(&str, &[&str])] = &[
+	("package.json", &["pnpm", "npm", "yarn", "bun"]),
+	("Cargo.toml", &["cargo"]),
+	("go.mod", &["go"]),
+	("pyproject.toml", &["uv", "poetry", "pdm", "pipenv"]),
+	("requirements.txt", &["pip", "uv", "poetry"]),
+	("setup.py", &["pip", "uv", "poetry"]),
+	("Gemfile", &["bundler", "rake"]),
+	("pom.xml", &["maven"]),
+	("build.gradle", &["gradle"]),
+	("build.gradle.kts", &["gradle"]),
+	("composer.json", &["composer"]),
+	("mix.exs", &["mix"]),
+	("pubspec.yaml", &["dart"]),
+	("Package.swift", &["swift"]),
+	("stack.yaml", &["stack"]),
+	("cabal.project", &["cabal"]),
+];
+
+/// Extensions of .NET project files, which carry a project name rather than a
+/// fixed one, so they are matched by extension instead of by name.
+const DOTNET_PROJECT_EXTS: &[&str] = &["sln", "csproj", "fsproj", "vbproj"];
+
 /// The plausible ecosystem package-managers/build-tools for the generic marker
 /// present in `path`, if any. Used only to populate an [`AmbiguityError`].
 fn ecosystem_candidates(path: &Path) -> Vec<&'static str> {
-	if path.join("package.json").exists() {
-		vec!["pnpm", "npm", "yarn", "bun"]
-	} else if path.join("pom.xml").exists() {
-		vec!["maven"]
-	} else if path.join("build.gradle").exists() || path.join("build.gradle.kts").exists() {
-		vec!["gradle"]
-	} else if path.join("pyproject.toml").exists()
-		|| path.join("setup.py").exists()
-		|| path.join("requirements.txt").exists()
-	{
-		vec!["uv", "poetry"]
-	} else if path.join("Gemfile").exists() {
-		vec!["bundler", "rake"]
-	} else {
-		vec![]
+	for (marker, candidates) in ECOSYSTEM_MARKERS {
+		if path.join(marker).exists() {
+			return candidates.to_vec();
+		}
 	}
+	if has_dotnet_project(path) {
+		return vec!["dotnet", "nuget"];
+	}
+	vec![]
+}
+
+fn has_dotnet_project(path: &Path) -> bool {
+	let Ok(entries) = std::fs::read_dir(path) else {
+		return false;
+	};
+	entries.flatten().any(|e| {
+		e.path()
+			.extension()
+			.and_then(|x| x.to_str())
+			.map(|ext| DOTNET_PROJECT_EXTS.contains(&ext))
+			.unwrap_or(false)
+	})
 }
 
 /// Build a copy-pasteable `"engines"` snippet naming `tool`.
@@ -554,7 +630,7 @@ pub fn detect_drivers(
 	let mut top_rank = 0u8;
 	for ev_tool in cands.keys() {
 		if let Some(spec) = DriverRegistry::get(ev_tool) {
-			top_rank = top_rank.max(spec.role.drive_rank());
+			top_rank = top_rank.max(spec.drive_role().drive_rank());
 		}
 	}
 
@@ -567,7 +643,7 @@ pub fn detect_drivers(
 		.iter()
 		.filter(|(t, _)| {
 			DriverRegistry::get(t)
-				.map(|s| s.role.drive_rank() == top_rank)
+				.map(|s| s.drive_role().drive_rank() == top_rank)
 				.unwrap_or(false)
 		})
 		.collect();
@@ -598,7 +674,7 @@ pub fn detect_drivers(
 	let spec = DriverRegistry::get(chosen.0).expect("candidate is a known tool");
 	Ok(DriverResolution {
 		tool: chosen.0.clone(),
-		role: spec.role,
+		role: spec.drive_role(),
 		via: chosen.1.clone(),
 	})
 }
@@ -1122,6 +1198,124 @@ mod tests {
 		assert!(err.candidates.contains(&"pdm".to_string()));
 		assert!(err.candidates.contains(&"pipenv".to_string()));
 		assert!(format!("{err}").contains("engines"));
+	}
+
+	#[test]
+	fn every_driver_is_declarable_as_a_string_engine() {
+		// The suggested fix for an ambiguity error is a string-form `engines`
+		// entry, so every driver must have a built-in version rule to check.
+		for spec in DRIVERS {
+			assert!(
+				lattice_config::is_well_known_engine(spec.tool),
+				"driver '{}' is missing from WELL_KNOWN_ENGINES",
+				spec.tool
+			);
+		}
+	}
+
+	#[test]
+	fn driver_and_engine_version_commands_agree() {
+		for spec in DRIVERS {
+			assert_eq!(
+				Some(spec.version_cmd),
+				lattice_config::builtin_version_cmd(spec.tool),
+				"version command for '{}' differs between the two tables",
+				spec.tool
+			);
+		}
+	}
+
+	#[test]
+	fn dual_role_tools_drive_with_their_highest_role() {
+		// deno and bun are runtimes too, but a runtime is never what they drive
+		// with — otherwise they could not run a named task at all.
+		let deno = DriverRegistry::get("deno").unwrap();
+		assert!(deno.roles.contains(&Role::Runtime));
+		assert_eq!(deno.drive_role(), Role::TaskRunner);
+		let bun = DriverRegistry::get("bun").unwrap();
+		assert!(bun.roles.contains(&Role::Runtime));
+		assert_eq!(bun.drive_role(), Role::PackageManager);
+	}
+
+	#[test]
+	fn a_dual_role_runtime_still_composes_over_node() {
+		// bun is both a runtime and a package manager; node is only a runtime.
+		// bun's package-manager role outranks it, so bun drives without conflict.
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), ".nvmrc", "20\n");
+		write(tmp.path(), "bun.lockb", "");
+		write(
+			tmp.path(),
+			"package.json",
+			r#"{ "scripts": { "build": "x" } }"#,
+		);
+		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+		assert_eq!(d.tool, "bun");
+		assert_eq!(d.role, Role::PackageManager);
+	}
+
+	#[test]
+	fn detect_nuget_via_packages_config() {
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), "packages.config", "<packages />");
+		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+		assert_eq!(d.tool, "nuget");
+		assert_eq!(d.via, Evidence::Lockfile("packages.config".into()));
+	}
+
+	#[test]
+	fn a_nuget_lockfile_alone_leaves_dotnet_driving() {
+		// An SDK-style project can restore with a lockfile and still be a
+		// `dotnet` workspace, so packages.lock.json is not nuget evidence.
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), "global.json", "{}");
+		write(tmp.path(), "packages.lock.json", "{}");
+		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+		assert_eq!(d.tool, "dotnet");
+	}
+
+	#[test]
+	fn pip_drives_only_when_declared() {
+		// requirements.txt names no tool, so it stays an ambiguity …
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), "requirements.txt", "flask\n");
+		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+		assert!(err.candidates.contains(&"pip".to_string()));
+		// … which a declaration settles.
+		let d = detect_drivers(tmp.path(), &engines(json!({ "pip": ">=24.0" }))).unwrap();
+		assert_eq!(d.tool, "pip");
+		assert_eq!(d.via, Evidence::Declaration);
+		assert_eq!(
+			DriverRegistry::get("pip").unwrap().invoke("install"),
+			"pip install"
+		);
+	}
+
+	#[test]
+	fn kotlin_is_a_runtime_that_never_drives_alone() {
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), ".tool-versions", "kotlin 2.0.0\n");
+		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+		assert!(format!("{err}").contains("No task driver could be detected"));
+
+		// Under gradle it composes: gradle drives, kotlin stays a pinned engine.
+		write(tmp.path(), "gradlew", "");
+		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+		assert_eq!(d.tool, "gradle");
+	}
+
+	#[test]
+	fn ecosystem_candidates_cover_the_bare_markers() {
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), "Cargo.toml", "[package]\n");
+		assert_eq!(ecosystem_candidates(tmp.path()), vec!["cargo"]);
+
+		let dotnet = TempDir::new().unwrap();
+		write(dotnet.path(), "Api.csproj", "<Project />");
+		assert_eq!(ecosystem_candidates(dotnet.path()), vec!["dotnet", "nuget"]);
+
+		let empty = TempDir::new().unwrap();
+		assert!(ecosystem_candidates(empty.path()).is_empty());
 	}
 
 	#[test]

@@ -38,9 +38,12 @@ when two tools would otherwise tie — see
 
 A **bare generic marker is never enough on its own.** A lone `package.json`
 with no lockfile and no `packageManager` field identifies the JavaScript
-ecosystem, not a driver; the same goes for a lone `pom.xml`, `pyproject.toml`,
-or `Gemfile`. None of these appear as fingerprints in the driver registry —
-they only feed the *list of candidates* an ambiguity error suggests.
+ecosystem, not a driver; the same goes for a lone `Cargo.toml`, `go.mod`,
+`pom.xml`, `pyproject.toml`, `requirements.txt`, `Gemfile`, `composer.json`,
+`mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`, `cabal.project`, or
+`.csproj`. None of these appear as fingerprints in the driver registry — they
+only feed the *list of candidates* an ambiguity error suggests, so the halt
+message names the tools that could plausibly have been meant.
 
 Rung 2 covers files like `.tool-versions` (asdf/mise), `mise.toml`'s
 `[tools]` table, a `go.mod` `toolchain` line, a `ruby "3.2.0"` directive in a
@@ -56,9 +59,10 @@ registry — a handful, to be concrete:
 | `just` | `justfile`, `.justfile` | `just {task}` |
 | `turbo` | `turbo.json` | `turbo run {task}` |
 
-The full set of roughly 30 built-in drivers, with every fingerprint and
-invoke form, is the built-in driver table on
-[Toolchains](/lattice/docs/toolchains).
+The full set of 34 built-in drivers, with every fingerprint and invoke form, is
+the built-in driver table on [Toolchains](/lattice/docs/toolchains). Two of them
+(`pip` and `kotlin`) have no fingerprint at all — no file on disk belongs to
+them alone — so they are reachable only from rung 1 or rung 2.
 
 ## Halting instead of guessing
 
@@ -99,16 +103,24 @@ purpose; see [Engines and provisioning](/lattice/docs/engines).
 
 ## Roles: composition and conflict
 
-Every driver carries a **role** — what kind of job it does — and roles are
-what let more than one tool coexist in a workspace without triggering an
-ambiguity error. From lowest to highest driving rank:
+Every driver carries one or more **roles** — what kinds of job it does — and
+roles are what let more than one tool coexist in a workspace without triggering
+an ambiguity error. From lowest to highest driving rank:
 
 | Role | Rank | Examples |
 | --- | --- | --- |
-| Runtime | 0 | `node`, `python`, `ruby`, `java` |
-| Build tool | 1 | `cargo`, `go`, `gradle`, `maven` |
-| Package manager | 2 | `pnpm`, `npm`, `yarn`, `bun`, `uv`, `poetry` |
+| Runtime | 0 | `node`, `python`, `ruby`, `java`, `kotlin` |
+| Build tool | 1 | `cargo`, `go`, `gradle`, `maven`, `dotnet`, `swift` |
+| Package manager | 2 | `pnpm`, `npm`, `yarn`, `bun`, `uv`, `poetry`, `nuget` |
 | Task runner | 3 | `just`, `task`, `turbo`, `nx`, `deno`, `rake` |
+
+Some tools do several of these jobs. `deno` is a runtime, a package manager,
+and a task runner; `bun` is a runtime and a package manager; `mix` is Elixir's
+package manager and its task runner. A tool like that competes with its
+**highest-ranked** role and no other — `deno` as a task runner, `bun` as a
+package manager. That is why a `.nvmrc` next to a `bun.lockb` resolves to bun
+instead of deadlocking two runtimes: bun's package-manager role outranks node's
+runtime role, so the two compose rather than conflict.
 
 **Different roles compose into a stack.** A `.nvmrc` (node, a runtime) next to
 a `pnpm-lock.yaml` (pnpm, a package manager) is not a conflict: pnpm drives,

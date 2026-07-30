@@ -187,11 +187,12 @@ a native declaration rather than a generic lockfile, add it to
 `is_native_fingerprint`. Regenerate the driver table on
 [Toolchains](/lattice/docs/toolchains) from this array — never from memory.
 
-**Adding a well-known engine.** Add the name to `WELL_KNOWN_ENGINES` in
-`crates/lattice-config/src/lib.rs`, and add its built-in version command to
-`builtin_version_cmd` in `crates/lattice-workspace/src/toolchain.rs`. Without
-the second step a string-form constraint on the new name would pass config
-validation but fail at resolution time with no way to check its version.
+**Adding a well-known engine.** Add one `(name, version command)` row to
+`WELL_KNOWN_ENGINES` in `crates/lattice-config/src/lib.rs`. That single table
+answers both questions — whether a string-form constraint on the name is valid,
+and how to read the tool's version — so the two can never disagree. A driver in
+`DRIVERS` must have a row here as well, with the same version command; a test in
+each crate enforces both halves.
 
 **Adding a subcommand.** Add a variant to the `Commands` enum in
 `crates/lattice/src/cli.rs`, an `Args` struct plus `execute` method in a new

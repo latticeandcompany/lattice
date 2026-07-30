@@ -83,7 +83,7 @@ service with its own watch command:
 infers `build` and `dev` from their `package.json` scripts); `api`'s Rust
 driver has no notion of a watch mode, so its `dev` command is declared
 explicitly — an explicit `scripts` entry always wins over whatever a driver
-would have inferred (`crates/lattice-workspace/src/lib.rs:770-773`).
+would have inferred (`crates/lattice-workspace/src/lib.rs:846-849`).
 
 ## Running every dev server at once
 

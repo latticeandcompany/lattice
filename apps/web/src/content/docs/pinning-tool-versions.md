@@ -31,11 +31,16 @@ tool already on `PATH` and installs nothing:
 }
 ```
 
-This only works for the engines Lattice already knows how to version-check —
-`node`, `deno`, `bun`, `pnpm`, `yarn`, `npm`, `rust`, `cargo`, `go`, `python`,
-`python3`, `ruby`, `bundler`, `java`, `gradle`, `maven`, `dotnet`. A bare
-string for any other name is rejected at load time, not at run time. If your
-tool is not on this list, see
+This only works for the engines Lattice already knows how to version-check:
+every built-in driver — `node`, `deno`, `bun`, `pnpm`, `yarn`, `npm`, `cargo`,
+`go`, `pip`, `uv`, `poetry`, `pdm`, `pipenv`, `python`, `bundler`, `rake`,
+`java`, `kotlin`, `gradle`, `maven`, `dotnet`, `nuget`, `pod`, `swift`,
+`composer`, `mix`, `dart`, `stack`, `cabal`, `just`, `task`, `turbo`, `nx` —
+plus the language toolchains `rust`, `python3`, `php`, `elixir`, and
+`haskell`/`ghc`. The
+[full table with each version command](/lattice/docs/toolchains#well-known-engines)
+is on the Toolchains page. A bare string for any other name is rejected at load
+time, not at run time. If your tool is not on this list, see
 ["My tool isn't one Lattice knows"](#my-tool-isnt-one-lattice-knows) below.
 
 Verify it:

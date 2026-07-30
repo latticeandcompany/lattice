@@ -494,8 +494,26 @@ w "$DET/pkgs/rake/Rakefile" "task :build"
 w "$DET/pkgs/gradle/gradlew" "#!/bin/sh";     w "$DET/pkgs/gradle/build.gradle" ""
 w "$DET/pkgs/maven/mvnw" "#!/bin/sh";         w "$DET/pkgs/maven/pom.xml" "<project/>"
 w "$DET/pkgs/dotnet/global.json" "{}"
+w "$DET/pkgs/pdm/pdm.lock" "";                w "$DET/pkgs/pdm/pyproject.toml" "[project]"
+w "$DET/pkgs/pipenv/Pipfile.lock" "";         w "$DET/pkgs/pipenv/Pipfile" ""
+w "$DET/pkgs/pip/requirements.txt" "flask"
+w "$DET/pkgs/nuget/packages.config" "<packages/>"
+w "$DET/pkgs/pod/Podfile.lock" "";            w "$DET/pkgs/pod/Podfile" "platform :ios"
+w "$DET/pkgs/swift/Package.resolved" "{}";    w "$DET/pkgs/swift/Package.swift" ""
+w "$DET/pkgs/composer/composer.lock" "";      w "$DET/pkgs/composer/composer.json" "{}"
+w "$DET/pkgs/mix/mix.lock" "";                w "$DET/pkgs/mix/mix.exs" ""
+w "$DET/pkgs/dart/pubspec.lock" "";           w "$DET/pkgs/dart/pubspec.yaml" "name: d"
+w "$DET/pkgs/stack/stack.yaml.lock" "";       w "$DET/pkgs/stack/stack.yaml" ""
+w "$DET/pkgs/cabal/cabal.project.freeze" ""
+w "$DET/pkgs/shrinkwrap/npm-shrinkwrap.json" "{}"; w "$DET/pkgs/shrinkwrap/package.json" "$PKG"
+# An SDK-style .NET project may carry a nuget lockfile and still be dotnet-driven.
+w "$DET/pkgs/dotnet-locked/global.json" "{}"; w "$DET/pkgs/dotnet-locked/packages.lock.json" "{}"
+# kotlin is a runtime: it composes under gradle rather than driving.
+w "$DET/pkgs/kotlin/.tool-versions" "kotlin 2.0.0"; w "$DET/pkgs/kotlin/gradlew" "#!/bin/sh"
 w "$DET/pkgs/override/pnpm-lock.yaml" "";     w "$DET/pkgs/override/package.json" "$PKG"
 w "$DET/pkgs/composition/.nvmrc" "20";        w "$DET/pkgs/composition/pnpm-lock.yaml" "";  w "$DET/pkgs/composition/package.json" "$PKG"
+# bun is a runtime *and* a package manager; it outranks a bare node runtime.
+w "$DET/pkgs/dual-role/.nvmrc" "20";          w "$DET/pkgs/dual-role/bun.lockb" "";         w "$DET/pkgs/dual-role/package.json" "$PKG"
 cat > "$DET/lattice.json" <<'JSON'
 {
   "workspaces": [
@@ -513,8 +531,23 @@ cat > "$DET/lattice.json" <<'JSON'
     { "name": "gradle", "path": "pkgs/gradle" },
     { "name": "maven", "path": "pkgs/maven" },
     { "name": "dotnet", "path": "pkgs/dotnet" },
+    { "name": "pdm", "path": "pkgs/pdm" },
+    { "name": "pipenv", "path": "pkgs/pipenv" },
+    { "name": "pip", "path": "pkgs/pip", "engines": { "pip": ">=0.0.0" } },
+    { "name": "nuget", "path": "pkgs/nuget" },
+    { "name": "pod", "path": "pkgs/pod" },
+    { "name": "swift", "path": "pkgs/swift" },
+    { "name": "composer", "path": "pkgs/composer" },
+    { "name": "mix", "path": "pkgs/mix" },
+    { "name": "dart", "path": "pkgs/dart" },
+    { "name": "stack", "path": "pkgs/stack" },
+    { "name": "cabal", "path": "pkgs/cabal" },
+    { "name": "shrinkwrap", "path": "pkgs/shrinkwrap" },
+    { "name": "dotnet-locked", "path": "pkgs/dotnet-locked" },
+    { "name": "kotlin", "path": "pkgs/kotlin" },
     { "name": "override-bun", "path": "pkgs/override", "engines": { "bun": ">=1.0.0" } },
-    { "name": "composition", "path": "pkgs/composition" }
+    { "name": "composition", "path": "pkgs/composition" },
+    { "name": "dual-role", "path": "pkgs/dual-role" }
   ],
   "tasks": {
     "build": { "outputs": ["dist/**"] },
@@ -537,8 +570,23 @@ t_has  "detect rake (Rakefile)"             "rake build"
 t_has  "detect gradle (gradlew)"            "./gradlew build"
 t_has  "detect maven (mvnw)"                "./mvnw build"
 t_has  "detect dotnet (global.json)"        "dotnet build"
+t_has  "detect pdm (pdm.lock)"              "pdm run build"
+t_has  "detect pipenv (Pipfile.lock)"       "pipenv run build"
+t_has  "detect nuget (packages.config)"     "nuget build"
+t_has  "detect pod (Podfile.lock)"          "pod build"
+t_has  "detect swift (Package.resolved)"    "swift build"
+t_has  "detect composer (composer.lock)"    "composer build"
+t_has  "detect mix (mix.lock)"              "mix build"
+t_has  "detect dart (pubspec.lock)"         "dart pub build"
+t_has  "detect stack (stack.yaml.lock)"     "stack build"
+t_has  "detect cabal (cabal.project.freeze)" "cabal build"
+t_hasE "detect npm (npm-shrinkwrap.json)"   "shrinkwrap:build.*npm run build"
+t_hasE "declared pip drives (requirements.txt)" "pip:build.*pip build"
+t_hasE "nuget lockfile leaves dotnet driving"  "dotnet-locked:build.*dotnet build"
+t_hasE "kotlin composes under gradle"       "kotlin:build.*\./gradlew build"
 t_hasE "declaration overrides lockfile"     "override-bun:build.*bun run build"
 t_hasE "roles compose (node+pnpm→pnpm)"     "composition:build.*pnpm run build"
+t_hasE "dual-role bun outranks node"        "dual-role:build.*bun run build"
 
 # Persistent tasks are never fabricated for direct-invoke drivers: `run dev`
 # resolves only the workspace that declares a `dev` script (npm), never cargo/go.
@@ -993,6 +1041,155 @@ OUTPUT="$(cd "$NOREL" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/nothing-h
 t_bad "an unfetchable pinned version fails loudly"
 t_has "the failure names the pinned version" "$FAKEVER"
 t_has "the failure names the way out"        "--no-version-check"
+
+# =========================================================================
+# 15. The shipped agent skill.
+# =========================================================================
+# skills/lattice/ is what other people's agents learn Lattice from, so it is
+# checked against this binary rather than trusted. A command, a flag, an engine
+# name or an invoke template that drifts out of it fails here instead of in
+# someone else's repo. Every expectation below is read out of the skill files,
+# so updating them is what makes this section pass again.
+sect "the shipped agent skill"
+
+SKILLDIR="$REPO_ROOT/skills/lattice"
+
+t_file "$SKILLDIR/SKILL.md"                   "the skill ships at skills/lattice/SKILL.md"
+t_file "$SKILLDIR/references/cli.md"          "the skill ships references/cli.md"
+t_file "$SKILLDIR/references/toolchains.md"   "the skill ships references/toolchains.md"
+
+# .gitattributes checks Markdown out CRLF, so every field read out of these files
+# below would otherwise carry a carriage return. Parse normalized copies.
+SKILLN="$ENVROOT/skill"
+mkdir -p "$SKILLN/references"
+tr -d '\r' < "$SKILLDIR/SKILL.md" > "$SKILLN/SKILL.md"
+for ref in "$SKILLDIR"/references/*.md; do
+  tr -d '\r' < "$ref" > "$SKILLN/references/$(basename "$ref")"
+done
+SKILL="$SKILLN/SKILL.md"
+SKILLCLI="$SKILLN/references/cli.md"
+SKILLTOOLS="$SKILLN/references/toolchains.md"
+
+t_grepfile "$SKILL" "name: lattice" "the skill's frontmatter names it"
+t_grepfile "$SKILL" "description:"  "the skill's frontmatter describes it"
+
+for ref in "$SKILLDIR"/references/*.md; do
+  base="references/$(basename "$ref")"
+  t_grepfile "$SKILL" "$base" "SKILL.md points at $base"
+done
+for ref in $(grep -oE 'references/[a-z-]+\.md' "$SKILL" | sort -u); do
+  t_file "$SKILLDIR/$ref" "the skill ships the $ref it points at"
+done
+
+# --- the command surface --------------------------------------------------
+lat "$ENVROOT" --help
+ALLHELP="$OUTPUT"
+BIN_CMDS="$(printf '%s\n' "$OUTPUT" |
+  awk '/^Commands:/ { f = 1; next } /^Options:/ { f = 0 } f && NF { print $1 }' | grep -v '^help$')"
+SKILL_CMDS="$(sed -n 's/^## `lattice \([a-z][a-z-]*\).*/\1/p' "$SKILLCLI" | sort -u)"
+
+for c in $BIN_CMDS; do
+  if printf '%s\n' "$SKILL_CMDS" | grep -qx "$c"; then
+    pass "the skill documents \`lattice $c\`"
+  else
+    fail "the skill documents \`lattice $c\`" "no section for it in references/cli.md"
+  fi
+done
+for c in $SKILL_CMDS; do
+  if printf '%s\n' "$BIN_CMDS" | grep -qx "$c"; then
+    pass "\`lattice $c\` exists, as the skill says"
+  else
+    fail "\`lattice $c\` exists, as the skill says" "not in \`lattice --help\`"
+  fi
+done
+
+# --- the flag surface ----------------------------------------------------
+# Both directions: nothing the binary offers goes undocumented, and nothing the
+# skill documents is imaginary. `--verbose` is the single exception — a hidden
+# alias, documented as hidden, absent from every --help by design.
+for c in $BIN_CMDS; do
+  lat "$ENVROOT" "$c" --help
+  ALLHELP="$ALLHELP
+$OUTPUT"
+  for f in $(printf '%s\n' "$OUTPUT" | grep -oE '\-\-[a-z][a-z-]+' | sort -u); do
+    case "$f" in --help | --version) continue ;; esac
+    if grep -qF -- "$f" "$SKILLCLI"; then
+      pass "the skill documents \`$c $f\`"
+    else
+      fail "the skill documents \`$c $f\`" "$f is missing from references/cli.md"
+    fi
+  done
+done
+for f in $(grep -ohE '\-\-[a-z][a-z-]+' "$SKILL" "$SKILLCLI" | sort -u); do
+  case "$f" in --verbose | --help | --version) continue ;; esac
+  if printf '%s\n' "$ALLHELP" | grep -qF -- "$f"; then
+    pass "\`$f\` exists, as the skill says"
+  else
+    fail "\`$f\` exists, as the skill says" "no --help output mentions it"
+  fi
+done
+lat "$ENVROOT" run --not-a-real-flag
+if [ "$RC" -eq 2 ]; then pass "a rejected command line exits 2, as the skill says"
+else fail "a rejected command line exits 2, as the skill says" "exit=$RC"; fi
+
+# --- the well-known engine list ------------------------------------------
+# `--dry-run` against an empty workspace list returns before any version command
+# runs, so this checks the config-load verdict on its own — no toolchain needed.
+ENGDIR="$ENVROOT/skill-engines"
+mkdir -p "$ENGDIR"
+eng_config() {
+  printf '{ "workspaces": [], "tasks": { "build": {} }, "engines": { "%s": ">=0.0.0" } }' \
+    "$1" > "$ENGDIR/lattice.json"
+}
+SKILL_ENGINES="$(awk -F'|' '
+  /^## Well-known engines/ { f = 1; next }
+  f && /^## / { f = 0 }
+  f && $2 ~ /`/ { gsub(/[` ]/, "", $2); print $2 }
+' "$SKILLTOOLS")"
+SKILL_DRIVERS="$(awk -F'|' 'NF >= 6 && $2 ~ /`/ { gsub(/[` ]/, "", $2); print $2 }' "$SKILLTOOLS" |
+  sort -u)"
+
+for e in $SKILL_ENGINES; do
+  eng_config "$e"
+  lat "$ENGDIR" run build --dry-run
+  t_ok "engine '$e' is accepted in string form, as the skill says"
+done
+# Anything the skill does not list as well-known has to be rejected in string
+# form, or the list has grown and the skill has not.
+for e in $(comm -23 <(printf '%s\n' "$SKILL_DRIVERS") <(printf '%s\n' "$SKILL_ENGINES" | sort -u)) alpes; do
+  eng_config "$e"
+  lat "$ENGDIR" run build --dry-run
+  t_bad "engine '$e' is rejected in string form, as the skill says"
+  t_has "the rejection of '$e' names versionCmd" "versionCmd"
+done
+
+# --- the invoke templates ------------------------------------------------
+# Every Build Tool row of the skill's driver table, verified from its own
+# fingerprint: these invoke a task directly, with no manifest to consult.
+DRVDIR="$ENVROOT/skill-drivers"
+mkdir -p "$DRVDIR"
+awk -F'|' 'NF >= 6 && $3 ~ /Build Tool/ {
+  tool = $2; fps = $4; inv = $6
+  gsub(/[` ]/, "", tool)
+  gsub(/`/, "", fps); split(fps, a, ","); fp = a[1]; gsub(/^ +| +$/, "", fp)
+  gsub(/`/, "", inv); gsub(/^ +| +$/, "", inv)
+  print tool "\t" fp "\t" inv
+}' "$SKILLTOOLS" > "$DRVDIR/rows.tsv"
+
+DRVWS=""
+while IFS=$'\t' read -r tool fp inv; do
+  mkdir -p "$DRVDIR/d/$tool"
+  : > "$DRVDIR/d/$tool/$fp"
+  [ -n "$DRVWS" ] && DRVWS="$DRVWS,"
+  DRVWS="$DRVWS{\"name\":\"$tool\",\"path\":\"d/$tool\"}"
+done < "$DRVDIR/rows.tsv"
+printf '{ "workspaces": [%s], "tasks": { "build": {} } }' "$DRVWS" > "$DRVDIR/lattice.json"
+
+lat "$DRVDIR" run build --dry-run
+t_ok "every fingerprint in the skill's driver table resolves a driver"
+while IFS=$'\t' read -r tool fp inv; do
+  t_has "the skill's invoke template for $tool ($fp)" "$tool:build  ${inv/\{task\}/build}"
+done < "$DRVDIR/rows.tsv"
 
 # =========================================================================
 # Summary.

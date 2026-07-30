@@ -19,6 +19,52 @@ cache miss, because the running version is one of the inputs hashed into every
 task's cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## The toolchain table, filled in — 2026-07-29
+
+CocoaPods, pip, NuGet, and Kotlin are supported end to end, `deno` and `bun` are
+runtimes as well as the roles they already had, and the gaps between the driver
+table and the engine list are closed. See [Toolchains](/lattice/docs/toolchains)
+and [Driver detection](/lattice/docs/drivers).
+
+### Four tools that were only half-known
+- `pod` had a driver row but no engine rule and no dependency installer; `pip`
+  had an installer no driver could reach; `nuget` and `kotlin` were missing
+  outright. All four are now drivers, well-known engines, and known to
+  `lattice setup`
+- `pip` and `kotlin` have no fingerprint on purpose. A `requirements.txt` is
+  read by pip, uv, and pip-tools alike, and a Kotlin project is driven by gradle
+  or maven, so both are selected by declaring them in `engines` rather than by
+  guessing from a file that names no tool
+- `nuget` fingerprints only the legacy `packages.config` layout. A
+  `packages.lock.json` counts toward cache keys but is not driver evidence: an
+  SDK-style project can carry one and still be a `dotnet` workspace
+
+### One table for engines instead of two that disagreed
+- `uv`, `poetry`, `just`, `turbo`, `nx`, `swift`, `dart`, `composer`, `mix`,
+  `stack`, `cabal`, `pdm`, and `pipenv` each had a built-in version command but
+  were rejected in the string form, so `"engines": { "uv": ">=0.5" }` failed to
+  load for no good reason. Every built-in driver is now a well-known engine
+- `"python3"` was version-checked by running `python --version`, which on many
+  machines is a different interpreter. It runs `python3 --version`
+
+### A driver can fill more than one role
+- `deno` is a runtime, a package manager, and a task runner; `bun` is a runtime
+  and a package manager; `mix` is a package manager and a task runner. A driver
+  competes with its highest-ranked role, so which tool drives a workspace is
+  unchanged
+
+### Caching and setup catch up with the table
+- 13 more lockfiles feed cache keys — `deno.lock`, `composer.lock`, `mix.lock`,
+  `pubspec.lock`, `Package.resolved`, `Podfile.lock`, `packages.lock.json`,
+  `pdm.lock`, `Pipfile.lock`, `requirements.txt`, and more. A dependency bump in
+  those ecosystems used to come back as a hit
+- `lattice setup` installs dependencies for 11 more drivers, so a `.csproj` or
+  `Podfile` workspace no longer reports "no known dependency installer" and
+  skips
+- An ambiguity error over a bare `Cargo.toml`, `go.mod`, `composer.json`,
+  `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`, `cabal.project`, or
+  `.csproj` now names candidate tools instead of listing none
+
 ## Installing, upgrading, and running the version a repo pins — 2026-07-28
 
 Lattice can now be installed without a Rust toolchain, and a repo's

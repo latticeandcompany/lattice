@@ -162,12 +162,20 @@ this drives.
 ```
 
 A bare version-constraint string. The engine name must be one of the
-well-known engines Lattice has a built-in version rule for:
+well-known engines Lattice has a built-in version rule for — every built-in
+driver, plus the language toolchains those drivers sit on top of:
 
 | `node` | `deno` | `bun` | `pnpm` | `yarn` | `npm` |
 | --- | --- | --- | --- | --- | --- |
-| `rust` | `cargo` | `go` | `python` | `python3` | `ruby` |
-| `bundler` | `java` | `gradle` | `maven` | `dotnet` | |
+| `rust` | `cargo` | `go` | `python` | `python3` | `pip` |
+| `uv` | `poetry` | `pdm` | `pipenv` | `ruby` | `bundler` |
+| `rake` | `java` | `kotlin` | `gradle` | `maven` | `dotnet` |
+| `nuget` | `swift` | `pod` | `php` | `composer` | `elixir` |
+| `mix` | `dart` | `haskell` | `ghc` | `stack` | `cabal` |
+| `just` | `task` | `turbo` | `nx` | | |
+
+Each name's version command is listed on
+[Toolchains](/lattice/docs/toolchains#well-known-engines).
 
 A string-form engine outside this list fails validation:
 
