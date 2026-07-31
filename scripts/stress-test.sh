@@ -144,6 +144,7 @@ t_hasnt() { if have  "$2"; then fail "$1" "unexpected [$2] | $(snip)"; else pass
 t_file()  { if [ -e "$1" ]; then pass "$2"; else fail "$2" "missing file $1"; fi; }
 t_nofile(){ if [ -e "$1" ]; then fail "$2" "unexpected file $1"; else pass "$2"; fi; }
 t_grepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then pass "$3"; else fail "$3" "[$2] not in $1"; fi; }
+t_nogrepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then fail "$3" "unexpected [$2] in $1"; else pass "$3"; fi; }
 
 w() { mkdir -p "$(dirname "$1")"; printf '%s' "$2" > "$1"; }
 
@@ -226,7 +227,7 @@ done
 lat "$ENVROOT" completions notarealshell ; t_bad "completions rejects unknown shell"
 
 # =========================================================================
-# 2. init: skeleton, artifacts, gitignore, force, guard.
+# 2. init: repo scan, skeleton, artifacts, gitignore, force, guard.
 # =========================================================================
 sect "init"
 
@@ -255,6 +256,54 @@ fi
 lat "$INITDIR" init --yes ; t_bad "init refuses to clobber existing config"
 t_has "init clobber message" "already exists"
 lat "$INITDIR" init --yes --force ; t_ok "init --force overwrites"
+
+# The scan: manifests become workspaces, native version files become engines,
+# and dependency/output/gitignored trees are left out of both.
+SCANDIR="$ENVROOT/scandir"
+mkdir -p "$SCANDIR"
+w "$SCANDIR/.gitignore" "generated/
+"
+w "$SCANDIR/apps/web/package.json" '{ "name": "web" }'
+w "$SCANDIR/apps/web/pnpm-lock.yaml" ""
+w "$SCANDIR/services/api/Cargo.toml" "[package]
+name = \"api\"
+"
+w "$SCANDIR/services/api/Cargo.lock" ""
+w "$SCANDIR/apps/web/node_modules/dep/package.json" '{}'
+w "$SCANDIR/dist/package.json" '{}'
+w "$SCANDIR/generated/proto/package.json" '{}'
+w "$SCANDIR/.nvmrc" "v22.11.0
+"
+w "$SCANDIR/rust-toolchain.toml" "[toolchain]
+channel = \"1.83.0\"
+"
+lat "$SCANDIR" init --yes ; t_ok "init --yes scans and exits 0"
+t_grepfile "$SCANDIR/lattice.json" "apps/web"      "scan declares apps/web"
+t_grepfile "$SCANDIR/lattice.json" "services/api"  "scan declares services/api"
+t_grepfile "$SCANDIR/lattice.json" "22.11.0"       "scan pins node from .nvmrc"
+t_grepfile "$SCANDIR/lattice.json" "1.83.0"        "scan pins rust from rust-toolchain.toml"
+t_nogrepfile "$SCANDIR/lattice.json" "node_modules" "scan skips node_modules"
+t_nogrepfile "$SCANDIR/lattice.json" "generated"    "scan skips gitignored dirs"
+t_nogrepfile "$SCANDIR/lattice.json" "\"dist\""     "scan skips output dirs"
+lat "$SCANDIR" run build --dry-run ; t_ok "scanned config drives a real run"
+t_has "scanned run plans web" "web"
+t_has "scanned run plans api" "api"
+
+# A directory whose driver stays ambiguous is held back, so what init writes
+# runs instead of halting on the ambiguity.
+UNDRIVEN="$ENVROOT/undriven"
+mkdir -p "$UNDRIVEN"
+w "$UNDRIVEN/apps/web/package.json" '{ "name": "web" }'
+w "$UNDRIVEN/apps/web/package-lock.json" '{}'
+w "$UNDRIVEN/crates/core/Cargo.toml" "[package]
+name = \"core\"
+"
+lat "$UNDRIVEN" init --yes ; t_ok "init --yes exits 0 with an undriveable candidate"
+t_has "init names the held-back directory" "crates/core"
+t_has "init explains the hold-back"        "no task driver resolved"
+t_nogrepfile "$UNDRIVEN/lattice.json" "crates/core" "undriveable candidate is not declared"
+t_grepfile   "$UNDRIVEN/lattice.json" "apps/web"    "driveable candidate is declared"
+lat "$UNDRIVEN" run build --dry-run ; t_ok "a scanned config never halts on ambiguity"
 
 # Self-heal: a missing schema (wiped cache dir, uncommitted clone) is rewritten
 # by any command that loads the config, so editors always resolve `$schema`.

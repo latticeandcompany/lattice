@@ -10,6 +10,34 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### `lattice init` reads the repo instead of asking about it — 2026-07-31
+
+- `init` opened with "what does this repo need Lattice for — build tool,
+  toolchain manager, or both?", then had you type every workspace name and path
+  by hand and invent version constraints defaulting to `>=0.0.0`. It never
+  looked at the directory it was scaffolding
+- It now scans first. Every directory holding a manifest Lattice recognizes is
+  proposed as a workspace, with its detected driver shown next to it. The walk
+  skips hidden directories, gitignored paths, and dependency and output trees
+- Tool versions the repo already records become proposed engines, at the version
+  actually written down: `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`,
+  `.python-version`, `.ruby-version`, `.java-version`, `package.json`
+  (`packageManager` and `engines`), and `go.mod`'s `toolchain` line
+- The capability question is gone. On a terminal you get the two lists
+  pre-checked and uncheck what's wrong. A repo root that holds only a workspace
+  declaration is offered alongside its members but starts unchecked
+- `init` no longer writes a config that does nothing: when the scan finds
+  nothing, or you uncheck everything, it asks for at least one workspace or one
+  engine first. Without a TTY there is no one to ask, so that case still writes
+  the bare skeleton rather than failing a pipeline
+- `--yes` takes the scan's proposal rather than always writing the skeleton
+- A scanned `build` task only claims `outputs: ["dist/**"]` when a `package.json`
+  workspace was found. A Rust or Go repo no longer gets a JavaScript convention
+  written into its config
+- A directory whose driver stays ambiguous is offered but starts unchecked, and
+  is named on the way out. Declaring it would halt the very next run, so `init`
+  proposes a config that works and tells you what it held back and why
+
 ### A persistent task that exits is reported — 2026-07-30
 
 - Lattice spawned a dev server and never looked at it again. A `persistent: true`

@@ -1,5 +1,6 @@
-//! E2E tests for `lattice init`: scaffolding, the overwrite guard, idempotent
-//! `.gitignore` maintenance, and the committed `.lattice/schema.json`.
+//! E2E tests for `lattice init`: the repo scan, scaffolding, the overwrite
+//! guard, idempotent `.gitignore` maintenance, and the committed
+//! `.lattice/schema.json`.
 
 mod common;
 
@@ -29,6 +30,100 @@ fn init_scaffolds_a_repo_and_runs_cleanly() {
 		.stdout(predicate::str::contains("no workspaces declared"))
 		.stderr(predicate::str::contains("panicked").not())
 		.stderr(predicate::str::contains("RUST_BACKTRACE").not());
+}
+
+#[test]
+fn init_declares_the_workspaces_it_finds() {
+	let fx = Fixture::new();
+	fx.write("apps/web/package.json", r#"{ "name": "web" }"#);
+	fx.write("apps/web/pnpm-lock.yaml", "");
+	fx.write("services/api/Cargo.toml", "[package]\nname = \"api\"\n");
+	fx.write("services/api/Cargo.lock", "");
+	// Neither of these is a workspace: one is a dependency tree, the other is
+	// gitignored.
+	fx.write("apps/web/node_modules/dep/package.json", "{}");
+	fx.write(".gitignore", "generated/\n");
+	fx.write("generated/proto/package.json", "{}");
+
+	fx.lattice().args(["init", "-y"]).assert().success();
+
+	let config: Value =
+		serde_json::from_str(&fx.read("lattice.json")).expect("lattice.json parses");
+	assert_eq!(
+		config["workspaces"],
+		serde_json::json!([
+			{ "name": "web", "path": "apps/web" },
+			{ "name": "api", "path": "services/api" }
+		])
+	);
+
+	// The scanned config drives a real run: both workspaces resolve a driver.
+	fx.lattice()
+		.args(["run", "build", "-l", "--dry-run"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("web"))
+		.stdout(predicate::str::contains("api"));
+}
+
+#[test]
+fn init_leaves_out_what_it_cannot_drive_and_says_so() {
+	let fx = Fixture::new();
+	fx.write("apps/web/package.json", r#"{ "name": "web" }"#);
+	fx.write("apps/web/package-lock.json", "{}");
+	// A bare Cargo.toml with the lock at the repo root is not enough evidence
+	// to drive tasks. Declaring it would halt the very next run.
+	fx.write("crates/core/Cargo.toml", "[package]\nname = \"core\"\n");
+
+	fx.lattice()
+		.args(["init", "-y"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("crates/core"))
+		.stdout(predicate::str::contains("no task driver resolved"));
+
+	let config: Value =
+		serde_json::from_str(&fx.read("lattice.json")).expect("lattice.json parses");
+	assert_eq!(
+		config["workspaces"],
+		serde_json::json!([{ "name": "web", "path": "apps/web" }]),
+		"only the workspace with a resolved driver is declared"
+	);
+
+	// The point of holding it back: what init writes actually runs.
+	fx.lattice()
+		.args(["run", "build", "-l", "--dry-run"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("npm run build"));
+}
+
+#[test]
+fn init_pins_the_tool_versions_the_repo_already_records() {
+	let fx = Fixture::new();
+	fx.write("apps/web/package.json", r#"{ "name": "web" }"#);
+	fx.write("apps/web/pnpm-lock.yaml", "");
+	fx.write(".nvmrc", "v22.11.0\n");
+	fx.write("rust-toolchain.toml", "[toolchain]\nchannel = \"1.83.0\"\n");
+
+	fx.lattice().args(["init", "-y"]).assert().success();
+
+	let config: Value =
+		serde_json::from_str(&fx.read("lattice.json")).expect("lattice.json parses");
+	assert_eq!(config["engines"]["node"], serde_json::json!("22.11.0"));
+	assert_eq!(config["engines"]["rust"], serde_json::json!("1.83.0"));
+}
+
+#[test]
+fn init_on_a_bare_directory_still_writes_the_skeleton() {
+	// There is no one to prompt under `-y`, so a scan that finds nothing falls
+	// back to the skeleton rather than failing the pipeline.
+	let fx = Fixture::new();
+	fx.lattice().args(["init", "-y"]).assert().success();
+
+	let config: Value =
+		serde_json::from_str(&fx.read("lattice.json")).expect("lattice.json parses");
+	assert_eq!(config["workspaces"], serde_json::json!([]));
 }
 
 #[test]

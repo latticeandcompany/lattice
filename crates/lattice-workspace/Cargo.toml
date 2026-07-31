@@ -16,6 +16,7 @@ description = "Lattice workspace discovery, driver detection, and toolchain prov
 [dependencies]
 lattice-config = { path = "../lattice-config" }
 anyhow = "1"
+ignore = "0.4"
 indexmap = "2"
 semver = "1"
 serde = { version = "1", features = ["derive"] }

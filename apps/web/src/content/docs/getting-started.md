@@ -19,15 +19,27 @@ In the root of your repo, run:
 lattice init
 ```
 
-On a terminal, `init` opens a short wizard. It asks whether you need a build
-tool, a toolchain manager, or both, then walks you through adding workspaces
-(name, path, whether to auto-detect the engine and tasks) and, for the toolchain
-half, which well-known engines to pin and at what version constraint. Answer `n`
-to auto-detection for a workspace and it asks you to pick an engine and
-constraint for that workspace directly. Piped output or a non-interactive shell
-skips the prompts.
+`init` reads the repo before it writes anything. It walks the tree for
+directories holding a manifest it recognizes and proposes each one as a
+workspace, and it reads the tool versions you already record in files like
+`.nvmrc`, `.tool-versions`, and `rust-toolchain.toml` and proposes those as
+engines. On a terminal you get both lists pre-checked, and uncheck whatever is
+wrong:
 
-To skip the prompts on a terminal too, pass `-y`:
+```text
+found 2 workspaces
+> [x] apps/web        pnpm       package.json
+  [x] services/api    cargo      Cargo.toml
+
+found 1 pinned tool version
+> [x] node         22.11.0        .nvmrc
+```
+
+If it finds nothing to propose, it asks you to declare at least one workspace or
+one engine — a config with neither does nothing, so `init` will not write one.
+
+To take the scan's proposal without confirming, pass `-y`. Piped output or a
+non-interactive shell does the same thing on its own:
 
 ```sh
 lattice init -y
@@ -41,8 +53,8 @@ lattice init -y
 next: lattice run build
 ```
 
-`lattice.json` is the config, with zero workspaces and one starter task.
-`.lattice/schema.json` is a committed JSON Schema your editor can validate
+`lattice.json` is the config: the workspaces the scan found and one starter
+task. `.lattice/schema.json` is a committed JSON Schema your editor can validate
 against as you type; delete it and the next command rewrites it. In
 `.gitignore`, three lines are appended and existing content is untouched:
 `.lattice/cache/`, `.lattice/toolchains/`, and `.lattice/bin/`, the per-machine
@@ -52,6 +64,9 @@ Running `init` again refuses to touch an existing `lattice.json` unless you add
 `--force`.
 
 ## Read what it wrote
+
+The rest of this guide builds a repo up from nothing, so assume the scan found
+nothing to propose and `init` wrote the bare skeleton:
 
 ```json
 {

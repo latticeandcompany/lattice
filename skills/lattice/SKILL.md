@@ -242,15 +242,22 @@ Don't pick one from the candidate list to make the error go away.
 
 Order matters; skipping ahead is what makes an adoption feel like a rewrite.
 
-1. `lattice init` (add `-y` to skip the wizard and write the skeleton). It
-   writes `lattice.json`, a committed `.lattice/schema.json`, and three
-   `.gitignore` lines. Without a TTY it always writes the skeleton and never
-   prompts.
-2. Declare one workspace and one bare task (`"build": {}`). Confirm with
-   `lattice run build --dry-run` that the resolved command is the one that
-   directory already runs by hand.
+1. `lattice init` (add `-y` to take its proposal without confirming). It scans
+   the repo for directories holding a recognized manifest and for tool versions
+   already pinned in `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`,
+   `.python-version`, `.ruby-version`, `.java-version`, `package.json`
+   (`packageManager` and `engines`), and `go.mod`, then writes `lattice.json`,
+   a committed `.lattice/schema.json`, and three `.gitignore` lines. The walk
+   skips hidden, gitignored, dependency, and output directories. Without a TTY
+   it behaves as `-y`, and writes the bare skeleton if the scan finds nothing.
+2. Check what it proposed. It declares workspaces, not tasks — confirm each one
+   with `lattice run build --dry-run` that the resolved command is the one that
+   directory already runs by hand, and delete any workspace that isn't one.
+   `init` leaves out directories whose driver stayed ambiguous and names them;
+   bring one in by declaring its driver in `engines`, then adding the workspace.
 3. Only then add `inputs` and `outputs`.
-4. Pin `engines` last, and only where the guarantee is actually needed.
+4. Keep only the `engines` whose guarantee is actually needed; `init` proposes
+   every pin it found, which is usually more than a repo needs enforced.
 
 Nothing about declaring a workspace stops its existing `package.json` scripts,
 `Makefile`, or CI step from working. Bring workspaces in one at a time and use

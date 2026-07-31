@@ -25,6 +25,7 @@ use anyhow::{bail, Result};
 use indexmap::IndexMap;
 use lattice_config::{EngineMap, LatticeConfig};
 
+pub mod scan;
 pub mod toolchain;
 
 /// The kind of job a tool does.

@@ -67,13 +67,35 @@ alone.
 | Flag | Short | Default | Description |
 | --- | --- | --- | --- |
 | `--force` | — | off | Overwrite an existing `lattice.json` |
-| `--yes` | `-y` | off | Take the defaults and write the skeleton without prompting |
+| `--yes` | `-y` | off | Write what the scan finds without prompting |
 
-On an interactive terminal with neither `--yes` nor piped stdin, `init` runs a
-short wizard for workspaces and engines. Without a TTY it always writes the
-skeleton, whether or not `--yes` is passed — it never blocks a pipeline on a
-prompt. Running against an existing `lattice.json` without `--force` is an
+`init` scans the repo before writing. Every directory holding a recognized
+manifest (`package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Gemfile`,
+`pom.xml`, `build.gradle`, `composer.json`, `mix.exs`, a `.csproj`, …) is
+proposed as a workspace, and every tool version already recorded in
+`.tool-versions`, `.nvmrc`, `rust-toolchain.toml`, `.python-version`,
+`.ruby-version`, `.java-version`, `package.json` (`packageManager`, `engines`),
+or `go.mod` is proposed as an engine. The walk skips hidden directories,
+gitignored paths, and dependency/output trees (`node_modules`, `target`,
+`dist`, `build`, `out`, `vendor`, …).
+
+On an interactive terminal with neither `--yes` nor piped stdin, `init` shows
+both lists pre-checked so you can uncheck what's wrong. A repo root holding only
+a workspace declaration is offered alongside its members but starts unchecked.
+If the scan finds nothing, or you uncheck everything, `init` requires at least
+one workspace or engine before it writes — it never produces a config that does
+nothing.
+
+Without a TTY it behaves as `-y` and never blocks a pipeline on a prompt; since
+there is no one to ask, a scan that finds nothing writes the bare skeleton
+instead. Running against an existing `lattice.json` without `--force` is an
 error.
+
+A candidate whose driver stays ambiguous (a bare `Cargo.toml` whose lockfile is
+at the repo root, a lone `pom.xml`) is offered but starts unchecked, so `-y`
+leaves it out: declaring it would halt the next run. `init` names those
+directories on the way out. Add them by declaring a driver in their `engines`,
+then adding the workspace.
 
 ## `lattice prune [OPTIONS]`
 

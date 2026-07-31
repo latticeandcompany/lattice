@@ -123,16 +123,45 @@ lattice init [OPTIONS]
 
 Scaffolds a `lattice.json` in the current directory, along with a committed
 `.lattice/schema.json` and the `.gitignore` lines that keep the cache and
-provisioned toolchains out of version control. On an interactive terminal
-without `--yes`, it prompts for workspaces and engines instead of writing the
-bare skeleton.
+provisioned toolchains out of version control.
+
+`init` reads the repo before it writes anything. It walks the tree for
+directories holding a manifest it recognizes — `package.json`, `Cargo.toml`,
+`go.mod`, `pyproject.toml`, `Gemfile`, `pom.xml`, `build.gradle`,
+`composer.json`, `mix.exs`, a `.csproj`, and the rest of the
+[driver](/lattice/docs/drivers) markers — and proposes each one as a workspace.
+It also reads the tool versions the repo already records and proposes them as
+[engines](/lattice/docs/engines):
+
+| File | Engine |
+| --- | --- |
+| `.tool-versions` | every well-known tool named in it |
+| `.nvmrc` | `node` |
+| `rust-toolchain.toml`, `rust-toolchain` | `rust` |
+| `.python-version` | `python` |
+| `.ruby-version` | `ruby` |
+| `.java-version` | `java` |
+| `package.json` `packageManager` and `engines` | the tool named there |
+| `go.mod` `toolchain` | `go` |
+
+The walk skips hidden directories, dependency and output trees
+(`node_modules`, `target`, `dist`, `build`, `out`, `vendor`, …), and anything
+your `.gitignore` covers.
+
+On an interactive terminal it shows the two lists with everything pre-checked
+and lets you uncheck whatever is wrong. A repo root that holds only a workspace
+declaration — a `Cargo.toml` with `[workspace]`, a `package.json` with
+`workspaces` — is offered alongside its members but starts unchecked. If the
+scan finds nothing, or you uncheck everything, `init` asks you to declare at
+least one workspace or one engine: it will not write a config that does
+nothing.
 
 **Flags**
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--force` | — | — | off | Overwrite an existing `lattice.json` |
-| `--yes` | `-y` | — | off | Accept defaults and write the skeleton without prompting |
+| `--yes` | `-y` | — | off | Write what the scan finds without prompting |
 
 Plus the [global flags](#global-flags) below.
 
@@ -142,9 +171,17 @@ lattice init --yes
 lattice init --force
 ```
 
-Without a TTY (a script, CI), `init` writes the skeleton whether or not
-`--yes` is passed, so it never blocks waiting on prompts. Running `init`
-against an existing `lattice.json` without `--force` is an error.
+Without a TTY (a script, CI), `init` behaves as though `--yes` were passed, so
+it never blocks waiting on prompts. There is no one to ask in that case, so a
+scan that finds nothing writes the bare skeleton rather than failing. Running
+`init` against an existing `lattice.json` without `--force` is an error.
+
+A directory whose task driver stays ambiguous — a bare `Cargo.toml` whose
+lockfile lives at the repo root, say — is offered but starts unchecked, because
+declaring it would halt the very next run on the
+[ambiguity](/lattice/docs/drivers#when-lattice-halts). `init` names those
+directories on the way out so you can add them once you've declared a driver in
+their `engines`.
 
 ## `lattice prune`
 
