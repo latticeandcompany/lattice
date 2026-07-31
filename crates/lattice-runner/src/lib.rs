@@ -273,13 +273,25 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
 	let global_start = Instant::now();
 
+	// Only the workspaces the graph actually has nodes for take part in this run:
+	// a filtered run is handed the whole set so it can resolve the dependencies it
+	// pulled in, and provisioning toolchains for the rest would be wasted work.
+	let in_run: BTreeSet<&str> = graph
+		.graph
+		.node_weights()
+		.map(|node| node.workspace_name.as_str())
+		.collect();
+
 	// For each workspace, merge root + workspace engines and provision/resolve
 	// them into a PATH-prepend + identity. Memoize by the merged spec so
 	// identical toolchains are only resolved (and installed) once.
 	let mut tc_cache: HashMap<String, (Vec<PathBuf>, String)> = HashMap::new();
 	let mut ws_prepend: HashMap<String, Vec<PathBuf>> = HashMap::new();
 	let mut ws_identity: HashMap<String, String> = HashMap::new();
-	for ws in workspaces {
+	for ws in workspaces
+		.iter()
+		.filter(|ws| in_run.contains(ws.name.as_str()))
+	{
 		let merged = resolve_engines(&config.engines, &ws.engines);
 		let memo_key = format!("{merged:?}");
 		let (pp, id) = if let Some(hit) = tc_cache.get(&memo_key) {
@@ -327,7 +339,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	}
 
 	let run_label = task_names.iter().cloned().collect::<Vec<_>>().join("+");
-	reporter.run_start(&run_label, workspaces.len());
+	reporter.run_start(&run_label, in_run.len());
 
 	// Cap parallelism at the requested override, else the machine default.
 	// Guard `Some(0)` so the semaphore always has permits.

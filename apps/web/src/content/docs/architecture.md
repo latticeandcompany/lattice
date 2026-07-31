@@ -106,11 +106,13 @@ Tracing one invocation end to end, crate by crate:
    root task's command (`infer_task_command`) unless a `scripts` override
    supplies one. See [Driver detection](/lattice/docs/drivers) for the ladder
    itself.
-6. Graph construction (`dagger::build_execution_graph_multi`) — expands the
+6. Graph construction (`dagger::build_execution_graph_selected`) — expands the
    requested (possibly stacked) root tasks across the resolved workspaces into
    `TaskNode`s, wires `^task`/bare-`task` edges, rejects cycles and a persistent
    task with a dependent, and topologically sorts the result into an
-   `ExecutionGraph`.
+   `ExecutionGraph`. Under `--filter`, the matched workspaces are the roots: the
+   graph is narrowed to them plus their transitive prerequisites, which are
+   flagged on the node so `--dry-run` can tag them.
 7. Schedule (`dagger::build_schedule`) — flattens that graph into the
    petgraph-independent `Schedule` described above.
 8. Scheduler execution (`lattice_runner::execute_tasks`) — for each workspace up

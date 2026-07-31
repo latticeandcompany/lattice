@@ -72,9 +72,9 @@ to scope a run to the one you're migrating:
 lattice run build --filter web
 ```
 
-`--filter` matches workspaces whose name contains the pattern. With no match it
-prints that nothing matched and exits cleanly rather than erroring. Drop the
-filter once you trust the whole set.
+`--filter` matches workspaces whose name contains the pattern, and runs whatever
+they depend on first. With no match it prints that nothing matched and exits
+cleanly rather than erroring. Drop the filter once you trust the whole set.
 
 Declaring a workspace doesn't require removing its `package.json` scripts,
 `Makefile`, or CI step. Those keep working, called directly or through Lattice,

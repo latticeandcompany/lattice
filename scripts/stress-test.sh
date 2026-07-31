@@ -370,6 +370,22 @@ t_hasnt "filter excludes other workspaces" "web:build"
 lat "$PROD" run build --filter nonexistent ; t_ok "run --filter no-match exits 0"
 t_has "no-match filter is a clean no-op" "no workspaces matched"
 
+# A filter picks the roots of the run: everything they depend on comes with them,
+# and nothing that depends on them does. worker → api → core; docs stands alone.
+lat "$PROD" run build --filter worker --no-cache ; t_ok "run --filter worker exits 0"
+t_has   "filter pulls in a direct dependency"       "api:build"
+t_has   "filter pulls in a transitive dependency"   "core:build"
+t_hasnt "filter leaves an unrelated workspace out"  "docs:build"
+
+lat "$PROD" run build --dry-run --filter worker ; t_ok "filtered --dry-run exits 0"
+t_has   "dry run tags a pulled-in dependency" "core:build (dependency)"
+t_hasnt "dry run leaves the match untagged"   "worker:build (dependency)"
+
+# `dev` is only declared by docs, and every other workspace is "auto": false. A
+# filtered run must not hold them to a task it never asked them for.
+lat "$PROD" run dev --dry-run --filter docs ; t_ok "filtered run skips the task check outside the filter"
+t_has "filtered dry run lists the persistent task" "docs:dev"
+
 # =========================================================================
 # 6. Caching: store, hit, invalidate, cache:false, env-keyed, --force.
 # =========================================================================

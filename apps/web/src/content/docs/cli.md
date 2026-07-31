@@ -54,7 +54,7 @@ runs once.
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--sequentially` | `-s` | — | off | Run the given tasks one at a time, each graph to completion, in order — instead of merging them into one combined graph |
-| `--filter` | `-f` | `<PATTERN>` | none | Only run in workspaces whose name contains this pattern |
+| `--filter` | `-f` | `<PATTERN>` | none | Run in the workspaces whose name contains this pattern, plus what they depend on |
 | `--concurrency` | — | `<N>` | number of CPUs | Cap how many tasks run at once |
 | `--continue` | — | — | off | Keep running independent tasks after a failure instead of stopping |
 | `--no-cache` | — | — | off | Ignore the cache and re-run every task |

@@ -59,12 +59,12 @@ authoritative if anything here disagrees with the installed binary.
   Ctrl-C before exiting — by design, since a dev server has no completion to
   wait for. Never call one from a blocking foreground command. Run it in the
   background, or run only its non-persistent prerequisites.
-- **`--filter` does not pull in dependencies.** It keeps workspaces whose `name`
-  *contains* the pattern (substring, not glob, matched on `name` and never on
-  `path`), and it is applied before the graph is built, so an edge into a
-  filtered-out workspace is never created. Use it to re-run one workspace whose
-  dependencies you know are current. For "and everything it needs," drop the
-  filter — current dependencies come back from cache.
+- **`--filter` selects the roots of a run, not all of it.** It matches
+  workspaces whose `name` *contains* the pattern (substring, not glob, matched on
+  `name` and never on `path`), then the graph adds everything those workspaces
+  depend on, transitively. So a filtered run also runs its prerequisites (from
+  cache where they're current), and `--dry-run` tags those nodes `(dependency)`.
+  Nothing that depends *on* a match is included.
 - **A task with no `inputs` has no files in its cache key.** It hits on every
   re-run with an unchanged command, including right after you edit the source it
   builds from. That is a stale result served confidently, not a bug. Declare
@@ -88,7 +88,7 @@ authoritative if anything here disagrees with the installed binary.
 lattice run build                      # one task, across every workspace that has it
 lattice run lint test build            # merged into one graph; shared deps run once
 lattice run lint test build -s         # one graph per task, each to completion
-lattice run test --filter api          # only workspaces whose name contains "api"
+lattice run test --filter api          # workspaces named *api*, plus what they depend on
 lattice run build --dry-run            # resolve and print, run nothing
 lattice run lint test --continue       # keep going past a failure, still exit 1
 lattice run build --concurrency 4      # cap parallelism (default: logical CPUs)

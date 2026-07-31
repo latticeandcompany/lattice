@@ -46,11 +46,11 @@ on `^build` means "build every dependency first." A task with an empty or absent
 `dependsOn` has no incoming edges, so every workspace's node for it is a graph
 root.
 
-A workspace with no `dependsOn` contributes no `^`-edges anywhere. Narrowing the
-workspace set with `--filter` (see
-[Selecting what runs](/lattice/docs/filtering)) has the same effect on excluded
-workspaces: they contribute no nodes, and a `^`-edge that would have pointed at
-one is absent rather than an error.
+A workspace with no `dependsOn` contributes no `^`-edges anywhere. Narrowing a
+run with `--filter` (see [Selecting what runs](/lattice/docs/filtering)) does not
+change how these edges resolve: the matched workspaces become the roots, and a
+`^`-edge pointing at a workspace outside the pattern still resolves to that
+workspace's task and brings it into the run.
 
 ## Worked example
 

@@ -13,8 +13,9 @@ flags below change which part of it executes, and how.
 
 ## Filtering to one workspace
 
-`-f`/`--filter <PATTERN>` keeps only the workspaces whose **name** contains
-`PATTERN`, before the task graph is built:
+`-f`/`--filter <PATTERN>` selects the workspaces whose **name** contains
+`PATTERN` and runs the tasks you named there, along with everything those
+workspaces depend on:
 
 ```sh
 lattice run build --filter core
@@ -32,41 +33,38 @@ A filter that matches nothing is a clean no-op, not a failure. Running
 `lattice run build --filter nonexistent` prints
 `lattice: no workspaces matched filter 'nonexistent'.` and exits `0`.
 
-### Filtering does not pull in dependencies
+### Dependencies come along
 
-Filtering removes non-matching workspaces *before* the dependency graph is
-built, so an edge into a filtered-out workspace is never created: it is not run
-first, and it is not an error either. Take this repo's own `lattice.json`, where
-`lattice-runner` depends on `dagger`, `lattice-cache`, `lattice-output`,
-`lattice-config`, and `lattice-workspace`:
+The matched workspaces are the roots of the run, not all of it. A `^build` edge
+pointing at a workspace the pattern did not match still resolves to that
+workspace's `build`, and so does that workspace's own `^build`, all the way down.
+Take this repo's own `lattice.json`, where `lattice-runner` depends on `dagger`,
+`lattice-cache`, `lattice-output`, `lattice-config`, and `lattice-workspace`:
 
 ```sh
 $ lattice run build --dry-run --filter lattice-runner
 ❖ lattice  dry run · build
+  → lattice-output:build (dependency)  cargo build
+  → lattice-config:build (dependency)  cargo build
+  → lattice-cache:build (dependency)  cargo build
+  → lattice-workspace:build (dependency)  cargo build
+  → dagger:build (dependency)  cargo build
   → lattice-runner:build  cargo build
 ```
 
-Every dependency is gone from the graph, and `lattice-runner:build` runs on its
-own against whatever those dependencies last produced. Compare the unfiltered
-graph:
+`(dependency)` marks a node that is in the graph because something the pattern
+matched needs it. Only `lattice-runner:build` matched. The other five run first,
+in dependency order, and each one whose inputs haven't changed comes back from
+cache. A filtered run costs a cache lookup per prerequisite, not a rebuild.
 
-```sh
-$ lattice run build --dry-run
-❖ lattice  dry run · build
-  → web:build  npm run build
-  → lattice-output:build  cargo build
-  → lattice-config:build  cargo build
-  → lattice-cache:build  cargo build
-  → lattice-workspace:build  cargo build
-  → dagger:build  cargo build
-  → lattice-runner:build  cargo build
-  → lattice:build  cargo build
-```
+The edges only travel one way. Nothing that *depends on* a match is included:
+`--filter dagger` leaves out `lattice-runner` and `lattice` even though both
+depend on `dagger`, and `--filter lattice-output` runs one node, since it depends
+on nothing.
 
-So `--filter` re-runs one workspace's task in isolation when you already know
-its dependencies are current. It is not a shortcut for "this and everything it
-needs." For that, drop `--filter` and let the full graph run; current
-dependencies come back from cache.
+A workspace pulled in this way is only asked for the tasks its dependents need.
+An `auto: false` workspace outside the filter with no `scripts` entry for the task
+you named does not halt the run the way it would if the filter had matched it.
 
 ## Previewing with `--dry-run`
 
@@ -94,7 +92,7 @@ independent branches still run concurrently in a real run. Without
 `--sequentially`, stacked tasks print as one merged graph under a single banner;
 with it, each task gets its own banner and topological order, one `(phase)` per
 named task, in the order you listed them. `--dry-run` composes with `--filter`
-and prints the same narrowed graph a real run would execute.
+and prints the same graph a real run would execute, `(dependency)` tags and all.
 
 ## Keeping going after a failure with `--continue`
 
@@ -139,8 +137,8 @@ lattice run lint test build
 By default these merge into a single combined graph before anything runs, so a
 dependency shared by more than one named task appears once and runs once; see
 [Stacked tasks share one graph](/lattice/docs/task-graph#stacked-tasks-share-one-graph).
-This is why the earlier `lattice-runner` example prints one `build` node even
-though several stacked roots could need it.
+The same de-duplication applies to the dependencies a `--filter` pulls in: a
+workspace two matches both depend on gets one node.
 
 ## Running each task to completion with `-s`/`--sequentially`
 

@@ -142,9 +142,12 @@ Regenerate the driver table in `apps/web/src/content/docs/toolchains.md` from it
 
 ## 3.3 The DAG and the schedule (`dagger`)
 
-`build_execution_graph_multi` expands the root `tasks` map across resolved
+`build_execution_graph_selected` expands the root `tasks` map across resolved
 workspaces into `TaskNode`s. `^task` means "this task in my dependencies";
-a bare `task` means "that task in this same workspace". `build_schedule` flattens
+a bare `task` means "that task in this same workspace". A `--filter` passes the
+matched workspace names in: they become the run's roots and the graph keeps only
+them plus their transitive prerequisites, each marked `pulled_in` so `--dry-run`
+can tag it `(dependency)`. `build_schedule` flattens
 petgraph into an in-degree `Schedule` the runner drives, so the runner never
 depends on the graph library. Stacked tasks (`lattice run lint test build`) merge
 into one graph — shared dependencies run once, independent work parallelizes —

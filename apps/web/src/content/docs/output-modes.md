@@ -146,7 +146,7 @@ per task right before it looks up the cache:
 
 ```text
 $ lattice run check -l
-lattice: running `check` across 8 workspace(s)
+lattice: running `check` across 7 workspace(s)
 lattice: lattice-config:check: hash 5d7971720252736c
 lattice: lattice-cache:check: hash 155cfd2a137198a7
 lattice: lattice-runner:check: hash a6745dea3308d74b

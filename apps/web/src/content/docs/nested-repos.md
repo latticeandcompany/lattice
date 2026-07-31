@@ -204,17 +204,20 @@ $ lattice run build --dry-run
 ```
 
 `serve` is filtered to `api`, since `frontend` has nothing to serve (`--filter` is
-covered in [Selecting what runs](/lattice/docs/filtering)):
+covered in [Selecting what runs](/lattice/docs/filtering)). `serve` depends on
+`build`, so the filter still pulls in `frontend:build` — `api` serves the bundle
+`frontend` produced, and the filter does not let it serve a stale one:
 
 ```sh
 $ lattice run serve --filter api -l
-lattice: running `build+serve` across 1 workspace(s)
+lattice: running `build+serve` across 2 workspace(s)
+frontend:build: cache hit [587c2274]
 api:build: cache hit [11b8de60]
 api:serve: running
 api:serve: api serving:
 api:serve: module.exports = {"site":"site@1","button":"ui/button@1"};
 api:serve: done (0.01s)
-lattice: 2 tasks, 1 cached, 0 failed, 0.01s
+lattice: 3 tasks, 2 cached, 0 failed, 0.01s
 ```
 
 ## Don't copy an upstream artifact at build time

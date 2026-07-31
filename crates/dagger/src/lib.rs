@@ -17,6 +17,9 @@ pub struct TaskNode {
 	pub task_name: String,
 	pub command: String,
 	pub is_persistent: bool,
+	/// False when the node's workspace was outside the run's workspace selection
+	/// and the node is only here because something selected depends on it.
+	pub pulled_in: bool,
 }
 
 #[derive(Debug)]
@@ -96,6 +99,24 @@ pub fn build_execution_graph_multi(
 	root_tasks: &[&str],
 	config: &LatticeConfig,
 ) -> Result<ExecutionGraph> {
+	build_execution_graph_selected(workspaces, root_tasks, config, None)
+}
+
+/// Build the graph for `root_tasks` narrowed to `selected_workspaces` plus
+/// everything those workspaces depend on, transitively.
+///
+/// `selected_workspaces` holds workspace names — the ones a `--filter` matched.
+/// They are the roots of the run: every node they reach backwards through the
+/// graph comes along, so a `^build` edge into an unselected workspace still
+/// resolves to that workspace's task. Nodes outside the closure are dropped, and
+/// the ones pulled in only as prerequisites are marked [`TaskNode::pulled_in`].
+/// `None` selects every workspace, which is [`build_execution_graph_multi`].
+pub fn build_execution_graph_selected(
+	workspaces: &[Workspace],
+	root_tasks: &[&str],
+	config: &LatticeConfig,
+	selected_workspaces: Option<&HashSet<String>>,
+) -> Result<ExecutionGraph> {
 	for root_task in root_tasks {
 		if !config.tasks.contains_key(*root_task) {
 			bail!(
@@ -126,13 +147,16 @@ pub fn build_execution_graph_multi(
 		let is_persistent = task_cfg.is_persistent();
 
 		for ws in workspaces {
+			let selected = selected_workspaces.is_none_or(|sel| sel.contains(&ws.name));
 			let command = match ws.command_for(task_name) {
 				Some(cmd) => cmd.to_string(),
 				None => {
 					// A manual workspace that declares no command for the
-					// requested root task halts. Auto workspaces silently skip
-					// tasks that don't apply to their toolchain.
-					if !ws.auto && root_tasks.contains(&task_name.as_str()) {
+					// requested root task halts — unless the workspace is outside
+					// the selection, where the task was never asked for. Auto
+					// workspaces silently skip tasks that don't apply to their
+					// toolchain.
+					if !ws.auto && selected && root_tasks.contains(&task_name.as_str()) {
 						bail!(
                             "workspace '{}' is \"auto\": false but declares no command for \
                              task '{}'; add it under this workspace's \"scripts\" map in lattice.json",
@@ -149,6 +173,7 @@ pub fn build_execution_graph_multi(
 				task_name: task_name.clone(),
 				command,
 				is_persistent,
+				pulled_in: !selected,
 			});
 			node_map.insert((ws.name.clone(), task_name.clone()), idx);
 		}
@@ -190,20 +215,23 @@ pub fn build_execution_graph_multi(
 		}
 	}
 
+	if selected_workspaces.is_some() {
+		graph = dependency_closure(&graph);
+	}
+
 	// Persistent tasks must be leaves: nothing may depend on them.
-	for (key, &idx) in &node_map {
-		if graph[idx].is_persistent {
-			let outgoing = graph
+	for idx in graph.node_indices() {
+		if graph[idx].is_persistent
+			&& graph
 				.neighbors_directed(idx, Direction::Outgoing)
 				.next()
-				.is_some();
-			if outgoing {
-				bail!(
-					"persistent task '{}' in workspace '{}' cannot be depended on by other tasks",
-					key.1,
-					key.0
-				);
-			}
+				.is_some()
+		{
+			bail!(
+				"persistent task '{}' in workspace '{}' cannot be depended on by other tasks",
+				graph[idx].task_name,
+				graph[idx].workspace_name
+			);
 		}
 	}
 
@@ -211,6 +239,49 @@ pub fn build_execution_graph_multi(
 		.map_err(|_| anyhow::anyhow!("cycle detected in task dependency graph"))?;
 
 	Ok(ExecutionGraph { graph, topo_order })
+}
+
+/// The selected nodes plus everything they depend on, transitively, as a new
+/// graph. Nodes outside that closure are dropped; a node is reached only through
+/// incoming edges, so a dependent of a selected node does not come along.
+fn dependency_closure(graph: &DiGraph<TaskNode, ()>) -> DiGraph<TaskNode, ()> {
+	let mut keep: HashSet<NodeIndex> = HashSet::new();
+	let mut stack: Vec<NodeIndex> = graph
+		.node_indices()
+		.filter(|&idx| !graph[idx].pulled_in)
+		.collect();
+	while let Some(idx) = stack.pop() {
+		if !keep.insert(idx) {
+			continue;
+		}
+		for src in graph.neighbors_directed(idx, Direction::Incoming) {
+			if !keep.contains(&src) {
+				stack.push(src);
+			}
+		}
+	}
+
+	let mut pruned: DiGraph<TaskNode, ()> = DiGraph::new();
+	let mut remap: HashMap<NodeIndex, NodeIndex> = HashMap::with_capacity(keep.len());
+	for idx in graph.node_indices() {
+		if keep.contains(&idx) {
+			remap.insert(idx, pruned.add_node(graph[idx].clone()));
+		}
+	}
+	// Index order, not map order: the pruned graph's node and edge insertion order
+	// decides the topological order the dry run prints.
+	for old_to in graph.node_indices() {
+		let Some(&new_to) = remap.get(&old_to) else {
+			continue;
+		};
+		for src in graph.neighbors_directed(old_to, Direction::Incoming) {
+			if let Some(&new_from) = remap.get(&src) {
+				pruned.add_edge(new_from, new_to, ());
+			}
+		}
+	}
+
+	pruned
 }
 
 pub fn dry_run_order(graph: &ExecutionGraph) -> Vec<&TaskNode> {
@@ -387,6 +458,159 @@ mod tests {
 		assert_eq!(sched.indegree[app], 1);
 		assert!(sched.prerequisites[app].contains(&lib));
 		assert_eq!(sched.dependents[lib], vec![app]);
+	}
+
+	fn selection(names: &[&str]) -> HashSet<String> {
+		names.iter().map(|n| (*n).to_string()).collect()
+	}
+
+	/// `base <- mid <- top`, each depending on the previous, all with a `build`.
+	fn chain() -> Vec<Workspace> {
+		vec![
+			ws("base", &[], &[("build", "build base")]),
+			ws("mid", &["base"], &[("build", "build mid")]),
+			ws("top", &["mid"], &[("build", "build top")]),
+		]
+	}
+
+	#[test]
+	fn selected_workspace_pulls_in_transitive_deps() {
+		let cfg = config(&[("build", task(&["^build"]))]);
+		let g =
+			build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["top"])))
+				.unwrap();
+		let order = dry_run_order(&g);
+
+		let names: Vec<&str> = order.iter().map(|n| n.workspace_name.as_str()).collect();
+		assert_eq!(names, vec!["base", "mid", "top"]);
+		// Only the match is a root of the run; the rest came along as prerequisites.
+		assert!(!order.last().unwrap().pulled_in);
+		assert!(order[0].pulled_in && order[1].pulled_in);
+	}
+
+	#[test]
+	fn selection_excludes_workspaces_that_depend_on_the_match() {
+		let cfg = config(&[("build", task(&["^build"]))]);
+		let g =
+			build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["mid"])))
+				.unwrap();
+		let names: Vec<&str> = dry_run_order(&g)
+			.iter()
+			.map(|n| n.workspace_name.as_str())
+			.collect();
+		assert_eq!(names, vec!["base", "mid"]);
+	}
+
+	#[test]
+	fn selection_dedupes_a_diamond() {
+		let workspaces = vec![
+			ws("base", &[], &[("build", "build base")]),
+			ws("left", &["base"], &[("build", "build left")]),
+			ws("right", &["base"], &[("build", "build right")]),
+			ws("app", &["left", "right"], &[("build", "build app")]),
+		];
+		let cfg = config(&[("build", task(&["^build"]))]);
+		let g = build_execution_graph_selected(
+			&workspaces,
+			&["build"],
+			&cfg,
+			Some(&selection(&["app"])),
+		)
+		.unwrap();
+		let order = dry_run_order(&g);
+
+		assert_eq!(order.len(), 4, "the shared dependency is collected once");
+		let pos = |name: &str| {
+			order
+				.iter()
+				.position(|n| n.workspace_name == name)
+				.unwrap_or_else(|| panic!("{name} is missing from the graph"))
+		};
+		assert!(pos("base") < pos("left"));
+		assert!(pos("base") < pos("right"));
+		assert!(pos("left") < pos("app"));
+		assert!(pos("right") < pos("app"));
+	}
+
+	#[test]
+	fn selecting_a_leaf_pulls_in_nothing() {
+		let cfg = config(&[("build", task(&["^build"]))]);
+		let g =
+			build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["base"])))
+				.unwrap();
+		let order = dry_run_order(&g);
+
+		assert_eq!(order.len(), 1);
+		assert_eq!(order[0].workspace_name, "base");
+		assert!(!order[0].pulled_in);
+	}
+
+	#[test]
+	fn selecting_nothing_yields_an_empty_graph() {
+		let cfg = config(&[("build", task(&["^build"]))]);
+		let g = build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&HashSet::new()))
+			.unwrap();
+		assert!(dry_run_order(&g).is_empty());
+	}
+
+	#[test]
+	fn same_workspace_deps_survive_a_selection() {
+		// test depends on build in its own workspace, and build on ^build.
+		let mut workspaces = chain();
+		for w in &mut workspaces {
+			w.commands.insert("test".to_string(), "test".to_string());
+		}
+		let cfg = config(&[("build", task(&["^build"])), ("test", task(&["build"]))]);
+		let g = build_execution_graph_selected(
+			&workspaces,
+			&["test"],
+			&cfg,
+			Some(&selection(&["top"])),
+		)
+		.unwrap();
+		let order = dry_run_order(&g);
+
+		let labels: Vec<String> = order
+			.iter()
+			.map(|n| format!("{}:{}", n.workspace_name, n.task_name))
+			.collect();
+		assert_eq!(
+			labels,
+			vec!["base:build", "mid:build", "top:build", "top:test"],
+			"only the selected workspace's test runs, on top of every build it needs"
+		);
+	}
+
+	#[test]
+	fn a_manual_workspace_outside_the_selection_may_lack_the_task() {
+		let mut deps_only = ws("base", &[], &[("build", "build base")]);
+		deps_only.auto = false;
+		let mut app = ws(
+			"app",
+			&["base"],
+			&[("build", "build app"), ("serve", "serve")],
+		);
+		app.auto = false;
+		let workspaces = vec![deps_only, app];
+		let cfg = config(&[("build", task(&["^build"])), ("serve", task(&["build"]))]);
+
+		// Unfiltered, `serve` halts: base is manual and declares no serve command.
+		let err = build_execution_graph_multi(&workspaces, &["serve"], &cfg).unwrap_err();
+		assert!(format!("{err}").contains("base"));
+
+		// Selecting app asks base only for the build it depends on, which it has.
+		let g = build_execution_graph_selected(
+			&workspaces,
+			&["serve"],
+			&cfg,
+			Some(&selection(&["app"])),
+		)
+		.unwrap();
+		let labels: Vec<String> = dry_run_order(&g)
+			.iter()
+			.map(|n| format!("{}:{}", n.workspace_name, n.task_name))
+			.collect();
+		assert_eq!(labels, vec!["base:build", "app:build", "app:serve"]);
 	}
 
 	#[test]
