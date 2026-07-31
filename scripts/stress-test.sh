@@ -786,6 +786,61 @@ JSON
 lat "$ERR" setup ; t_bad "failing installCmd fails setup"
 t_has "install-fail message" "installCmd failed"
 
+# An unknown key is refused rather than ignored. A `output` written for `outputs`
+# would otherwise decide, silently, what the task caches.
+mkerr unknown_top
+cat > "$ERR/lattice.json" <<'JSON'
+{
+  "projects": {},
+  "workspaces": [],
+  "tasks": { "build": {} }
+}
+JSON
+lat "$ERR" run build ; t_bad "an unknown top-level key is rejected"
+t_has "unknown-key message names the key"      'unknown field `projects`'
+t_has "unknown-key message places the key"     "at the top level of lattice.json"
+t_has "unknown-key message gives the position" "line 2"
+t_has "unknown-key message lists the fields"   "Fields accepted here:"
+
+# Inside a task, with a near miss to point at.
+mkerr unknown_task
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [], "tasks": { "build": { "output": ["dist/**"] } } }
+JSON
+lat "$ERR" run build ; t_bad "a misspelled outputs key is rejected"
+t_has "the typo is placed in its task" 'unknown field `output` in tasks.build'
+t_has "the typo gets a suggestion"     'Did you mean `outputs`?'
+
+# Inside a workspace entry, which is indexed so the right one gets read.
+mkerr unknown_ws; mkdir -p "$ERR/a" "$ERR/b"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a" },
+                  { "name": "b", "path": "b", "dependOn": ["a"] } ],
+  "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "an unknown workspace key is rejected"
+t_has "the offending workspace is indexed"   'unknown field `dependOn` in workspaces[1]'
+t_has "the workspace typo gets a suggestion" 'Did you mean `dependsOn`?'
+
+# An engine object reports its own unknown key, rather than the enclosing
+# either/or reporting that neither form matched.
+mkerr unknown_engine
+cat > "$ERR/lattice.json" <<'JSON'
+{ "engines": { "node": { "versionCmnd": "node --version" } },
+  "workspaces": [], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "an unknown engine-object key is rejected"
+t_has "the engine typo is placed"          'unknown field `versionCmnd` in engines.node'
+t_has "the engine typo gets a suggestion"  'Did you mean `versionCmd`?'
+
+# ...and a value in neither engine form names both.
+mkerr engine_type
+cat > "$ERR/lattice.json" <<'JSON'
+{ "engines": { "node": 20 }, "workspaces": [], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "an engine value in neither form is rejected"
+t_has "the engine-type message names both forms" "version constraint string or an engine object"
+
 # Validate-only: host tool doesn't satisfy the constraint.
 mkerr validate_unsat
 cat > "$ERR/lattice.json" <<'JSON'
@@ -812,14 +867,15 @@ t_file "$CDIR/custom-cache" "settings.cacheDir is honored"
 lat "$CDIR" prune --max-size 0B ; t_ok "prune honors custom cacheDir"
 t_has "prune reports removal" "removed"
 
-# A retired setting is not a parse error: `logging` used to validate and do
-# nothing, and a config still carrying it has to keep loading.
+# A retired setting is a parse error like any other unknown key: `logging` was
+# removed, and a config still carrying it has to be told so rather than run.
 cat > "$CDIR/lattice.json" <<'JSON'
 { "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
   "tasks": { "build": { "outputs": ["dist/**"] } },
   "settings": { "cacheDir": "custom-cache", "logging": "debug" } }
 JSON
-lat "$CDIR" run build --no-cache ; t_ok "a config carrying the retired settings.logging still loads"
+lat "$CDIR" run build --no-cache ; t_bad "a config carrying the retired settings.logging is rejected"
+t_has "the retired setting is named" 'unknown field `logging` in settings'
 
 # Prune on the production cache.
 lat "$PROD" run build --filter core ; t_ok "re-prime prod cache for prune test"

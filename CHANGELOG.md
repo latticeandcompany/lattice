@@ -10,6 +10,46 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### Breaking: an unknown key in `lattice.json` is an error — 2026-07-30
+
+- The bundled schema has always set `"additionalProperties": false`, so an editor
+  underlined a key Lattice does not define. The config types carried no
+  `deny_unknown_fields`, so `lattice run` read the same file, ignored the key, and
+  ran. The two now agree: every config type rejects a key it does not define, at
+  every level
+- **This breaks any `lattice.json` carrying an extra key** — a leftover
+  `projects` map, a `settings.logging` from before it was removed, a `glob` on a
+  workspace entry, a note parked under a key of your own. Delete it; there is no
+  opt-out
+- The reason it is worth breaking: `output` for `outputs` left a task declaring
+  nothing to capture, so a cache hit restored no files, and `input` for `inputs`
+  hashed no files, so the task hit the cache after its first run whatever you
+  edited. Both were silent
+- The message names the key, the object holding it, its position, the nearest
+  valid field, and everything accepted there:
+
+  ```text
+  Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+  Did you mean `outputs`?
+  Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+  ```
+
+  Containers read the way they do in the file: `tasks.build`, `workspaces[1]`,
+  `engines.node`, or `at the top level of lattice.json`. The suggestion fires
+  within one edit for short keys and two for longer ones, case-insensitively, so
+  `Outputs` and `dependOn` are caught as well
+- `engines` is hand-deserialized rather than an untagged enum. An untagged enum
+  reports only that no variant matched, which would have buried the unknown key
+  inside an engine object. A value that is neither form now says so:
+  `invalid type: integer \`20\`, expected a version constraint string or an
+  engine object`
+- The pinned-version check still reads `latticeVersion` and `settings.versionCheck`
+  straight out of the JSON, so a config written for a newer release can still say
+  which build is allowed to read it
+- A test asserts the schema and the config types accept the same key set at every
+  level, so the two cannot drift apart again. The shipped-config tests now cover
+  every `lattice.json` in the tree, examples included, rather than two of them
+
 ### The ambiguity error suggests a fix that works — 2026-07-30
 
 - When a workspace had no ecosystem marker, the halt suggested

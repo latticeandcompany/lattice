@@ -70,6 +70,23 @@ field and value.
 Fix: see [Errors](/lattice/docs/errors#config-loading-and-validation) for every
 shape, and [Configuration](/lattice/docs/configuration) for the field reference.
 
+### `unknown field` on a key you expected to work
+
+```text
+Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+Did you mean `outputs`?
+Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+```
+
+A key that is not part of the config at that level. Nothing ran. Two cases
+account for most of these: a near miss the message already names, and a key that
+used to be accepted and no longer is — `settings.logging`, or a `glob` on a
+workspace entry.
+
+Fix: delete the key, or write the one the message names. There is no setting that
+relaxes this. If a key you believe is valid is being rejected, your binary is
+older than the config — check `latticeVersion` against `lattice --version`.
+
 ### A cycle in the task graph
 
 ```text

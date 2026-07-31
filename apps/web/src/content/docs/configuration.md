@@ -53,10 +53,31 @@ never overwritten. `lattice init` writes it explicitly as part of scaffolding.
 Commit `.lattice/schema.json` — it isn't one of the gitignored `.lattice/`
 artifacts (`cache/`, `toolchains/`, `bin/` are).
 
-The bundled schema sets `additionalProperties: false` at every level, so an
-editor flags an unknown key (a stray `projects`, a typo'd field) immediately.
-Lattice's own parser ignores unknown keys instead. Editor validation is
-therefore the check that catches typos; `lattice run` will not.
+## Unknown keys
+
+The bundled schema sets `additionalProperties: false` at every level, and the
+parser holds the same line: a key Lattice does not recognize fails the load
+before any task is scheduled. Your editor underlines it as you type, and
+`lattice run` refuses the file.
+
+```text
+Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+Did you mean `outputs`?
+Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+```
+
+The message names the key, the object it sits in, its position in the file, and
+the closest field within a couple of characters. A workspace entry is indexed —
+`workspaces[1]` — so the right one of several gets looked at.
+
+Writing `output` for `outputs` is the case this exists for. The task would
+declare nothing to capture, so a cache hit would restore no files. `input` for
+`inputs` is worse: with no file globs to hash, the task hits the cache after its
+first run no matter what you edit.
+
+There is no way to keep extra keys in the file. A `lattice.json` upgraded from
+an earlier release, or one holding a note under a key of your own, has to drop
+them.
 
 ## `latticeVersion`
 
@@ -88,9 +109,8 @@ version-drift check uses this field and `settings.versionCheck`.
 | `workspaces` | array of workspace objects | no | `[]` |
 
 Each entry is one workspace — a single project directory. There is no glob
-form. A bare string array (`"workspaces": ["apps/*"]`) fails to parse; a `glob`
-key on a workspace entry parses and does nothing, and the bundled schema
-rejects it.
+form. A bare string array (`"workspaces": ["apps/*"]`) fails to parse, and so
+does a `glob` key on a workspace entry.
 
 ### The workspace object
 
@@ -305,17 +325,16 @@ Error: no max cache size set (pass --max-size or set settings.maxCacheSize in la
 | No `lattice.json` in this or any parent directory | before parsing | `no lattice.json found in this directory or any parent; run \`lattice init\` to create one` |
 | Malformed JSON | parsing | `failed to parse lattice.json` (with the underlying JSON error and position) |
 | A workspace object missing `name` or `path` | parsing | `missing field \`name\`` / `missing field \`path\`` (with line/column) |
-| An engine value that is neither a string nor a valid object | parsing | `data did not match any variant of untagged enum EngineSpec` |
+| A key Lattice doesn't recognize, at any level | parsing | `unknown field \`<key>\` in <path>` (with position, the nearest valid field, and the fields accepted there) |
+| An engine value that is neither a string nor a valid object | parsing | `invalid type: <what was written>, expected a version constraint string or an engine object` |
 | A workspace `path` that is empty or whitespace-only | validation | `workspace '<name>' has an empty path` |
 | Two workspaces with the same `name` | validation | `duplicate workspace name '<name>': workspace names must be unique` |
 | A string-form engine whose name isn't well-known | validation | names the engine and suggests the object form with `versionCmd` |
 | A task name passed to `lattice run` not present in `tasks` | after config loads | `task '<name>' is not defined in lattice.json; available tasks: ...` |
 | `lattice prune` with no size limit anywhere | after config loads | `no max cache size set (pass --max-size or set settings.maxCacheSize in lattice.json)` |
 
-An unrecognized top-level or nested key (a leftover `projects` map, a `glob`
-key on a workspace) parses and has no effect on any command. The bundled JSON
-Schema rejects the same input, so editor validation catches these and the CLI
-does not.
+Everything under "parsing" is raised before Lattice looks at a single workspace
+directory, so nothing has run when you see it.
 
 ## Complete example
 

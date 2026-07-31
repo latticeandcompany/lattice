@@ -1,5 +1,5 @@
 //! E2E tests for `lattice run`: caching, filtering, dry-run, stacked and
-//! sequential phases, keep-going, and an undefined task.
+//! sequential phases, keep-going, an undefined task, and unknown config keys.
 
 mod common;
 
@@ -354,4 +354,87 @@ fn undefined_task_fails_cleanly() {
 		// An error, not a panic or backtrace.
 		.stderr(predicate::str::contains("panicked").not())
 		.stderr(predicate::str::contains("RUST_BACKTRACE").not());
+}
+
+/// An unknown key stops the run at load time. A typo'd `outputs` would otherwise
+/// decide what the task caches.
+#[test]
+fn unknown_top_level_key_fails_before_anything_runs() {
+	let fx = Fixture::new();
+	fx.mkdir("a");
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "projects": {},
+  "workspaces": [
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } }
+  ],
+  "tasks": { "build": {} }
+}
+"#,
+	);
+
+	fx.lattice()
+		.args(["run", "build"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains("unknown field `projects`"))
+		.stderr(predicate::str::contains("at the top level of lattice.json"))
+		.stderr(predicate::str::contains("line 3"))
+		.stderr(predicate::str::contains("Fields accepted here:"))
+		.stderr(predicate::str::contains("panicked").not());
+}
+
+/// The message places the key in the task it was written in and names the field
+/// it was probably meant to be.
+#[test]
+fn a_misspelled_outputs_key_names_the_task_and_the_fix() {
+	let fx = Fixture::new();
+	fx.mkdir("a");
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } }
+  ],
+  "tasks": { "build": { "output": ["dist/**"] } }
+}
+"#,
+	);
+
+	fx.lattice()
+		.args(["run", "build"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains(
+			"unknown field `output` in tasks.build",
+		))
+		.stderr(predicate::str::contains("Did you mean `outputs`?"));
+}
+
+/// Workspace entries are indexed, so the message points at one of several.
+#[test]
+fn an_unknown_workspace_key_indexes_the_entry() {
+	let fx = Fixture::new();
+	fx.mkdir("a");
+	fx.mkdir("b");
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } },
+    { "name": "beta", "path": "b", "auto": false, "glob": "b/*" }
+  ],
+  "tasks": { "build": {} }
+}
+"#,
+	);
+
+	fx.lattice()
+		.args(["run", "build"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains(
+			"unknown field `glob` in workspaces[1]",
+		));
 }

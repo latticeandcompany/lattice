@@ -47,6 +47,31 @@ The first wraps a filesystem error (permissions, a directory named
 and column, when the file exists but is not valid JSON, or doesn't match the
 config schema. Both fatal.
 
+### Unknown key in `lattice.json`
+
+```text
+unknown field `output` in tasks.build (lattice.json line 5, column 14)
+Did you mean `outputs`?
+Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+```
+
+Raised while parsing, for a key that is not part of the config at that level. The
+first line names the key, the object holding it (`workspaces[1]`, `tasks.build`,
+`engines.node`, or `at the top level of lattice.json`), and where it is in the
+file. `Did you mean` appears when a valid field is within a character or two.
+Fatal, and raised before any workspace is read. Delete the key, or correct it to
+the field the message names. See
+[Configuration](/lattice/docs/configuration#unknown-keys).
+
+### Engine value in neither accepted form
+
+```text
+invalid type: integer `20`, expected a version constraint string or an engine object
+```
+
+An `engines` entry whose value is neither a version-constraint string
+(`">=20.0.0"`) nor an object (`{ "version": ">=20.0.0" }`). Fatal.
+
 ### Engine declared in unsupported string form
 
 ```text

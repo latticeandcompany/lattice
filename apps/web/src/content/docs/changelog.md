@@ -18,6 +18,29 @@ miss, because the running version is one of the inputs hashed into every task's
 cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Breaking: an unknown key in `lattice.json` is an error — 2026-07-30
+
+The bundled JSON Schema already rejected keys that are not part of the config, so
+an editor underlined a typo'd `outputs` while `lattice run` read the same file
+without complaint and ignored the key. The parser now rejects it too:
+
+```text
+Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+Did you mean `outputs`?
+Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+```
+
+`output` for `outputs` left a task with nothing to capture, so a cache hit
+restored no files; `input` for `inputs` hashed no files, so the task hit the cache
+after its first run whatever you edited. Both now fail the load, before any
+workspace is read.
+
+This breaks any `lattice.json` carrying a key Lattice doesn't define — a leftover
+`projects` map, a `settings.logging` from before it was removed, a note stored
+under a key of your own. The message names the key and its position; delete it.
+See [Configuration](/lattice/docs/configuration#unknown-keys) and
+[Errors](/lattice/docs/errors#unknown-key-in-latticejson).
+
 ## The ambiguity error suggests a fix that works — 2026-07-30
 
 A workspace with no ecosystem marker used to be told to add
@@ -37,11 +60,12 @@ It is removed from the config type and from the schema. Output verbosity is
 `-l`/`--loquacious`, `settings.loquacious`, and `CI`; see [Output and
 logging](/lattice/docs/output-modes).
 
-A `lattice.json` still carrying `logging` keeps loading, since an unrecognized
-setting is ignored rather than rejected. Your editor will flag the key once
-`.lattice/schema.json` is current. That file is only written when missing, so
-delete it and run any `lattice` command to refresh it, then delete the setting.
-See [Configuration](/lattice/docs/configuration).
+A `lattice.json` still carrying `logging` kept loading at the time, since an
+unrecognized setting was ignored rather than rejected. That is no longer true —
+see the unknown-key entry above — so delete the setting. Your editor flags it once
+`.lattice/schema.json` is current; that file is only written when missing, so
+delete it and run any `lattice` command to refresh it. See
+[Configuration](/lattice/docs/configuration).
 
 ## Flags for what used to be environment variables — 2026-07-29
 

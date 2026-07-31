@@ -71,10 +71,11 @@ authoritative if anything here disagrees with the installed binary.
   `inputs`, or set `cache: false` until you're ready to.
 - **A workspace `path` is a literal directory.** `packages/*` is treated as a
   directory named `*` and fails. One entry per project directory.
-- **Unknown keys in `lattice.json` are silently ignored by the parser.** A
-  typo'd field has no effect and raises nothing. The bundled
-  `.lattice/schema.json` rejects it, so keep `"$schema": ".lattice/schema.json"`
-  in the file and treat editor validation as the check for typos.
+- **An unknown key in `lattice.json` fails the load.** Every command that reads
+  the config rejects a key Lattice doesn't define, naming the key, the object it
+  sits in, its line and column, and the nearest valid field. There is no way to
+  park extra keys in the file. Keep `"$schema": ".lattice/schema.json"` so your
+  editor flags the same thing while you type.
 - **`lattice run` installs nothing.** It expects dependencies and toolchains to
   be in place. `lattice setup` is what provisions `engines` and runs each
   workspace's native installer.

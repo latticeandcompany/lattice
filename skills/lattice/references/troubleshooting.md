@@ -51,9 +51,18 @@ the build step that produces it.
 
 Duplicate workspace names, an empty `path`, a bad `maxCacheSize`, or a
 string-form `engines` entry for a tool Lattice can't version-check are all caught
-before any task runs, with the offending field and value named. Note that an
-unrecognized *key* is silently ignored by the parser — the bundled
-`.lattice/schema.json` is what catches typos, so keep `$schema` in the file.
+before any task runs, with the offending field and value named.
+
+## `unknown field \`output\` in tasks.build (lattice.json line 5, column 14)`
+
+A key that is not part of the config at that level. The message names the object
+holding it (`workspaces[1]`, `tasks.build`, `engines.node`, or `at the top level
+of lattice.json`), the position, the nearest valid field when there is one, and
+every field accepted there. Nothing has run. Delete the key or correct it.
+
+`output` for `outputs` and `input` for `inputs` are the reason this is fatal:
+either one changes what the task caches. There is no way to keep an extra key in
+the file, so a config carrying one from an older release has to drop it.
 
 ## A task never hits the cache
 

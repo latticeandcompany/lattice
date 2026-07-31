@@ -127,13 +127,47 @@ pub type EngineMap = IndexMap<String, EngineSpec>;
 
 /// An engine constraint. Either a bare version-constraint string, or a detailed
 /// object with an explicit version command / install command / bin dir.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum EngineSpec {
 	/// A bare version constraint string (e.g. `">=20.0.0"`).
 	Version(String),
 	/// A detailed engine specification.
 	Detailed(EngineSpecObject),
+}
+
+/// Hand-written rather than `#[serde(untagged)]`: an untagged enum buffers the
+/// input and reports only that no variant matched, which would bury the unknown
+/// field error [`EngineSpecObject`] raises. Dispatching on the JSON type instead
+/// lets that error through with its key and position intact.
+impl<'de> Deserialize<'de> for EngineSpec {
+	fn deserialize<D: serde::Deserializer<'de>>(
+		deserializer: D,
+	) -> std::result::Result<Self, D::Error> {
+		struct SpecVisitor;
+
+		impl<'de> serde::de::Visitor<'de> for SpecVisitor {
+			type Value = EngineSpec;
+
+			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+				f.write_str("a version constraint string or an engine object")
+			}
+
+			fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<EngineSpec, E> {
+				Ok(EngineSpec::Version(v.to_string()))
+			}
+
+			fn visit_map<A: serde::de::MapAccess<'de>>(
+				self,
+				map: A,
+			) -> std::result::Result<EngineSpec, A::Error> {
+				EngineSpecObject::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+					.map(EngineSpec::Detailed)
+			}
+		}
+
+		deserializer.deserialize_any(SpecVisitor)
+	}
 }
 
 impl EngineSpec {
@@ -173,7 +207,7 @@ impl EngineSpec {
 
 /// The detailed object form of an engine constraint.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineSpecObject {
 	pub version: Option<String>,
 	pub version_cmd: Option<String>,
@@ -184,7 +218,7 @@ pub struct EngineSpecObject {
 /// One workspace: a single project directory that is the unit of task running
 /// and caching. Declared explicitly; never a glob.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceConfig {
 	pub name: String,
 	/// Literal directory path (relative to repo root). Never a glob.
@@ -205,7 +239,7 @@ pub struct WorkspaceConfig {
 
 /// A named task in the root task graph and how it relates across workspaces.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PipelineTask {
 	pub depends_on: Option<Vec<String>>,
 	pub inputs: Option<Vec<String>>,
@@ -321,7 +355,7 @@ impl<'de> Deserialize<'de> for CacheSize {
 
 /// Repo-wide knobs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub max_cache_size: Option<CacheSize>,
@@ -353,7 +387,7 @@ impl Settings {
 
 /// The root `lattice.json` configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LatticeConfig {
 	#[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
 	pub schema: Option<String>,
@@ -425,10 +459,142 @@ pub fn load_config(root: &Path) -> Result<LatticeConfig> {
 	let config_path = root.join(CONFIG_FILE);
 	let content = std::fs::read_to_string(&config_path)
 		.with_context(|| format!("failed to read {} from {}", CONFIG_FILE, root.display()))?;
+	parse_config(&content)
+}
+
+/// Parse `lattice.json` text and run [`LatticeConfig::validate`].
+///
+/// Every field is checked against the config types, so an unrecognized key is an
+/// error rather than a no-op. A misspelled `inputs` or `outputs` would otherwise
+/// change what a task hashes and caches without saying anything.
+pub fn parse_config(content: &str) -> Result<LatticeConfig> {
+	let mut deserializer = serde_json::Deserializer::from_str(content);
 	let config: LatticeConfig =
-		serde_json::from_str(&content).with_context(|| "failed to parse lattice.json")?;
+		serde_path_to_error::deserialize(&mut deserializer).map_err(parse_error)?;
+	deserializer
+		.end()
+		.with_context(|| format!("failed to parse {CONFIG_FILE}"))?;
 	config.validate()?;
 	Ok(config)
+}
+
+/// An unknown key and the keys that would have been accepted in its place,
+/// recovered from serde's message. Everything needed to say what to write
+/// instead is in there; nothing else exposes it.
+struct UnknownField {
+	field: String,
+	expected: Vec<String>,
+}
+
+impl UnknownField {
+	/// Serde's wording is "unknown field `x`, expected one of `a`, `b`" — with
+	/// "expected `a`" for a single field, and "there are no fields" for none.
+	/// Returns `None` for any other message, which falls back to serde's own.
+	fn parse(message: &str) -> Option<UnknownField> {
+		let rest = message.strip_prefix("unknown field `")?;
+		let (field, rest) = rest.split_once('`')?;
+		Some(UnknownField {
+			field: field.to_string(),
+			expected: rest
+				.split('`')
+				.skip(1)
+				.step_by(2)
+				.map(str::to_string)
+				.collect(),
+		})
+	}
+}
+
+/// The message for a parse failure. An unknown key gets named, placed, and
+/// matched against the fields that belong there; anything else keeps serde's
+/// own message and position.
+fn parse_error(error: serde_path_to_error::Error<serde_json::Error>) -> anyhow::Error {
+	let Some(unknown) = UnknownField::parse(&error.inner().to_string()) else {
+		return anyhow::Error::new(error.into_inner())
+			.context(format!("failed to parse {CONFIG_FILE}"));
+	};
+
+	let inner = error.inner();
+	let position = format!("line {}, column {}", inner.line(), inner.column());
+	let mut message = match container_path(error.path(), &unknown.field) {
+		Some(path) => format!(
+			"unknown field `{}` in {path} ({CONFIG_FILE} {position})",
+			unknown.field
+		),
+		None => format!(
+			"unknown field `{}` at the top level of {CONFIG_FILE} ({position})",
+			unknown.field
+		),
+	};
+	if let Some(near) = closest_field(&unknown.field, &unknown.expected) {
+		message.push_str(&format!("\nDid you mean `{near}`?"));
+	}
+	if !unknown.expected.is_empty() {
+		message.push_str(&format!(
+			"\nFields accepted here: {}",
+			unknown.expected.join(", ")
+		));
+	}
+	anyhow!(message)
+}
+
+/// The container `field` was found in, written the way it reads in the file:
+/// `tasks.build`, `workspaces[0]`, `engines.node`. `None` at the top level.
+fn container_path(path: &serde_path_to_error::Path, field: &str) -> Option<String> {
+	use serde_path_to_error::Segment;
+
+	let mut parts: Vec<String> = Vec::new();
+	for segment in path.iter() {
+		match segment {
+			Segment::Seq { index } => match parts.last_mut() {
+				Some(last) => last.push_str(&format!("[{index}]")),
+				None => parts.push(format!("[{index}]")),
+			},
+			Segment::Map { key } => parts.push(key.clone()),
+			Segment::Enum { variant } => parts.push(variant.clone()),
+			_ => {}
+		}
+	}
+	if parts.last().map(String::as_str) == Some(field) {
+		parts.pop();
+	}
+	if parts.is_empty() {
+		None
+	} else {
+		Some(parts.join("."))
+	}
+}
+
+/// The accepted field closest to `field`, when one is close enough to be a
+/// plausible typo rather than a coincidence.
+fn closest_field<'a>(field: &str, expected: &'a [String]) -> Option<&'a str> {
+	// One slip is worth pointing at for any key; two only once the key is long
+	// enough that two edits still leave most of it intact.
+	let budget = if field.chars().count() <= 4 { 1 } else { 2 };
+	expected
+		.iter()
+		.map(|candidate| (edit_distance(field, candidate), candidate))
+		.filter(|(distance, _)| *distance <= budget)
+		.min_by_key(|(distance, candidate)| (*distance, candidate.len()))
+		.map(|(_, candidate)| candidate.as_str())
+}
+
+/// Levenshtein distance, case-insensitively, so `Outputs` reads as one edit from
+/// `outputs` rather than seven.
+fn edit_distance(a: &str, b: &str) -> usize {
+	let a: Vec<char> = a.chars().flat_map(char::to_lowercase).collect();
+	let b: Vec<char> = b.chars().flat_map(char::to_lowercase).collect();
+	let mut previous: Vec<usize> = (0..=b.len()).collect();
+	let mut current = vec![0usize; b.len() + 1];
+	for (i, ca) in a.iter().enumerate() {
+		current[0] = i + 1;
+		for (j, cb) in b.iter().enumerate() {
+			let substitution = previous[j] + usize::from(ca != cb);
+			current[j + 1] = substitution.min(previous[j + 1] + 1).min(current[j] + 1);
+		}
+		std::mem::swap(&mut previous, &mut current);
+	}
+	previous[b.len()]
 }
 
 /// Walk up from `start` looking for a directory containing `lattice.json`.
@@ -462,17 +628,26 @@ mod tests {
 			.unwrap_or_else(|e| panic!("failed to parse {} as JSON: {e}", path.display()))
 	}
 
+	/// The schema is bundled with the `lattice` crate and written to
+	/// `.lattice/schema.json` by `lattice init`.
+	fn schema_path() -> PathBuf {
+		repo_root()
+			.join("crates")
+			.join("lattice")
+			.join("assets")
+			.join("schema.json")
+	}
+
 	fn compiled_schema() -> Validator {
-		// The schema is bundled with the `lattice` crate and written to
-		// `.lattice/schema.json` by `lattice init`.
-		let schema = read_json(
-			&repo_root()
-				.join("crates")
-				.join("lattice")
-				.join("assets")
-				.join("schema.json"),
-		);
+		let schema = read_json(&schema_path());
 		jsonschema::validator_for(&schema).expect("schema.json must be a valid JSON Schema")
+	}
+
+	/// The message a rejected config produces, as the user reads it.
+	fn parse_failure(content: &str) -> String {
+		parse_config(content)
+			.expect_err("this config must be rejected")
+			.to_string()
 	}
 
 	#[test]
@@ -631,9 +806,18 @@ mod tests {
 		);
 	}
 
+	/// Every `lattice.json` in the tree: this repo's own, plus each example.
+	fn shipped_config_dirs() -> Vec<PathBuf> {
+		vec![
+			repo_root(),
+			repo_root().join("examples").join("polyglot"),
+			repo_root().join("examples").join("nested-repo"),
+		]
+	}
+
 	#[test]
 	fn shipped_configs_load_and_validate() {
-		for dir in [repo_root(), repo_root().join("examples").join("polyglot")] {
+		for dir in shipped_config_dirs() {
 			let config = load_config(&dir)
 				.unwrap_or_else(|e| panic!("load_config failed for {}: {e:#}", dir.display()));
 			let serialized =
@@ -856,5 +1040,319 @@ mod tests {
 
 		let normal = PipelineTask::default();
 		assert!(normal.is_cacheable());
+	}
+
+	#[test]
+	fn unknown_top_level_key_is_rejected() {
+		let message = parse_failure("{\n  \"workspaces\": [],\n  \"projects\": {}\n}");
+		assert!(
+			message.contains("unknown field `projects`"),
+			"must name the key: {message}"
+		);
+		assert!(
+			message.contains("at the top level of lattice.json"),
+			"must say where it is: {message}"
+		);
+		assert!(
+			message.contains("line 3"),
+			"must give the position: {message}"
+		);
+		assert!(
+			message.contains(
+				"Fields accepted here: $schema, latticeVersion, workspaces, engines, tasks, settings"
+			),
+			"must list what belongs there: {message}"
+		);
+		assert!(
+			!message.contains("Did you mean"),
+			"nothing valid resembles `projects`: {message}"
+		);
+	}
+
+	#[test]
+	fn a_misspelled_outputs_suggests_outputs() {
+		let message = parse_failure(r#"{ "tasks": { "build": { "output": ["dist/**"] } } }"#);
+		assert!(
+			message.contains("unknown field `output` in tasks.build"),
+			"must place the key inside its task: {message}"
+		);
+		assert!(
+			message.contains("Did you mean `outputs`?"),
+			"must offer the near miss: {message}"
+		);
+	}
+
+	#[test]
+	fn a_misspelled_inputs_suggests_inputs() {
+		let message = parse_failure(r#"{ "tasks": { "test": { "input": ["src/**"] } } }"#);
+		assert!(
+			message.contains("unknown field `input` in tasks.test"),
+			"{message}"
+		);
+		assert!(message.contains("Did you mean `inputs`?"), "{message}");
+	}
+
+	#[test]
+	fn unknown_workspace_key_names_the_entry() {
+		let message = parse_failure(
+			r#"{ "workspaces": [ { "name": "a", "path": "a" },
+			                     { "name": "b", "path": "b", "dependOn": ["a"] } ] }"#,
+		);
+		assert!(
+			message.contains("unknown field `dependOn` in workspaces[1]"),
+			"must index the offending entry: {message}"
+		);
+		assert!(message.contains("Did you mean `dependsOn`?"), "{message}");
+	}
+
+	#[test]
+	fn unknown_settings_key_is_rejected() {
+		let message = parse_failure(r#"{ "settings": { "logging": true } }"#);
+		assert!(
+			message.contains("unknown field `logging` in settings"),
+			"{message}"
+		);
+		assert!(message.contains("loquacious"), "{message}");
+	}
+
+	#[test]
+	fn unknown_engine_object_key_is_rejected() {
+		let message = parse_failure(r#"{ "engines": { "node": { "versionCmnd": "node -v" } } }"#);
+		assert!(
+			message.contains("unknown field `versionCmnd` in engines.node"),
+			"an untagged enum would report only that no variant matched: {message}"
+		);
+		assert!(message.contains("Did you mean `versionCmd`?"), "{message}");
+	}
+
+	#[test]
+	fn an_engine_that_is_neither_form_names_both() {
+		let error = parse_config(r#"{ "engines": { "node": 20 } }"#).expect_err("must be rejected");
+		let message = format!("{error:#}");
+		assert!(
+			message.contains("expected a version constraint string or an engine object"),
+			"{message}"
+		);
+	}
+
+	/// The unknown-key message is the whole error. Wrapping it in a parse context
+	/// would indent it under a `Caused by:` and bury the suggestion.
+	#[test]
+	fn an_unknown_key_is_not_wrapped_in_a_parse_context() {
+		let error = parse_config(r#"{ "projects": {} }"#).expect_err("must be rejected");
+		assert_eq!(
+			format!("{error:#}"),
+			error.to_string(),
+			"the unknown-key error must have no cause chain"
+		);
+	}
+
+	/// Malformed JSON keeps serde's own message and position.
+	#[test]
+	fn malformed_json_still_reports_a_parse_failure() {
+		let error = parse_config("{ \"tasks\": ").expect_err("must be rejected");
+		let rendered = format!("{error:#}");
+		assert!(
+			rendered.contains("failed to parse lattice.json"),
+			"{rendered}"
+		);
+	}
+
+	#[test]
+	fn trailing_content_after_the_object_is_rejected() {
+		let error = parse_config(r#"{ "tasks": {} } trailing"#).expect_err("must be rejected");
+		assert!(
+			format!("{error:#}").contains("failed to parse lattice.json"),
+			"{error:#}"
+		);
+	}
+
+	#[test]
+	fn suggestions_stay_within_one_or_two_edits() {
+		let expected = ["outputs".to_string(), "inputs".to_string()];
+		assert_eq!(closest_field("output", &expected), Some("outputs"));
+		assert_eq!(closest_field("Outputs", &expected), Some("outputs"));
+		assert_eq!(closest_field("projects", &expected), None);
+		// Four characters or fewer allow one edit only, so a short key does not
+		// collect a suggestion by accident.
+		assert_eq!(closest_field("env", &["ignore".to_string()]), None);
+	}
+
+	#[test]
+	fn edit_distance_counts_edits() {
+		assert_eq!(edit_distance("outputs", "outputs"), 0);
+		assert_eq!(edit_distance("output", "outputs"), 1);
+		assert_eq!(edit_distance("dependOn", "dependsOn"), 1);
+		assert_eq!(edit_distance("OUTPUTS", "outputs"), 0);
+		assert_eq!(edit_distance("", "abc"), 3);
+	}
+
+	/// Property names of a schema object, which must also forbid extras.
+	fn schema_properties(node: &Value, label: &str) -> Vec<String> {
+		assert_eq!(
+			node.get("additionalProperties"),
+			Some(&Value::Bool(false)),
+			"{label} must set additionalProperties: false"
+		);
+		node.get("properties")
+			.and_then(Value::as_object)
+			.unwrap_or_else(|| panic!("{label} must declare properties"))
+			.keys()
+			.cloned()
+			.collect()
+	}
+
+	/// The keys a config type accepts, read off a value carrying every one of
+	/// them. `rename_all` applies in both directions, so what comes back out is
+	/// what the deserializer will take in.
+	fn accepted_keys<T: Serialize + for<'de> Deserialize<'de>>(full: Value) -> Vec<String> {
+		let parsed: T = serde_json::from_value(full).expect("the full example must deserialize");
+		match serde_json::to_value(&parsed).expect("must serialize") {
+			Value::Object(map) => map.keys().cloned().collect(),
+			other => panic!("expected an object, got {other}"),
+		}
+	}
+
+	/// The bundled schema and the config types have to accept the same keys, or
+	/// an editor and `lattice run` disagree about whether a file is valid.
+	#[test]
+	fn schema_and_config_types_accept_the_same_keys() {
+		let schema = read_json(&schema_path());
+		let defs = &schema["$defs"];
+
+		let cases = [
+			(
+				"the top level",
+				schema_properties(&schema, "the root schema"),
+				accepted_keys::<LatticeConfig>(json!({
+					"$schema": ".lattice/schema.json",
+					"latticeVersion": "1.0.0",
+					"workspaces": [],
+					"engines": {},
+					"tasks": {},
+					"settings": {}
+				})),
+			),
+			(
+				"a workspace entry",
+				schema_properties(&defs["workspace"], "$defs/workspace"),
+				accepted_keys::<WorkspaceConfig>(json!({
+					"name": "a",
+					"path": "a",
+					"auto": true,
+					"engines": {},
+					"dependsOn": [],
+					"scripts": {}
+				})),
+			),
+			(
+				"a task",
+				schema_properties(&defs["pipelineTask"], "$defs/pipelineTask"),
+				accepted_keys::<PipelineTask>(json!({
+					"dependsOn": [],
+					"inputs": [],
+					"outputs": [],
+					"ignore": [],
+					"env": [],
+					"persistent": false,
+					"cache": true
+				})),
+			),
+			(
+				"settings",
+				schema_properties(&defs["settings"], "$defs/settings"),
+				accepted_keys::<Settings>(json!({
+					"maxCacheSize": "1GB",
+					"cacheDir": ".lattice/cache",
+					"loquacious": false,
+					"versionCheck": true
+				})),
+			),
+			(
+				"an engine object",
+				schema_properties(&defs["engineSpec"], "$defs/engineSpec"),
+				accepted_keys::<EngineSpecObject>(json!({
+					"version": ">=1.0.0",
+					"versionCmd": "node --version",
+					"installCmd": "curl example.com | sh",
+					"bin": "bin"
+				})),
+			),
+		];
+
+		for (label, mut from_schema, mut from_types) in cases {
+			from_schema.sort();
+			from_types.sort();
+			assert_eq!(
+				from_schema, from_types,
+				"the schema and the config type disagree about the keys of {label}"
+			);
+		}
+	}
+
+	/// Every key the schema accepts has to survive the parser too, in place, not
+	/// just by name.
+	#[test]
+	fn a_config_using_every_key_parses() {
+		let full = json!({
+			"$schema": ".lattice/schema.json",
+			"latticeVersion": "1.0.0",
+			"workspaces": [{
+				"name": "web",
+				"path": "apps/web",
+				"auto": false,
+				"engines": { "node": ">=20.0.0" },
+				"dependsOn": [],
+				"scripts": { "build": "npm run build" }
+			}],
+			"engines": {
+				"protoc": {
+					"version": ">=25.0.0",
+					"versionCmd": "protoc --version",
+					"installCmd": "sh install.sh",
+					"bin": "bin"
+				}
+			},
+			"tasks": {
+				"build": {
+					"dependsOn": ["^build"],
+					"inputs": ["src/**/*"],
+					"outputs": ["dist/**"],
+					"ignore": ["**/*.test.*"],
+					"env": ["DATABASE_URL"],
+					"persistent": false,
+					"cache": true
+				}
+			},
+			"settings": {
+				"maxCacheSize": "10GB",
+				"cacheDir": ".lattice/cache",
+				"loquacious": false,
+				"versionCheck": true
+			}
+		});
+		let text = serde_json::to_string_pretty(&full).unwrap();
+		parse_config(&text).expect("a config using every documented key must parse");
+		assert!(
+			compiled_schema().is_valid(&full),
+			"the same config must validate against the bundled schema"
+		);
+	}
+
+	#[test]
+	fn shipped_configs_reject_an_added_key() {
+		for dir in shipped_config_dirs() {
+			let Value::Object(mut raw) = read_json(&dir.join(CONFIG_FILE)) else {
+				panic!("{} must hold a JSON object", dir.display());
+			};
+			raw.insert("projects".to_string(), json!({}));
+			let text = serde_json::to_string(&Value::Object(raw)).unwrap();
+			let message = parse_failure(&text);
+			assert!(
+				message.contains("unknown field `projects`"),
+				"{}: {message}",
+				dir.display()
+			);
+		}
 	}
 }
