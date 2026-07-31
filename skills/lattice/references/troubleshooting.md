@@ -121,14 +121,21 @@ changing the output mode.
 
 A `persistent: true` task in the closure is expected to block: once every other
 task is done and the persistent one is spawned, `lattice run` streams its output
-and waits for Ctrl-C. There's no flag that makes a persistent task's own exit end
-the run. To get a run that terminates, don't request the persistent task — run
-its non-persistent prerequisites instead.
+and waits for Ctrl-C. To get a run that terminates, don't request the persistent
+task — run its non-persistent prerequisites instead.
 
-The sharp edge: a persistent task's exit is never observed. Mark something
-persistent that actually runs to completion and Lattice won't notice it finished
-or failed — the run just sits waiting for Ctrl-C. Only set `persistent: true` on
-a command whose job is to keep running.
+A run only blocks while a persistent task is actually up. Lattice waits on every
+persistent child, so one that exits is reported and stops holding the run open:
+
+```text
+web:dev: EXITED (code 1) after 1.09s
+lattice: 2 tasks, 0 cached, 1 failed, 1.83s
+```
+
+Anything but a clean `0` counts as a failed task and exits non-zero; `exited
+(code 0)` is reported on stdout and counts as nothing. When the last persistent
+task exits, the run prints its summary without needing a Ctrl-C. A child Lattice
+kills at shutdown is not reported and never counts as a failure.
 
 ## `--filter` ran fewer workspaces than expected
 

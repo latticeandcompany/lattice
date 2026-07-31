@@ -133,7 +133,9 @@ lattice: 7 tasks, 0 cached, 0 failed, 8.41s
 A cache hit prints `workspace:task: cache hit [<key>]` in place of `done`, and a
 failed one prints `workspace:task: FAILED`. A skipped task prints
 `workspace:task: skipped (<reason>)` only under `-l`; without it, a skipped task
-prints nothing here. Every line is the label plus plain text, safe to grep or
+prints nothing here. A persistent task that exits prints
+`workspace:task: EXITED (code <n>) after <time>`, lowercased when the code is
+`0`; see [Persistent tasks](/lattice/docs/persistent-tasks). Every line is the label plus plain text, safe to grep or
 feed to another tool.
 
 Without `-l`, a task's own output is collapsed here too: you get the
@@ -203,8 +205,10 @@ conveyed by color alone. Off a terminal the labels print bare.
 
 A `persistent: true` task forces the raw stream, and inside it that task's own
 output lines print the moment they're produced, with or without `-l`. The
-collapse-on-success behavior above applies to ordinary, one-shot tasks. See
-[Persistent tasks](/lattice/docs/persistent-tasks).
+collapse-on-success behavior above applies to ordinary, one-shot tasks. Because
+those lines are already on screen, a persistent task's exit prints the status line
+alone and doesn't replay anything. See [Persistent
+tasks](/lattice/docs/persistent-tasks).
 
 ## Color
 
@@ -229,9 +233,9 @@ In raw mode the streams split like this:
 
 | Line | Stream |
 | --- | --- |
-| `running`, `cache hit`, `done`, final summary | stdout |
+| `running`, `cache hit`, `done`, `exited (code 0)`, final summary | stdout |
 | `skipped` and `note` trace lines (both `-l` only) | stdout |
-| `FAILED`, `warn` lines | stderr |
+| `FAILED`, `EXITED (…)`, `warn` lines | stderr |
 | A task's own output | whichever stream the task wrote it to, including on a later replay after failure |
 
 So `lattice run build 2>/dev/null` still shows every task's progress and its

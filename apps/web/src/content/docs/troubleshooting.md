@@ -195,18 +195,20 @@ the output mode.
 
 ### A persistent task never lets `lattice run` finish
 
-Once a run starts a `persistent: true` task — a dev server, a watcher — that task
-is detached and the run waits on a shutdown signal before exiting.
-Non-persistent prerequisites still run to completion and their results are visible
-first, but the process blocks until you send `Ctrl-C`. No flag makes a persistent
-task's own exit end the run, since the task is defined by not exiting.
+Once a run starts a `persistent: true` task — a dev server, a watcher — the run
+waits on a shutdown signal before exiting. Non-persistent prerequisites still run
+to completion and their results are visible first, but as long as the task is up
+the process blocks until you send `Ctrl-C`. That's the intended shape of a `dev`
+run, and no flag changes it.
+
+The run does end by itself if every persistent task in it exits, so a task marked
+persistent by mistake no longer blocks: it gets an `EXITED (code <n>)` line and a
+counted failure. See [Persistent tasks](/lattice/docs/persistent-tasks).
 
 Fix: for day-to-day use, run the persistent task on its own in one terminal and
-everything else separately — see [Persistent
-tasks](/lattice/docs/persistent-tasks) and [Dev servers and
-watchers](/lattice/docs/dev-servers). To have a run fail fast instead of waiting,
-leave the persistent task out of the requested list and run its prerequisites
-alone.
+everything else separately — see [Dev servers and
+watchers](/lattice/docs/dev-servers). For a run that always terminates, leave the
+persistent task out of the requested list and run its prerequisites alone.
 
 ## Running
 

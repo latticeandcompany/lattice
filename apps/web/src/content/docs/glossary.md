@@ -131,8 +131,10 @@ A task declared with `persistent: true` — a dev server, watcher, or anything
 not meant to exit. It is never cached regardless of `cache`, it must be a leaf
 in the [task graph](#task-graph) (nothing may depend on it, since it never
 completes), and pulling one into a run's closure forces raw/CI output so its
-streaming output stays visible instead of being collapsed behind a live TUI. See
-[Persistent tasks](/lattice/docs/persistent-tasks).
+streaming output stays visible instead of being collapsed behind a live TUI. It
+doesn't hold the scheduler, but Lattice watches it: if it exits, the run reports
+that, and a non-zero exit is a failure. See [Persistent
+tasks](/lattice/docs/persistent-tasks).
 
 ### Pin
 

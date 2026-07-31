@@ -148,6 +148,10 @@ starts, though tasks already in flight run to completion. With `--continue`, the
 run summary (task/cache/fail counts plus tasks skipped because a prerequisite
 failed) is what's printed. `--sequentially` applies the same rule per phase.
 
+A `persistent: true` task that exits non-zero also counts in that summary and
+exits `1`, whether or not `--continue` was passed. It is found after the graph
+has drained, so it stops nothing.
+
 ## Environment variables Lattice reads
 
 Prefer the flag wherever one exists — it wins over the variable, and it is what

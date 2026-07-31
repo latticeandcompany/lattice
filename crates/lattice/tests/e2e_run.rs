@@ -329,6 +329,57 @@ fn keep_going_runs_independent_and_reports_failure() {
 		.stderr(predicate::str::contains("bad:build: FAILED"));
 }
 
+/// The typo case: `persistent: true` on a command that exits straight away. The
+/// run has to end on its own — no signal is ever sent here — and report it.
+#[test]
+fn persistent_task_that_exits_immediately_is_reported() {
+	let fx = Fixture::new();
+	fx.mkdir("a");
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false,
+      "scripts": { "dev": "echo port already in use >&2; exit 1" } }
+  ],
+  "tasks": { "dev": { "persistent": true } }
+}
+"#,
+	);
+
+	fx.lattice()
+		.args(["run", "dev"])
+		.timeout(std::time::Duration::from_secs(30))
+		.assert()
+		.failure()
+		.stdout(predicate::str::contains("1 failed"))
+		.stderr(predicate::str::contains("app:dev: EXITED (code 1)"));
+}
+
+#[test]
+fn persistent_task_that_finishes_cleanly_says_so() {
+	let fx = Fixture::new();
+	fx.mkdir("a");
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "a", "auto": false, "scripts": { "dev": "true" } }
+  ],
+  "tasks": { "dev": { "persistent": true } }
+}
+"#,
+	);
+
+	fx.lattice()
+		.args(["run", "dev"])
+		.timeout(std::time::Duration::from_secs(30))
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("app:dev: exited (code 0)"))
+		.stdout(predicate::str::contains("0 failed"));
+}
+
 #[test]
 fn undefined_task_fails_cleanly() {
 	let fx = Fixture::new();

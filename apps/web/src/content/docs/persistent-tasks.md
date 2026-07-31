@@ -57,11 +57,11 @@ dependencies have to complete (or restore from cache) before it starts.
 
 What differs is what happens once it *is* started. An ordinary task holds a
 concurrency permit for as long as its process runs, because the scheduler is
-waiting on the exit code. A persistent task's process is spawned, detached, and
-handed to a background reader that streams its output; the scheduler then treats
-that task as done and moves on immediately. It never occupies a `--concurrency`
-slot for its actual lifetime, and the rest of the graph doesn't wait for it to
-exit.
+waiting on the exit code. A persistent task's process is spawned and handed to
+two background tasks, one streaming its output and one waiting on it; the
+scheduler then treats that task as started and moves on immediately. It never
+occupies a `--concurrency` slot for its actual lifetime, and the rest of the
+graph doesn't wait for it to exit.
 
 ## Nothing may depend on a persistent task
 
@@ -75,37 +75,62 @@ persistent task 'dev' in workspace 'app' cannot be depended on by other tasks
 Nothing can start after a process that never finishes. If another task needs the
 artifact a dev server would produce, depend on the build step that produces it.
 
+## Its exit is reported
+
+Lattice watches every persistent child it starts. When one ends without being
+asked to, the run prints a line for it under that task's label:
+
+```text
+web:dev: EXITED (code 1) after 2.14s
+```
+
+Any exit that isn't a clean `0` counts as a failed task in the run summary, and
+the run exits non-zero. A child a signal ended reads `EXITED (killed by signal)`
+and counts the same. Both go to stderr, like every other failure line.
+
+An exit code of `0` is reported too, on stdout, and counts as nothing:
+
+```text
+web:dev: exited (code 0) after 0.31s
+```
+
+You asked for a process that keeps running and no longer have one, so the run
+tells you either way.
+
+Once a persistent task has exited it stops holding the run open. If it was the
+only one, `lattice run` prints its summary and exits rather than waiting for a
+Ctrl-C with nothing left to stop. With other persistent tasks still up, the run
+keeps waiting and keeps streaming them.
+
+The exit also takes down whatever the command left behind: on Unix, Lattice
+signals the rest of that child's process group, so a server the command
+backgrounded before quitting isn't left holding a port.
+
 ## Stopping a run
 
 A run with no persistent task in its closure exits as soon as its graph drains.
 No signal handling is involved.
 
-A run that started a persistent task waits for Ctrl-C (`SIGINT`) once every
-other task has finished, streaming the persistent task's output the whole time.
-On Ctrl-C, Lattice tears every still-running persistent child down: on Unix it
-sends `SIGKILL` to the child's whole process group, so a dev server launched
-through a shell (and any grandchildren it spawned) dies with it; on other
-platforms only the direct child is killed. Either way it's a hard kill, not a
-`SIGTERM`, so the process gets no chance to run its own shutdown hooks. If
-nothing else in the run failed, this exits `0`.
+A run whose persistent tasks are all still up waits for Ctrl-C (`SIGINT`) once
+every other task has finished, streaming their output the whole time. On Ctrl-C,
+Lattice tears every still-running persistent child down: on Unix it sends
+`SIGKILL` to the child's whole process group, so a dev server launched through a
+shell (and any grandchildren it spawned) dies with it; on other platforms only
+the direct child is killed. Either way it's a hard kill, not a `SIGTERM`, so the
+process gets no chance to run its own shutdown hooks.
 
-## A persistent task's exit is never observed
-
-Lattice spawns a persistent task, detaches it, and reports it as started without
-ever looking at its exit status — not when it's spawned, not while the run waits
-for Ctrl-C, and not at shutdown, where the exit code from reaping it is
-discarded. A persistent task never gets a completion line or a `FAILED` line.
-
-For a command that stays up, there's nothing to observe. For a command that runs
-to completion — a build script, a codegen step — marking it persistent means
-Lattice never notices it failed, or even that it finished. The run doesn't fail,
-doesn't move on, and doesn't say anything; it sits waiting for Ctrl-C as if the
-process were still alive.
+A child killed this way is not reported as an exit and never counts as a
+failure. If nothing else in the run failed, Ctrl-C exits `0`.
 
 ## Choosing the flag correctly
 
 Set `persistent: true` only on a command whose job is to keep running: a dev
-server, a `--watch` build, a log tailer. If the command is meant to exit — even
-a slow one — leave `persistent` unset so Lattice can cache it and report its
-failure. Because persistent tasks must be leaves, put the setup work a dev
-server needs (installing dependencies, an initial build) in its `dependsOn`.
+server, a `--watch` build, a log tailer. A command that's meant to exit will run
+and be reported either way, but marking it persistent costs you the things an
+ordinary task gets. It can't be cached, so it re-runs every time. It can't be
+depended on, so nothing can be sequenced after it. It holds no concurrency slot,
+so `--concurrency` stops bounding it. And a failure in it never stops the rest
+of the graph, because by the time the exit is known the scheduler has moved on.
+
+Because persistent tasks must be leaves, put the setup work a dev server needs
+(installing dependencies, an initial build) in its `dependsOn`.
