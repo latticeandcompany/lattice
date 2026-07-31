@@ -9,9 +9,19 @@ parent:
 Error: no lattice.json found in this directory or any parent; run `lattice init` to create one
 ```
 
-Every top-level key is optional, so `{}` parses and validates. The parser
-silently ignores keys it doesn't recognize — the bundled JSON Schema does not,
-which is why `$schema` is worth keeping.
+Every top-level key is optional, so `{}` parses and validates. A key that is not
+part of the config, at any level, fails the load:
+
+```text
+Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+Did you mean `outputs`?
+Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+```
+
+The message names the key, the object holding it (`workspaces[1]`, `tasks.build`,
+`engines.node`, or `at the top level of lattice.json`), the position, the nearest
+valid field within a character or two, and everything accepted there. There is no
+way to park an extra key in the file.
 
 ## Top level
 
@@ -29,8 +39,8 @@ schema written next to the config so editors validate and autocomplete it.
 Every command that loads config writes that file **only if absent**; an existing
 copy is never overwritten. It is the one thing under `.lattice/` meant to be
 committed (`cache/`, `toolchains/`, and `bin/` are gitignored). The schema sets
-`additionalProperties: false` at every level, so it catches typos the CLI will
-not.
+`additionalProperties: false` at every level, matching the parser, so a typo is
+underlined as you type and fatal when you run.
 
 `latticeVersion` pins which Lattice release this repo runs. `lattice upgrade`
 writes it; every later invocation reads it and hands over to that version unless
@@ -150,7 +160,8 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
 | No `lattice.json` in this or any parent directory | before parsing | `no lattice.json found in this directory or any parent; run \`lattice init\` to create one` |
 | Malformed JSON | parsing | `failed to parse lattice.json`, with the JSON error and position |
 | Workspace missing `name` or `path` | parsing | `missing field \`name\`` / `missing field \`path\``, with line and column |
-| Engine value neither a string nor a valid object | parsing | `data did not match any variant of untagged enum EngineSpec` |
+| A key that is not part of the config, at any level | parsing | `unknown field \`<key>\` in <path>`, with position, the nearest valid field, and the fields accepted there |
+| Engine value neither a string nor a valid object | parsing | `invalid type: <what was written>, expected a version constraint string or an engine object` |
 | Workspace `path` empty or whitespace-only | validation | `workspace '<name>' has an empty path` |
 | Two workspaces with the same `name` | validation | `duplicate workspace name '<name>': workspace names must be unique` |
 | String-form engine that isn't well-known | validation | names the engine and shows the object form with `versionCmd` |
