@@ -108,8 +108,9 @@ api:dev: listening on 0.0.0.0:8080
 
 `ui-kit:build` and `web:build` finish first because `web:dev` and `api:dev` both
 `dependsOn` a `build`. Once those are done, both dev servers start and run side
-by side. Neither `dev` task ever settles into a `done` line; persistent tasks
-never get one. The invocation itself doesn't terminate — see [Stopping
+by side. Neither `dev` task settles into a `done` line; a persistent task gets a
+line only if it exits, which is the one thing it isn't supposed to do. As long as
+both stay up the invocation doesn't terminate. See [Stopping
 everything](#stopping-everything).
 
 ## Running one dev server only
@@ -172,17 +173,19 @@ Once every other task in the run has finished and the dev servers are up,
 `lattice run` waits for `Ctrl-C`, streaming their output while it waits. One
 `Ctrl-C` tears every still-running dev server down: on Unix, Lattice sends
 `SIGKILL` to each one's whole process group, so a server launched through a shell
-(and anything it spawned) dies with it. If nothing else in the run failed, this
-exits `0` and prints the same run summary line as any other run.
+(and anything it spawned) dies with it. A server killed this way is not reported
+as having exited. If nothing else in the run failed, this exits `0` and prints
+the same run summary line as any other run.
 
-## Marked persistent, but it already exited
+The run also ends on its own once every dev server in it has exited. There is
+nothing left to wait for, so it prints the summary without needing a `Ctrl-C`.
 
-Lattice never checks a persistent task's exit status — not when it spawns it,
-not while it waits for `Ctrl-C`, not at shutdown. If the command behind a
-`persistent: true` task quits immediately instead of staying up, Lattice reports
-nothing wrong. A dev server that refuses to start because something is already
-listening on its port still counts as running. Captured against this repo's own
-`web:dev`, with an `astro` dev server already up on its port:
+## A dev server that exits
+
+Lattice watches each dev server it starts. One that quits gets a line saying so,
+and a non-zero exit counts as a failed task. A server that refuses to start
+because something is already listening on its port ends the run in about the time
+it takes to print the reason:
 
 ```text
 $ lattice run dev --filter web
@@ -193,16 +196,26 @@ web:dev: > astro dev
 web:dev:
 web:dev: {"message":"Dev server already running at
 http://localhost:4321 (pid 13616)","label":"SKIP_FORMAT","level":"info"}
-^C
-lattice: 1 tasks, 0 cached, 0 failed, 34.25s
+web:dev: EXITED (code 1) after 1.09s
+lattice: 1 tasks, 0 cached, 1 failed, 1.14s
 ```
 
-The `npm run dev` process printed that message and exited immediately; its child
-was a zombie within a second of starting. Lattice waited the next 34 seconds for
-`Ctrl-C` as if the server were up, and reported the run as a success. A
-persistent task has no `done` or `FAILED` line, so check that the thing you
-expect to be listening actually is rather than reading the run summary for it.
-See [Persistent tasks](/lattice/docs/persistent-tasks).
+`npm run dev` printed that message and exited, so the run reported it, counted a
+failure, and exited non-zero instead of sitting there as if the server were up.
+
+An exit code of `0` is reported the same way in lowercase and doesn't fail the
+run. It still ends that dev server's part of the run, which is usually the sign
+that a command marked `persistent: true` was never a server to begin with:
+
+```text
+web:dev: exited (code 0) after 0.28s
+lattice: 1 tasks, 0 cached, 0 failed, 0.31s
+```
+
+With more than one dev server up, one exiting doesn't disturb the others. Their
+output keeps streaming and the run keeps waiting; the failure shows up in the
+summary at the end. See [Persistent
+tasks](/lattice/docs/persistent-tasks).
 
 ## It behaves like a server, but isn't marked persistent
 

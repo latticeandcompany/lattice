@@ -10,6 +10,29 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### A persistent task that exits is reported — 2026-07-30
+
+- Lattice spawned a dev server and never looked at it again. A `persistent: true`
+  task whose command exited — a port already taken, or a one-shot command marked
+  persistent by mistake — left the run reporting it as running until Ctrl-C, then
+  printing `0 failed`. Every persistent child is now waited on
+- An exit that isn't a clean `0` prints
+  `web:dev: EXITED (code 1) after 1.09s` on stderr, counts in the run summary's
+  failed count, and exits non-zero. A signal reads `EXITED (killed by signal)`
+- An exit code of `0` prints the same line lowercased on stdout and counts as
+  nothing. The process you asked to keep running is gone either way, so the run
+  says so
+- A persistent task that has exited stops holding the run open. When the last one
+  is gone the run prints its summary and exits instead of waiting for a Ctrl-C
+  with nothing left to stop. Other persistent tasks still up are untouched, and
+  the graph's scheduling is unchanged: a persistent exit stops nothing
+- A child Lattice kills at shutdown is not reported and never counts as a
+  failure. The kill request and the child's own exit can land in the same poll,
+  so the shutdown flag decides that, not which one won
+- On Unix, a persistent task that exits on its own now also takes down the rest
+  of its process group, so a server the command backgrounded before quitting
+  isn't left holding a port
+
 ### Breaking: an unknown key in `lattice.json` is an error — 2026-07-30
 
 - The bundled schema has always set `"additionalProperties": false`, so an editor

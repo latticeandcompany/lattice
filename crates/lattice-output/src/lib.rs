@@ -397,6 +397,15 @@ pub enum TaskEvent {
 		workspace: String,
 		task: String,
 	},
+	/// A persistent task's process ended without being asked to. `code` is its
+	/// exit code, or `None` when a signal ended it. Anything but `Some(0)` also
+	/// counts as a run failure.
+	PersistentExited {
+		workspace: String,
+		task: String,
+		code: Option<i32>,
+		duration_ms: u64,
+	},
 	Skipped {
 		workspace: String,
 		task: String,
@@ -441,6 +450,15 @@ pub fn make_reporter(mode: OutputMode, loquacious: bool) -> Box<dyn Reporter> {
 fn short_key(key: &str) -> &str {
 	let n = key.len().min(8);
 	&key[..n]
+}
+
+/// How a persistent task's exit reads in a status line: its code, or a note that
+/// a signal ended it, which on unix leaves no code behind.
+fn exit_desc(code: Option<i32>) -> String {
+	match code {
+		Some(c) => format!("code {c}"),
+		None => "killed by signal".to_string(),
+	}
 }
 
 /// Under a minute, seconds with two decimals (`1.23s`). Past that, clock form —
@@ -541,6 +559,20 @@ impl Reporter for CiReporter {
 			}
 			TaskEvent::Failed { workspace, task } => {
 				eprintln!("{}: FAILED", self.label(&workspace, &task));
+			}
+			TaskEvent::PersistentExited {
+				workspace,
+				task,
+				code,
+				duration_ms,
+			} => {
+				let label = self.label(&workspace, &task);
+				let (desc, secs) = (exit_desc(code), fmt_secs(duration_ms));
+				if code == Some(0) {
+					println!("{}: exited ({}) after {}", label, desc, secs);
+				} else {
+					eprintln!("{}: EXITED ({}) after {}", label, desc, secs);
+				}
 			}
 			TaskEvent::Skipped {
 				workspace,
@@ -732,6 +764,32 @@ impl Reporter for InteractiveReporter {
 					self.label(&workspace, &task),
 					style("FAILED").red()
 				);
+				self.settle(&workspace, &task, line);
+			}
+			TaskEvent::PersistentExited {
+				workspace,
+				task,
+				code,
+				duration_ms,
+			} => {
+				let detail = format!("exited ({})", exit_desc(code));
+				let line = if code == Some(0) {
+					format!(
+						"{} {} {} {}",
+						style("○").dim(),
+						self.label(&workspace, &task),
+						style(detail).dim(),
+						style(fmt_secs(duration_ms)).dim()
+					)
+				} else {
+					format!(
+						"{} {} {} {}",
+						style("✗").red().bold(),
+						self.label(&workspace, &task),
+						style(detail.to_uppercase()).red(),
+						style(fmt_secs(duration_ms)).dim()
+					)
+				};
 				self.settle(&workspace, &task, line);
 			}
 			TaskEvent::Skipped {
@@ -968,6 +1026,13 @@ mod tests {
 		));
 		assert!(matches!(events[3], TaskEvent::CacheHit { .. }));
 		assert!(matches!(events[4], TaskEvent::Failed { .. }));
+	}
+
+	#[test]
+	fn exit_desc_names_the_code_or_the_signal() {
+		assert_eq!(exit_desc(Some(0)), "code 0");
+		assert_eq!(exit_desc(Some(1)), "code 1");
+		assert_eq!(exit_desc(None), "killed by signal");
 	}
 
 	#[test]

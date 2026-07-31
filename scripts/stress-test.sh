@@ -71,6 +71,8 @@ BG_PID=""
 
 cleanup() {
   [ -n "$BG_PID" ] && kill -9 "$BG_PID" 2>/dev/null
+  # The stand-in dev server, if a teardown assertion failed and left it behind.
+  pkill -f "sleep 3117" 2>/dev/null
   if [ "${KEEP_ENV:-0}" = "1" ]; then
     say "\n${YEL}KEEP_ENV=1 — leaving environment at:${RST} $ENVROOT"
   else
@@ -110,12 +112,32 @@ late() {
   local envs="$1"; local dir="$2"; shift 2
   OUTPUT="$(cd "$dir" && env $envs "$BIN" "$@" 2>&1)"; RC=$?
 }
+# Same as `lat`, but killed after <secs> with RC=124. Used for runs that must
+# terminate on their own: a regression that waits forever fails one assertion
+# instead of hanging the whole suite.
+lat_timeout() {
+  local dir="$1"; local secs="$2"; shift 2
+  local out="$ENVROOT/timed.out"
+  : > "$out"
+  ( cd "$dir" && "$BIN" "$@" > "$out" 2>&1 ) &
+  local pid=$!
+  local k=0; local ticks=$((secs * 10))
+  while kill -0 "$pid" 2>/dev/null && [ $k -lt $ticks ]; do sleep 0.1; k=$((k + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; RC=124
+  else
+    wait "$pid"; RC=$?
+  fi
+  OUTPUT="$(cat "$out")"
+}
 
 have()  { printf '%s\n' "$OUTPUT" | grep -qF -- "$1"; }
 haveE() { printf '%s\n' "$OUTPUT" | grep -qE -- "$1"; }
 
 t_ok()    { if [ "$RC" -eq 0 ]; then pass "$1"; else fail "$1" "exit=$RC | $(snip)"; fi; }
 t_bad()   { if [ "$RC" -ne 0 ]; then pass "$1"; else fail "$1" "expected non-zero exit | $(snip)"; fi; }
+# The run ended by itself, rather than being killed by `lat_timeout`.
+t_ran()   { if [ "$RC" -ne 124 ]; then pass "$1"; else fail "$1" "timed out | $(snip)"; fi; }
 t_has()   { if have  "$2"; then pass "$1"; else fail "$1" "missing [$2] | $(snip)"; fi; }
 t_hasE()  { if haveE "$2"; then pass "$1"; else fail "$1" "missing /$2/ | $(snip)"; fi; }
 t_hasnt() { if have  "$2"; then fail "$1" "unexpected [$2] | $(snip)"; else pass "$1"; fi; }
@@ -298,7 +320,7 @@ sed "s#__ORDER__#$ORDER#g" > "$PROD/lattice.json" <<'JSON'
       "test": "echo docs-test-ok",
       "lint": "echo docs-lint-ok",
       "clean": "rm -rf dist && echo docs-clean-ok",
-      "dev": "echo READY_DEV && sleep 30"
+      "dev": "echo READY_DEV && sleep 3117"
     } }
   ],
   "tasks": {
@@ -509,7 +531,8 @@ t_has "sequential dry-run labels the lint phase"  "dry run · lint (phase)"
 t_has "sequential dry-run labels the build phase" "dry run · build (phase)"
 
 # =========================================================================
-# 8. Persistent task (dev server): must not block; SIGINT tears down.
+# 8. Persistent task (dev server): must not block; SIGINT tears down; an exit
+#    of its own is reported.
 # =========================================================================
 sect "persistent tasks"
 
@@ -540,6 +563,41 @@ else
 fi
 BG_PID=""
 if grep -q "docs:build" "$DEVLOG" 2>/dev/null; then pass "persistent run drained its build prerequisite"; else fail "persistent run drained its build prerequisite" "$(tr '\n' '|' < "$DEVLOG" | cut -c1-300)"; fi
+# A child we killed on purpose is not an exit to report and not a failure.
+if grep -q "EXITED" "$DEVLOG" 2>/dev/null; then fail "SIGINT teardown reports no exit" "$(tr '\n' '|' < "$DEVLOG" | cut -c1-300)"; else pass "SIGINT teardown reports no exit"; fi
+t_grepfile "$DEVLOG" "0 failed" "interrupted persistent run reports no failures"
+if pgrep -f "sleep 3117" >/dev/null 2>&1; then fail "SIGINT kills the dev server's process group" "the dev server's sleep survived"; else pass "SIGINT kills the dev server's process group"; fi
+
+# A `persistent: true` command that exits anyway is noticed: the run reports it
+# and ends on its own, with no signal involved.
+EXITREPO="$ENVROOT/exitrepo"
+mkdir -p "$EXITREPO/app"
+cat > "$EXITREPO/lattice.json" <<'JSON'
+{
+  "workspaces": [
+    { "name": "app", "path": "app", "auto": false, "scripts": {
+      "dev":  "echo PORT_ALREADY_IN_USE; exit 1",
+      "once": "echo ONE_SHOT_OK"
+    } }
+  ],
+  "tasks": {
+    "dev":  { "persistent": true },
+    "once": { "persistent": true }
+  }
+}
+JSON
+lat_timeout "$EXITREPO" 20 run dev
+t_ran  "a persistent task that exits ends the run without a signal"
+t_bad  "a persistent task exiting non-zero fails the run"
+t_has  "persistent exit names the code"    "EXITED (code 1)"
+t_has  "persistent exit counts as failed"  "1 failed"
+t_has  "persistent output still streamed"  "PORT_ALREADY_IN_USE"
+
+lat_timeout "$EXITREPO" 20 run once
+t_ran  "a clean persistent exit ends the run too"
+t_ok   "a persistent task exiting 0 does not fail the run"
+t_has  "clean persistent exit is reported" "exited (code 0)"
+t_has  "clean persistent exit counts none" "0 failed"
 
 # =========================================================================
 # 9. Keep-going vs fail-fast.

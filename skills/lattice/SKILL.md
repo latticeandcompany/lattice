@@ -58,7 +58,9 @@ authoritative if anything here disagrees with the installed binary.
   declared `persistent: true`, `lattice run` streams its output and waits for
   Ctrl-C before exiting — by design, since a dev server has no completion to
   wait for. Never call one from a blocking foreground command. Run it in the
-  background, or run only its non-persistent prerequisites.
+  background, or run only its non-persistent prerequisites. If the command exits
+  anyway, the run reports `EXITED (code <n>)` and ends, counting a non-zero exit
+  as a failed task.
 - **`--filter` selects the roots of a run, not all of it.** It matches
   workspaces whose `name` *contains* the pattern (substring, not glob, matched on
   `name` and never on `path`), then the graph adds everything those workspaces

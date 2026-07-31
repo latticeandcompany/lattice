@@ -130,7 +130,7 @@ tool lands.
 | `outputs` | array of `string` | no | none | Globs captured as the cached artifact. |
 | `ignore` | array of `string` | no | none | Globs subtracted from what `inputs` matched. |
 | `env` | array of `string` | no | none | Variable *names* whose resolved values feed the cache key. |
-| `persistent` | `boolean` | no | `false` | Never cached, forces raw output for the whole run, must be a graph leaf. |
+| `persistent` | `boolean` | no | `false` | Never cached, forces raw output for the whole run, must be a graph leaf. Its exit is reported and a non-zero one fails the run. |
 | `cache` | `boolean` | no | `true` | `false` opts a non-persistent task out of caching. |
 
 Keys are task names you choose. Declaration order is preserved and means

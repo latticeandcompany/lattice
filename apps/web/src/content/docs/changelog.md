@@ -18,6 +18,23 @@ miss, because the running version is one of the inputs hashed into every task's
 cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## A persistent task that exits is reported — 2026-07-30
+
+Lattice used to spawn a dev server and never look at it again. A
+`persistent: true` task whose command exited — a port already taken, or a
+one-shot command marked persistent by mistake — left the run reporting it as
+running until you pressed Ctrl-C, which then printed `0 failed`.
+
+Every persistent child is now waited on. An exit that isn't a clean `0` prints
+`web:dev: EXITED (code 1) after 1.09s`, counts in the summary's failed count, and
+exits non-zero; an exit code of `0` prints the same line lowercased and counts as
+nothing. Once the last persistent task in a run has exited the run prints its
+summary and exits, rather than waiting for a Ctrl-C with nothing left to stop.
+
+A dev server Lattice kills at shutdown is not reported and never counts as a
+failure. See [Persistent tasks](/lattice/docs/persistent-tasks) and [Dev servers
+and watchers](/lattice/docs/dev-servers).
+
 ## Breaking: an unknown key in `lattice.json` is an error — 2026-07-30
 
 The bundled JSON Schema already rejected keys that are not part of the config, so

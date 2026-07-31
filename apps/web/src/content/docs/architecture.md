@@ -145,8 +145,9 @@ every rung of the evidence ladder and role composition/conflict, and its
 `toolchain` submodule covers `classify`, `parse_version`, `satisfies`, and a
 provision-then-reuse round trip against a fake installed tool. `lattice-runner`
 covers ordering, concurrency, fail-fast vs. `--continue`, the cache round trip,
-and persistent tasks not blocking the graph, all against a `RecordingReporter`
-test double. The `lattice` crate covers version-nag gating and pin-handover
+and persistent tasks: not blocking the graph, reporting an exit, and staying
+silent when the exit was a shutdown kill. All of it runs against a
+`RecordingReporter` test double. The `lattice` crate covers version-nag gating and pin-handover
 decision logic as pure functions.
 
 Black-box e2e tests live under `crates/lattice/tests/`, each a `#[test]` binary

@@ -1,6 +1,7 @@
 //! The Lattice task runner: an in-degree scheduler over the execution DAG that
 //! runs each task through the platform shell, wires the content-addressed cache,
-//! and keeps long-running (`persistent`) tasks from blocking the graph.
+//! and keeps long-running (`persistent`) tasks from blocking the graph while
+//! still watching them for an exit.
 //!
 //! The runner is deliberately I/O-only with respect to presentation: it emits
 //! typed [`lattice_output::TaskEvent`]s and calls the [`lattice_output::Reporter`]
@@ -115,11 +116,11 @@ struct TaskRunContext {
 	no_cache: bool,
 	lattice_version: Arc<str>,
 	tx: UnboundedSender<RunnerMsg>,
-	persistent_children: Arc<Mutex<Vec<PersistentChild>>>,
+	persistent_watches: Arc<Mutex<Vec<PersistentWatch>>>,
+	shutting_down: Arc<AtomicBool>,
 }
 
-/// A still-running persistent child, tracked so it can be torn down after the
-/// graph drains.
+/// A persistent child process, owned by the reaper task that waits on it.
 struct PersistentChild {
 	child: tokio::process::Child,
 	#[cfg(unix)]
@@ -127,9 +128,10 @@ struct PersistentChild {
 }
 
 impl PersistentChild {
-	/// Kill the child (and, on unix, its whole process group so shell-spawned
-	/// grandchildren die too), then reap it.
-	async fn terminate(mut self) {
+	/// On unix, signal the child's whole process group so a server launched
+	/// through a shell dies along with the shell. Elsewhere, nothing: only the
+	/// direct child can be killed.
+	fn kill_group(&self) {
 		#[cfg(unix)]
 		if let Some(pgid) = self.pgid {
 			// SAFETY: `kill(2)` with a negative pid signals the process group;
@@ -138,9 +140,32 @@ impl PersistentChild {
 				libc::kill(-pgid, libc::SIGKILL);
 			}
 		}
+	}
+
+	/// Kill the child and its group, then reap it.
+	async fn terminate(mut self) {
+		self.kill_group();
 		let _ = self.child.start_kill();
 		let _ = self.child.wait().await;
 	}
+}
+
+/// The scheduler's half of a watched persistent child: a way to stop it once the
+/// run is over, and the reaper task to wait on while it does.
+struct PersistentWatch {
+	kill: tokio::sync::oneshot::Sender<()>,
+	reaper: tokio::task::JoinHandle<()>,
+}
+
+/// Everything [`reap_persistent`] needs to watch one persistent child.
+struct ReapContext {
+	child: PersistentChild,
+	kill: tokio::sync::oneshot::Receiver<()>,
+	tx: UnboundedSender<RunnerMsg>,
+	shutting_down: Arc<AtomicBool>,
+	workspace: String,
+	task: String,
+	start: Instant,
 }
 
 /// Reporter interactions originating inside spawned tasks. Forwarded to the
@@ -165,6 +190,14 @@ enum RunnerMsg {
 		task: String,
 		msg: String,
 	},
+	/// A persistent child ended on its own. Sent by [`reap_persistent`]; the
+	/// scheduler counts it, so it never goes straight to the reporter.
+	PersistentExited {
+		workspace: String,
+		task: String,
+		code: Option<i32>,
+		duration_ms: u64,
+	},
 }
 
 enum TaskOutcome {
@@ -181,8 +214,33 @@ enum TaskOutcome {
 	Noop,
 }
 
-fn forward(reporter: &dyn Reporter, msg: RunnerMsg) {
+/// Hand one message to the reporter, keeping the two counters a persistent
+/// child's exit moves: it stops holding the run open, and any exit that is not a
+/// clean zero is a failure the summary has to show.
+fn forward(
+	reporter: &dyn Reporter,
+	msg: RunnerMsg,
+	live_persistent: &mut usize,
+	failed: &mut usize,
+) {
 	match msg {
+		RunnerMsg::PersistentExited {
+			workspace,
+			task,
+			code,
+			duration_ms,
+		} => {
+			*live_persistent = live_persistent.saturating_sub(1);
+			if code != Some(0) {
+				*failed += 1;
+			}
+			reporter.event(TaskEvent::PersistentExited {
+				workspace,
+				task,
+				code,
+				duration_ms,
+			});
+		}
 		RunnerMsg::Event(ev) => reporter.event(ev),
 		RunnerMsg::SurfaceFailure {
 			workspace,
@@ -255,8 +313,9 @@ fn skip_dependents(
 /// Execute the DAG.
 ///
 /// See [`ExecuteOptions`] for the knobs. Returns [`RunResult`] on success; a
-/// keep-going run with failures returns `Err(RunFailure)`, and a fail-fast run
-/// returns the first failure verbatim.
+/// fail-fast run returns its first failure verbatim, and any other run that
+/// counted a failure — keep-going, or a persistent child that exited on its own —
+/// returns `Err(RunFailure)` carrying the summary.
 pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let ExecuteOptions {
 		graph,
@@ -354,7 +413,8 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let semaphore = Arc::new(Semaphore::new(concurrency));
 	let abort = Arc::new(AtomicBool::new(false));
 	let lattice_version: Arc<str> = Arc::from(lattice_version);
-	let persistent_children: Arc<Mutex<Vec<PersistentChild>>> = Arc::new(Mutex::new(Vec::new()));
+	let persistent_watches: Arc<Mutex<Vec<PersistentWatch>>> = Arc::new(Mutex::new(Vec::new()));
+	let shutting_down = Arc::new(AtomicBool::new(false));
 
 	let (tx, mut rx) = mpsc::unbounded_channel::<RunnerMsg>();
 
@@ -368,6 +428,8 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let mut failed = 0usize;
 	let mut skipped = 0usize;
 	let mut first_failure: Option<String> = None;
+	// Persistent children started and not yet reported as exited.
+	let mut live_persistent = 0usize;
 
 	let mut ready: Vec<usize> = schedule.initial_ready();
 
@@ -398,7 +460,8 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 							no_cache,
 							lattice_version: lattice_version.clone(),
 							tx: tx.clone(),
-							persistent_children: persistent_children.clone(),
+							persistent_watches: persistent_watches.clone(),
+							shutting_down: shutting_down.clone(),
 						};
 						join_set.spawn(async move { (pos, run_one(ctx).await) });
 					}
@@ -434,8 +497,13 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 					TaskOutcome::Noop => {
 						unblock(pos, &schedule, &mut remaining_indegree, &completed, &mut ready);
 					}
-					TaskOutcome::Ran | TaskOutcome::Persistent => {
+					TaskOutcome::Ran => {
 						total += 1;
+						unblock(pos, &schedule, &mut remaining_indegree, &completed, &mut ready);
+					}
+					TaskOutcome::Persistent => {
+						total += 1;
+						live_persistent += 1;
 						unblock(pos, &schedule, &mut remaining_indegree, &completed, &mut ready);
 					}
 					TaskOutcome::Cached => {
@@ -462,38 +530,43 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 				}
 			}
 			Some(msg) = rx.recv() => {
-				forward(reporter, msg);
+				forward(reporter, msg, &mut live_persistent, &mut failed);
 			}
 		}
 	}
 
-	// If persistent children are still running, wait for the shutdown signal
-	// (streaming their output meanwhile), then tear them all down.
-	let had_persistent = !persistent_children.lock().unwrap().is_empty();
-	if had_persistent {
+	// While any persistent child is still running, wait for the shutdown signal,
+	// streaming their output and reporting any that ends on its own. Once none is
+	// left there is nothing to hold the run open, so it finishes.
+	if live_persistent > 0 {
 		let mut shutdown_fut: Pin<Box<dyn Future<Output = ()> + Send>> = match shutdown {
 			Some(f) => f,
 			None => Box::pin(async {
 				let _ = tokio::signal::ctrl_c().await;
 			}),
 		};
-		loop {
+		while live_persistent > 0 {
 			tokio::select! {
 				_ = &mut shutdown_fut => break,
-				Some(msg) = rx.recv() => forward(reporter, msg),
+				Some(msg) = rx.recv() => forward(reporter, msg, &mut live_persistent, &mut failed),
 			}
 		}
-		let drained: Vec<PersistentChild> = persistent_children.lock().unwrap().drain(..).collect();
-		for pc in drained {
-			pc.terminate().await;
-		}
+	}
+
+	// Tear down whatever is left. The flag goes up first: past this point a child
+	// is dying because we asked, which is not a task failure.
+	shutting_down.store(true, Ordering::SeqCst);
+	let watches: Vec<PersistentWatch> = persistent_watches.lock().unwrap().drain(..).collect();
+	for w in watches {
+		let _ = w.kill.send(());
+		let _ = w.reaper.await;
 	}
 
 	// Drop our sender so the channel closes once every task/streamer sender is
 	// gone, then drain any remaining buffered messages.
 	drop(tx);
 	while let Some(msg) = rx.recv().await {
-		forward(reporter, msg);
+		forward(reporter, msg, &mut live_persistent, &mut failed);
 	}
 
 	let elapsed_ms = global_start.elapsed().as_millis() as u64;
@@ -511,8 +584,10 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	if let Some(msg) = first_failure {
 		return Err(anyhow::anyhow!(msg));
 	}
-	// Keep-going: report a summary error so the process exits non-zero.
-	if keep_going && failed > 0 {
+	// Failures the run continued past — kept going, or a persistent child that
+	// exited after the graph had already drained. Report a summary error so the
+	// process exits non-zero.
+	if failed > 0 {
 		return Err(RunFailure { result, skipped }.into());
 	}
 
@@ -667,7 +742,24 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 		};
 		#[cfg(not(unix))]
 		let pc = PersistentChild { child };
-		ctx.persistent_children.lock().unwrap().push(pc);
+
+		let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
+		let reaper = tokio::spawn(reap_persistent(ReapContext {
+			child: pc,
+			kill: kill_rx,
+			tx: ctx.tx.clone(),
+			shutting_down: ctx.shutting_down.clone(),
+			workspace: ws,
+			task,
+			start,
+		}));
+		ctx.persistent_watches
+			.lock()
+			.unwrap()
+			.push(PersistentWatch {
+				kill: kill_tx,
+				reaper,
+			});
 
 		return TaskOutcome::Persistent;
 	}
@@ -730,6 +822,60 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 			task,
 		}
 	}
+}
+
+/// Wait on one persistent child until either it ends on its own — reported back
+/// to the scheduler, non-zero counted as a failure — or the run asks for it to
+/// stop, which is silent.
+///
+/// The kill request and the child's own exit can become ready in the same poll,
+/// so which `select!` arm wins does not decide what gets reported: the
+/// shutdown flag does.
+async fn reap_persistent(ctx: ReapContext) {
+	let ReapContext {
+		mut child,
+		kill,
+		tx,
+		shutting_down,
+		workspace,
+		task,
+		start,
+	} = ctx;
+
+	let status = tokio::select! {
+		status = child.child.wait() => status,
+		_ = kill => {
+			child.terminate().await;
+			return;
+		}
+	};
+
+	// The shell is gone, but anything it backgrounded is not. Kill the rest of
+	// the group so a half-dead dev server does not keep a port (or this task's
+	// output pipes) held open for the remainder of the run.
+	child.kill_group();
+
+	if shutting_down.load(Ordering::SeqCst) {
+		return;
+	}
+
+	let code = match status {
+		Ok(s) => s.code(),
+		Err(e) => {
+			let _ = tx.send(RunnerMsg::TaskWarn {
+				workspace: workspace.clone(),
+				task: task.clone(),
+				msg: format!("failed to wait for persistent task: {e}"),
+			});
+			None
+		}
+	};
+	let _ = tx.send(RunnerMsg::PersistentExited {
+		workspace,
+		task,
+		code,
+		duration_ms: start.elapsed().as_millis() as u64,
+	});
 }
 
 fn emit_failure(
@@ -859,6 +1005,15 @@ mod tests {
 						format!("finished:{workspace}:{task}")
 					}
 					TaskEvent::Failed { workspace, task } => format!("failed:{workspace}:{task}"),
+					TaskEvent::PersistentExited {
+						workspace,
+						task,
+						code,
+						..
+					} => {
+						let c = code.map(|c| c.to_string()).unwrap_or("signal".to_string());
+						format!("exited:{workspace}:{task}:{c}")
+					}
 					TaskEvent::Skipped {
 						workspace, task, ..
 					} => {
@@ -930,6 +1085,18 @@ mod tests {
 			depends_on: Some(deps.iter().map(|s| s.to_string()).collect()),
 			..Default::default()
 		}
+	}
+
+	fn persistent(deps: &[&str]) -> PipelineTask {
+		PipelineTask {
+			persistent: Some(true),
+			..dep(deps)
+		}
+	}
+
+	/// A stand-in for Ctrl-C, firing after `ms`.
+	fn shutdown_after(ms: u64) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+		Box::pin(async move { tokio::time::sleep(Duration::from_millis(ms)).await })
 	}
 
 	/// Default options (cache off, unbounded concurrency, fail-fast). Tests that
@@ -1238,23 +1405,10 @@ mod tests {
 		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
 		let r = RecordingReporter::new();
 
-		let shutdown: Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async {
-			tokio::time::sleep(Duration::from_millis(200)).await;
-		});
-		let options = ExecuteOptions {
-			graph: &graph,
-			workspaces: &workspaces,
-			config: &config,
-			root,
-			no_cache: true,
-			concurrency: None,
-			keep_going: false,
-			reporter: &r,
-			lattice_version: "0.1.0-test",
-			shutdown: Some(shutdown),
-		};
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(shutdown_after(200));
 
-		let result = tokio::time::timeout(Duration::from_secs(5), execute_tasks(options))
+		let result = tokio::time::timeout(Duration::from_secs(5), execute_tasks(o))
 			.await
 			.expect("execute_tasks must finish well before the 5s timeout")
 			.unwrap();
@@ -1263,6 +1417,95 @@ mod tests {
 		assert!(r.has("finished:app:build"));
 		assert!(r.has("started:app:dev"));
 		assert_eq!(result.failed, 0);
+		// The child was still running and we killed it: that is not a failure,
+		// and it is not an exit worth reporting either.
+		assert!(
+			!r.labels().iter().any(|l| l.starts_with("exited:")),
+			"a child killed at shutdown must not be reported as exited: {:?}",
+			r.labels()
+		);
+	}
+
+	#[tokio::test]
+	async fn persistent_task_that_exits_nonzero_fails_the_run() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("dev", "exit 3")])];
+		let config = config_with(&[("dev", persistent(&[]))]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		// A shutdown signal far past the timeout: the run has to end because the
+		// child is gone, not because it was told to stop.
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(shutdown_after(60_000));
+
+		let err = tokio::time::timeout(Duration::from_secs(5), execute_tasks(o))
+			.await
+			.expect("an exited persistent child must end the run without a signal")
+			.unwrap_err();
+
+		let rf = err
+			.downcast_ref::<RunFailure>()
+			.expect("a persistent child's non-zero exit yields RunFailure");
+		assert_eq!(rf.result.failed, 1);
+		assert!(r.has("exited:app:dev:3"));
+		let s = r.summaries.lock().unwrap();
+		assert_eq!((s[0].0, s[0].2), (1, 1), "summary must count the failure");
+	}
+
+	#[tokio::test]
+	async fn persistent_task_that_exits_zero_is_reported() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("dev", "true")])];
+		let config = config_with(&[("dev", persistent(&[]))]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(shutdown_after(60_000));
+
+		let result = tokio::time::timeout(Duration::from_secs(5), execute_tasks(o))
+			.await
+			.expect("an exited persistent child must end the run without a signal")
+			.unwrap()
+			.total;
+
+		assert_eq!(result, 1);
+		// Nothing failed, but the process the user asked to keep running is gone,
+		// so the run says so.
+		assert!(r.has("exited:app:dev:0"));
+		let s = r.summaries.lock().unwrap();
+		assert_eq!(s[0].2, 0, "a clean exit is not a failure");
+	}
+
+	#[tokio::test]
+	async fn one_persistent_exit_leaves_the_others_running() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![
+			ws("dies", root, &[("dev", "exit 1")]),
+			ws("stays", root, &[("dev", "sleep 30")]),
+		];
+		let config = config_with(&[("dev", persistent(&[]))]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		// The run keeps waiting for `stays`, so only the signal ends it.
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(shutdown_after(400));
+
+		let err = tokio::time::timeout(Duration::from_secs(5), execute_tasks(o))
+			.await
+			.expect("execute_tasks must finish well before the 5s timeout")
+			.unwrap_err();
+
+		let rf = err.downcast_ref::<RunFailure>().expect("RunFailure");
+		assert_eq!(rf.result.failed, 1);
+		assert_eq!(rf.result.total, 2);
+		assert!(r.has("exited:dies:dev:1"));
+		assert!(!r.has("exited:stays:dev:0"));
 	}
 
 	#[tokio::test]
