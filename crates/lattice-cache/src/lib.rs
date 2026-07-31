@@ -27,7 +27,9 @@ pub struct CacheMeta {
 	pub duration_ms: u64,
 	/// Last time this entry was written or read; drives LRU pruning.
 	pub last_used: DateTime<Utc>,
-	/// Resolved environment variables captured with the task, for round-tripping.
+	/// Values of the task's declared `env` names as they were resolved when the
+	/// key was computed. Recorded so an entry can be explained after the fact —
+	/// the key itself is an opaque hash. Nothing re-applies them.
 	pub env: HashMap<String, String>,
 	/// sha256 hex of the artifact tarball's bytes. Used to detect corruption.
 	pub output_digest: String,
@@ -68,8 +70,10 @@ pub trait CacheStore: Send + Sync {
 		outputs: &[String],
 		meta: CacheMeta,
 	) -> Result<()>;
-	/// Unpack a looked-up entry's tarball into `workspace_path`. The caller
-	/// reads [`CacheEntry::env`] to re-export the stored variables.
+	/// Unpack a looked-up entry's tarball into `workspace_path`, overwriting
+	/// whatever sits at those paths. Files are the whole contract: a hit runs no
+	/// process, so [`CacheEntry::env`] is a record of what the key was computed
+	/// from and must not be applied to the environment here.
 	fn restore(&self, entry: &CacheEntry, workspace_path: &Path) -> Result<()>;
 	/// Evict oldest-by-`last_used` until total cache bytes <= `max_bytes`.
 	fn prune(&self, max_bytes: u64) -> Result<PruneReport>;
@@ -682,6 +686,42 @@ mod tests {
 	}
 
 	#[test]
+	fn restore_does_not_apply_the_recorded_env() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		write(&ws.path().join("out.txt"), "hello");
+
+		let store = LocalStore::new(cache.path().join("cache"));
+		let mut meta = meta_for("envk");
+		meta.env.insert(
+			"LATTICE_CACHE_RESTORE_PROBE".to_string(),
+			"not-exported".to_string(),
+		);
+		store
+			.store("envk", ws.path(), &["out.txt".to_string()], meta)
+			.unwrap();
+
+		let entry = store.lookup("envk").unwrap().expect("expected a hit");
+		let dest = TempDir::new().unwrap();
+		store.restore(&entry, dest.path()).unwrap();
+
+		// The values survive the round trip as a record of the key's inputs...
+		assert_eq!(
+			entry
+				.env()
+				.get("LATTICE_CACHE_RESTORE_PROBE")
+				.map(String::as_str),
+			Some("not-exported")
+		);
+		// ...and restoring files is all `restore` does with them.
+		assert!(
+			std::env::var("LATTICE_CACHE_RESTORE_PROBE").is_err(),
+			"restore must not export the recorded env"
+		);
+		assert!(dest.path().join("out.txt").exists());
+	}
+
+	#[test]
 	fn missing_meta_is_a_miss() {
 		let cache = TempDir::new().unwrap();
 		let store = LocalStore::new(cache.path().join("cache"));
@@ -744,6 +784,11 @@ mod tests {
 		assert!(
 			entry.meta.last_used > before,
 			"touch must advance last_used"
+		);
+		assert_eq!(
+			entry.env().get("FOO").map(String::as_str),
+			Some("bar"),
+			"rewriting meta must not drop the recorded env"
 		);
 	}
 

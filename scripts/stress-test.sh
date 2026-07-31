@@ -404,6 +404,14 @@ late "STRESS_VAR=alpha" "$PROD" run envtask --filter core ; t_ok "envtask (alpha
 late "STRESS_VAR=alpha" "$PROD" run envtask --filter core ; t_has "same env value → cache hit" "cache hit"
 late "STRESS_VAR=beta"  "$PROD" run envtask --filter core ; t_hasnt "changed env value → cache miss" "cache hit"
 
+# The stored entry records the value its key was computed from, so an opaque key
+# stays explainable.
+if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*.meta.json 2>/dev/null; then
+  pass "the cache entry records the env value it was keyed on"
+else
+  fail "the cache entry records the env value it was keyed on" "no meta file names STRESS_VAR=alpha"
+fi
+
 # Full cache: a run where every scheduled task came back from cache is called
 # out; a partial hit and a run that scheduled nothing are not.
 lat "$PROD" run build ; t_ok "run build (whole repo, prime) exits 0"

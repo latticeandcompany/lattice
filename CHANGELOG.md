@@ -10,6 +10,23 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### A cache hit restores files, and now says so — 2026-07-30
+
+- `CacheStore::restore`'s rustdoc claimed the caller re-exports the entry's
+  stored `env`. Nothing ever did, and nothing can: a hit starts no process, so
+  there is no environment to export into. The runner's matching dead read — an
+  `entry.env()` assigned to `_cached_env` under a comment that made it look
+  deliberate — is gone
+- The stored `env` stays. It is the record of the values the key was computed
+  from, and since the key is a hash it is the only place they remain legible.
+  `cache-internals.md` describes it that way instead of implying a hit re-applies
+  it, and the page now states that restore overwrites the files at the output
+  paths and touches nothing else
+- Tests pin both halves: the values round-trip through the entry and survive a
+  `touch`, `restore` leaves the process environment alone, and a stored entry's
+  meta file records the resolved value that fed its key. The stress test
+  asserts the same against a real `.meta.json`
+
 ### The ambiguity error suggests a fix that works — 2026-07-30
 
 - When a workspace had no ecosystem marker, the halt suggested

@@ -565,8 +565,6 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 				match ctx.store.restore(&entry, &spec.ws_path) {
 					Ok(()) => {
 						let _ = ctx.store.touch(&key);
-						// The cached env is read back with the entry.
-						let _cached_env = entry.env();
 						let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::CacheHit {
 							workspace: ws.clone(),
 							task: task.clone(),
@@ -1163,6 +1161,43 @@ mod tests {
 		assert_eq!(res3.cached, 0, "corrupt tarball must be a miss");
 		assert!(r3.has("started:app:build"));
 		assert!(!r3.has("cachehit:app:build"));
+	}
+
+	#[tokio::test]
+	async fn stored_meta_records_the_env_the_key_was_computed_from() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", "echo hello > out.txt")])];
+		// PATH is declared so the task has a resolved env value without the test
+		// mutating the process environment.
+		let build = PipelineTask {
+			outputs: Some(vec!["out.txt".to_string()]),
+			env: Some(vec!["PATH".to_string()]),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
+		o.no_cache = false;
+		execute_tasks(o).await.unwrap();
+
+		let cache_dir = root.join(config.settings.cache_dir());
+		let meta_path = std::fs::read_dir(&cache_dir)
+			.unwrap()
+			.flatten()
+			.map(|e| e.path())
+			.find(|p| p.to_string_lossy().ends_with(".meta.json"))
+			.expect("a cached entry's meta file exists");
+		let meta: lattice_cache::CacheMeta =
+			serde_json::from_str(&std::fs::read_to_string(meta_path).unwrap()).unwrap();
+
+		assert_eq!(
+			meta.env.get("PATH").map(String::as_str),
+			Some(std::env::var("PATH").unwrap().as_str()),
+			"the entry must record the env values that fed its key"
+		);
 	}
 
 	#[tokio::test]

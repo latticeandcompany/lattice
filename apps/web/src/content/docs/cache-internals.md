@@ -94,7 +94,7 @@ written by running a task with `outputs: ["dist/**"]`:
 | `workspace` | The workspace name, for humans reading the cache directory. |
 | `durationMs` | How long the task took to run when this entry was written. |
 | `lastUsed` | RFC 3339 timestamp, updated on every write and every hit. Drives eviction order — see below. |
-| `env` | The resolved `(name, value)` pairs for the task's declared `env`, captured so a cache hit can report what was in effect. |
+| `env` | The resolved `(name, value)` pairs for the task's declared `env`, as they were when the key was computed. The key is a hash, so this is the only place those values are legible afterwards. |
 | `outputDigest` | SHA-256 hex of the `.tar.gz` bytes, recorded when the artifact is written and checked on every lookup. |
 
 `key` and `outputDigest` are both 64-character hex SHA-256 digests over
@@ -111,7 +111,8 @@ Files are collected and added in sorted order, so the archive is reproducible
 for identical outputs. Once the archive is finished its bytes are hashed and the
 result is written into `meta.outputDigest` before the metadata file is saved.
 `restore` opens the tarball and unpacks it directly into the target workspace
-path.
+path, overwriting whatever is there. Files are all a hit gives you: no process
+runs, so the entry's recorded `env` is not exported into anything.
 
 ## The lookup sequence
 
