@@ -9,19 +9,17 @@ order: 1
 
 **A high-performance, local toolchain for managing monorepos.**
 
-Lattice is one CLI that does two things, usable together or apart:
+Lattice is one CLI that does two things, usable together or apart.
 
-- **A task runner for monorepos in any language.** Declare workspaces and a task
-  graph once, in a root `lattice.json`. Lattice runs tasks across workspaces in
-  dependency order, in parallel, and caches every result by content so unchanged
-  work is skipped.
-- **A toolchain manager.** It pins and provisions versioned tools — compilers,
-  package managers, linters — per workspace or per task, without touching your
-  global environment.
+As a task runner, it reads workspaces and a task graph from a root
+`lattice.json` and runs tasks across workspaces in dependency order, in
+parallel, caching every result by content so unchanged work is skipped. As a
+toolchain manager, it pins and provisions versioned tools (compilers, package
+managers, linters) per workspace or per task, without touching your global
+environment.
 
-You can use the task runner without ever declaring an `engine`, and you can use
-the toolchain manager to pin a version even in a workspace with no tasks of its
-own.
+Either half stands alone. The task runner needs no `engine` declared, and a
+workspace with no tasks of its own can still pin a version.
 
 ## A `lattice.json`
 
@@ -62,17 +60,15 @@ workspaces and three tasks.
 }
 ```
 
-A few things explain most of what follows. Each `workspaces` entry is a
-directory, declared by a literal `path` (never a glob); `dependsOn` orders
-workspaces relative to each other. `engines` are version constraints on tools
-such as `cargo` and `node`; Lattice checks or provisions them per workspace.
-`tasks` is the pipeline: `build`, `test`, and `dev` are names you choose, and
-`^build` means "the `build` task of each dependency" while a bare `test` means
-"the `test` task in this same workspace." `dev` is marked `persistent` and
-uncached because it is a dev server that runs until you stop it, not a task
-with a result to reuse.
+Each `workspaces` entry is a directory declared by a literal `path` (never a
+glob), and its `dependsOn` orders workspaces relative to each other. `engines`
+are version constraints on tools such as `cargo` and `node`, checked or
+provisioned per workspace. `tasks` is the pipeline: `build`, `test`, and `dev`
+are names you choose. `^build` means "the `build` task of each dependency"; a
+bare `test` means "the `test` task in this same workspace." `dev` is a dev
+server that runs until you stop it, so it is `persistent` and uncached.
 
-Each workspace still runs its own real command underneath: `cargo test`,
+Each workspace runs its own real command underneath: `cargo test`,
 `npm run build`, whatever that project already uses. Lattice reads that from
 the workspace, or you set it explicitly with `scripts`.
 
@@ -88,8 +84,8 @@ the workspace, or you set it explicitly with `scripts`.
    resolved to, then stores the result under that hash for next time.
 
 Run it again with nothing changed and every task comes back from cache. Change
-one file and everything that depends on it runs again; everything that doesn't
-depend on it stays cached.
+one file and everything that depends on it runs again; everything else stays
+cached.
 
 ## Where to go next
 

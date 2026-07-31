@@ -10,13 +10,10 @@ order: 3
 Before running a task, Lattice computes a key from everything that can change
 its result — the command, the files it reads, the environment variables it
 depends on, and the resolved toolchain. If that exact key was ever produced
-before, Lattice restores the recorded outputs and skips the command. If not,
-it runs the command and records the result under the new key.
+before, Lattice restores the recorded outputs and skips the command. If not, it
+runs the command and records the result under the new key.
 
-This page covers the decisions you make: what to declare as `inputs`,
-`outputs`, `ignore`, and `env`; when to opt a task out of caching entirely;
-and where the cache lives on disk. For the byte layout of the key and the
-on-disk artifact format, see
+For the byte layout of the key and the on-disk artifact format, see
 [Cache internals](/lattice/docs/cache-internals).
 
 ## What feeds the key
@@ -24,28 +21,25 @@ on-disk artifact format, see
 A task's cache key is a hash over:
 
 - the task name and its fully resolved command
-- every file matched by `inputs`, minus anything matched by `ignore` —
-  contents, not just paths
-- any lockfile present in the workspace (`package-lock.json`,
-  `pnpm-lock.yaml`, `Cargo.lock`, `poetry.lock`, `composer.lock`,
-  `packages.lock.json`, and every other one on the
-  [full list](/lattice/docs/cache-internals#cache-key-composition)), so a
-  dependency bump invalidates the cache even if you forgot to list the lockfile
-  in `inputs`
+- the contents of every file matched by `inputs`, minus anything matched by
+  `ignore`
 - the resolved value of every environment variable named in `env`
-- the identity of the resolved toolchain for the task (see
+- the identity of the resolved toolchain (see
   [Engines and provisioning](/lattice/docs/engines))
 - the running Lattice version
+- the contents of any lockfile present in the workspace, so a dependency bump
+  invalidates the cache even if you never listed the lockfile in `inputs` (the
+  internals page has the
+  [full lockfile list](/lattice/docs/cache-internals#cache-key-composition))
 
-Change any one of these and the key changes. Nothing outside this list is
-consulted — a cache hit tells you these specific things haven't changed, not
-that the workspace is otherwise identical to last time.
+Nothing outside that set is consulted. A hit tells you those specific things
+have not changed, not that the workspace is otherwise identical to last time.
 
 ## Declaring inputs
 
-`inputs` is the set of files whose contents make the key. Without it, a task
-has no files in its key at all: the same command with the same environment
-always hits, even after you edit the source it builds from.
+`inputs` is the set of files whose contents make the key. Without it, a task has
+no files in its key at all: the same command with the same environment always
+hits, even after you edit the source it builds from.
 
 ```json
 {
@@ -58,13 +52,10 @@ always hits, even after you edit the source it builds from.
 }
 ```
 
-Get this wrong in either direction and caching misbehaves in a specific way:
-
-- **Under-declare** (miss a file the command actually reads) and you get a
-  stale hit: the recorded output is restored even though that file changed.
-- **Over-declare** (glob in files the command never reads, like fixtures or
-  generated output) and every incidental change to those files forces a
-  rebuild that didn't need to happen, and hashing takes longer on every run.
+Miss a file the command actually reads and you get a stale hit — the recorded
+output is restored even though that file changed. Glob in files the command
+never reads, like fixtures or generated output, and every incidental change to
+them forces a rebuild that did not need to happen.
 
 ## Excluding noise with `ignore`
 
@@ -82,10 +73,10 @@ Get this wrong in either direction and caching misbehaves in a specific way:
 }
 ```
 
-Use it for files a broad glob sweeps in that don't affect the result — logs,
+Use it for files a broad glob sweeps in that do not affect the result — logs,
 scratch files, anything your task writes into its own source tree as a side
 effect. A file matched by `ignore` never touches the key, so editing it never
-invalidates the cache, even if `inputs` would otherwise match it.
+invalidates the cache.
 
 ## Declaring outputs
 
@@ -103,16 +94,15 @@ and what a later hit restores:
 }
 ```
 
-A directory pattern like `dist/**` captures every file beneath it. If a file
-your command produces isn't matched by `outputs`, it's simply never saved —
-a cache hit won't restore it, so a later step that depends on it will find it
-missing. Only a successful run is stored; a task that fails is never cached,
-matching or not. `outputs` is optional; a task with none still caches on
-success, it just has nothing to restore.
+A directory pattern like `dist/**` captures every file beneath it. A file your
+command produces that no `outputs` pattern matches is never saved, so a hit will
+not restore it and a later step depending on it will find it missing. Only a
+successful run is stored. `outputs` is optional; a task without any still caches
+on success, it just has nothing to restore.
 
 ## Declaring env
 
-`env` names environment variables that affect the task's result but aren't
+`env` names environment variables that affect the task's result but are not
 files — an API base URL, a target platform, a feature flag:
 
 ```json
@@ -126,21 +116,19 @@ files — an API base URL, a target platform, a feature flag:
 }
 ```
 
-Each name in `env` is resolved from your current environment when the key is
-computed, and that resolved value — not just the name — is hashed in. The
-same names are exported into the task's process when it runs. If a named
-variable isn't set at all, it contributes nothing to the key, the same as if
-it weren't listed; only a variable that's actually set changes the hash.
+Each name is resolved from your current environment when the key is computed,
+and the resolved value — not just the name — is hashed in. The same names are
+exported into the task's process when it runs. A variable that is not set
+contributes nothing to the key, exactly as if it were not listed.
 
-Get this wrong the same way you'd get `inputs` wrong: leave a variable that
-changes the command's behavior off the list, and a run with a different value
-for it still comes back as a hit; list a variable the command never actually
-uses, and unrelated changes to it force otherwise-identical work to miss.
+The failure modes match `inputs`: an omitted variable that changes behavior
+gives you a stale hit, and a listed variable the command never reads forces
+misses on otherwise-identical work.
 
 ## Opting out of caching
 
-Set `cache: false` on a task to skip caching entirely — always run, never
-store, never look up:
+Set `cache: false` on a task to skip caching entirely — always run, never store,
+never look up:
 
 ```json
 {
@@ -152,44 +140,38 @@ store, never look up:
 }
 ```
 
-`persistent: true` tasks are never cached regardless of `cache` — a dev
+`persistent: true` tasks are never cached regardless of `cache`, since a dev
 server or watcher has no single result to record. See
-[Persistent tasks](/lattice/docs/persistent-tasks) for what else that
-implies for a run.
+[Persistent tasks](/lattice/docs/persistent-tasks) for what else that implies
+for a run.
 
 ## Bypassing the cache for one run
 
-`lattice run build --no-cache` ignores the cache for that invocation: no
-lookup, and nothing is stored afterward either. `--force` does the same
-thing — it's a plain alias, not a stricter mode. Reach for either when you
-suspect a stale result and want to confirm by re-running from scratch without
-disturbing what's already stored.
+`lattice run build --no-cache` ignores the cache for that invocation: no lookup,
+and nothing stored afterward either. `--force` is a plain alias for it, not a
+stricter mode. Reach for either when you suspect a stale result and want to
+re-run from scratch without disturbing what is already stored.
 
 ## When the whole run is a hit
 
 A run where every scheduled task came back from cache ends with a `FULL CACHE`
-line under the summary (`lattice: full cache — nothing to run` when output is
-plain). It's a single signal that no command ran at all, which is the state
-you're checking for when you run a task twice to confirm its `inputs` are
-declared correctly. One miss, one failure, or a `persistent: true` task in the
-graph is enough to withhold it. See
-[Output and logging](/lattice/docs/output-modes) for how it renders in each
-mode.
+line under the summary, or `lattice: full cache — nothing to run` when output is
+plain. One miss, one failure, or a `persistent: true` task in the graph is
+enough to withhold it. See [Output and logging](/lattice/docs/output-modes) for
+how it renders in each mode.
 
-## The integrity rule
+## Corrupt entries are misses
 
-A lookup is a hit only if the stored metadata parses, the stored tarball
-opens, and its sha256 digest matches the digest recorded when it was written.
-
-Any other outcome — no metadata, no tarball, a tarball that won't open, or
-one whose bytes don't match the recorded digest — is a miss, never a bad hit.
-A corrupted or partially-written cache entry can only cost you a re-run; it
-can never hand back the wrong output silently.
+A lookup is a hit only if the stored metadata parses, the stored tarball opens,
+and its sha256 digest matches the digest recorded when it was written. Anything
+else — no metadata, no tarball, a tarball that will not open, or one whose bytes
+do not match — falls through and the task re-runs. A damaged cache entry costs
+you a re-run; it cannot hand back the wrong output.
 
 ## Where the cache lives
 
-By default, artifacts and their metadata live under `.lattice/cache` at the
-repo root. Move it with `settings.cacheDir`:
+By default, artifacts and their metadata live under `.lattice/cache` at the repo
+root. Move it with `settings.cacheDir`:
 
 ```json
 {
@@ -199,15 +181,13 @@ repo root. Move it with `settings.cacheDir`:
 }
 ```
 
-`.lattice/cache` (or whatever `cacheDir` points at) is safe to delete at any
-time — the next run just has nothing to restore and starts from a clean
-cache.
+That directory is safe to delete at any time. The next run has nothing to
+restore and starts from a clean cache.
 
 ## Pruning the cache
 
-The cache only grows: nothing evicts an entry on its own. Run `lattice
-prune` to evict the oldest-used entries until the store is back under a size
-limit:
+The cache only grows; nothing evicts an entry on its own. Run `lattice prune` to
+evict the oldest-used entries until the store is back under a size limit:
 
 ```sh
 lattice prune --max-size 10GB
@@ -224,6 +204,6 @@ Without `--max-size`, `prune` uses `settings.maxCacheSize`:
 ```
 
 If neither is set, `prune` fails rather than guessing at a limit. Eviction is
-least-recently-used: every cache hit refreshes an entry's last-used time, so
-`prune` removes whichever entries have gone longest unused first, stopping as
-soon as the total is under budget.
+least-recently-used: every hit refreshes an entry's last-used time, so `prune`
+removes whichever entries have gone longest unused, stopping as soon as the
+total is under budget.

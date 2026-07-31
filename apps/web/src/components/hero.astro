@@ -25,7 +25,7 @@ interface Lang {
 
 // Positions are percentages of the bounded field, so the logos, the threads, and
 // the rosette all share one coordinate space and stay aligned at every width.
-// Logos and threads are a pair — globals.scss hides both below md, where there
+// Logos and threads are a pair — globals.scss hides both below 1024px, where there
 // isn't room for the logos and the bare threads would dangle from nothing.
 const langs: Lang[] = [
 	{ src: go, name: 'Go', x: 15, y: 25, w: 94, feedX: 45, feedY: 78 },
@@ -132,7 +132,14 @@ const thread = (l: Lang) => {
 
 <style>
 	.hero {
+		/* The mark hangs off the bottom edge with half of it showing, so the copy has
+		   to reserve that half or the two overlap wherever the vertical budget is
+		   tight — landscape tablets, short laptop windows. The mark's size and the
+		   reservation read the same token, and the vh term keeps the mark from
+		   claiming a third of the screen when there's little height to go around. */
+		--mark-size: min(28rem, 56vw, 52vh);
 		min-height: clamp(620px, 90vh, 860px);
+		padding-bottom: calc(var(--mark-size) / 2 + 2rem);
 	}
 	.hero__field {
 		max-width: 1320px;
@@ -150,7 +157,7 @@ const thread = (l: Lang) => {
 	.hero__rosette {
 		left: 50%;
 		bottom: 0;
-		width: min(28rem, 56%);
+		width: var(--mark-size);
 		transform: translate(-50%, 50%);
 		line-height: 0;
 	}
@@ -158,5 +165,26 @@ const thread = (l: Lang) => {
 		width: 100%;
 		height: auto;
 		overflow: visible;
+	}
+
+	/* Under 1024px the weave is hidden, so the tall min-height it needed leaves a
+	   dead band between the copy and the mark. Let the hero size to what's actually
+	   in it instead. Matches the weave's breakpoint in globals.scss. */
+	@media (max-width: 1023.98px) {
+		.hero {
+			min-height: 0;
+		}
+	}
+
+	/* Landscape tablets: with the mark's band reserved, the copy needs to give some
+	   height back, so the lead-in tightens and the stack closes up rather than
+	   pushing the hero past the fold. */
+	@media (orientation: landscape) and (max-height: 840px) {
+		.hero__copy {
+			padding-top: clamp(2.5rem, 7vh, 4.5rem);
+		}
+		.hero__title {
+			font-size: clamp(2.5rem, 5.5vw, 4rem);
+		}
 	}
 </style>

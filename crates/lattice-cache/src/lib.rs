@@ -336,7 +336,8 @@ fn hash_field(hasher: &mut Sha256, tag: &str, bytes: &[u8]) {
 /// The key incorporates the task name, command, resolved input files (globbed
 /// from `pipeline_task.inputs`, honoring `pipeline_task.ignore`), tool-unique
 /// lockfiles present in the workspace, resolved env values, toolchain identity,
-/// and the Lattice version. Every list is sorted before hashing.
+/// and the Lattice version. Input files and env pairs are sorted before
+/// hashing; lockfiles are visited in `LOCKFILES` order.
 pub fn compute_key(inputs: &HashInputs) -> Result<String> {
 	let mut hasher = Sha256::new();
 

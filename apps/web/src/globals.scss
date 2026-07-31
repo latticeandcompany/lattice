@@ -212,14 +212,16 @@ samp {
 }
 
 // The hero weave - the logos and the threads feeding them - is one unit, hidden
-// together below md: there's no room for the logos at phone widths, and threads
-// on their own would dangle from nothing. 768px is Bootstrap's md.
+// together below 1024px: the copy column is 34rem wide, so any narrower and the
+// outer logos land on the title and paragraph instead of beside them, and threads
+// on their own would dangle from nothing. 1024px is iPad landscape, the narrowest
+// width where the weave has room.
 .lang-logo,
 .hero__threads {
 	display: none;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
 	.lang-logo,
 	.hero__threads {
 		display: block;

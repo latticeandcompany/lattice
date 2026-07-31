@@ -487,6 +487,20 @@ fn suggested_fix_for(tool: &str) -> String {
 	format!("\"engines\": {{ \"{tool}\": \">=0.0.0\" }}")
 }
 
+/// Whether declaring `tool` would actually resolve an ambiguity error. A
+/// runtime cannot drive named tasks, so suggesting one reproduces the error.
+fn can_drive(tool: &str) -> bool {
+	DriverRegistry::get(tool)
+		.map(|spec| spec.drive_role().drive_rank() > Role::Runtime.drive_rank())
+		.unwrap_or(false)
+}
+
+/// The fix to offer when no candidate tool could drive tasks: declaring the
+/// commands outright is the only thing that resolves it.
+fn suggested_scripts_fix() -> String {
+	"\"auto\": false, \"scripts\": { \"build\": \"<command>\" }".to_string()
+}
+
 /// Read the `scripts` (JS) / `tasks` (deno) map keys from a manifest, if any.
 fn manifest_script_names(path: &Path, tool: &str) -> Option<Vec<String>> {
 	let (file, key) = match tool {
@@ -684,7 +698,11 @@ fn bare_marker_error(ws_name: &str, path: &Path) -> AmbiguityError {
 		.into_iter()
 		.map(String::from)
 		.collect();
-	let fix = suggested_fix_for(candidates.first().map(|s| s.as_str()).unwrap_or("node"));
+	let fix = candidates
+		.iter()
+		.find(|tool| can_drive(tool))
+		.map(|tool| suggested_fix_for(tool))
+		.unwrap_or_else(suggested_scripts_fix);
 	AmbiguityError {
 		workspace: ws_name.to_string(),
 		candidates,
@@ -1340,6 +1358,44 @@ mod tests {
 		let d = detect_drivers(tmp.path(), &engines(json!({ "pdm": ">=2.0" }))).unwrap();
 		assert_eq!(d.tool, "pdm");
 		assert_eq!(d.via, Evidence::Declaration);
+	}
+
+	/// The suggested fix has to resolve the error it is printed with. A runtime
+	/// cannot drive named tasks, so suggesting one sends the reader in a circle.
+	#[test]
+	fn suggested_fix_never_names_a_tool_that_cannot_drive() {
+		// Nothing at all to go on.
+		let bare = TempDir::new().unwrap();
+		let err = detect_drivers(bare.path(), &EngineMap::new()).unwrap_err();
+		assert!(err.candidates.is_empty());
+		assert!(err.suggested_fix.contains("\"scripts\""));
+		assert!(!err.suggested_fix.contains("\"engines\""));
+
+		// A runtime was detected, but it cannot drive tasks on its own.
+		let runtime_only = TempDir::new().unwrap();
+		write(runtime_only.path(), ".nvmrc", "20\n");
+		let err = detect_drivers(runtime_only.path(), &EngineMap::new()).unwrap_err();
+		assert!(err.suggested_fix.contains("\"scripts\""));
+		assert!(!err.suggested_fix.contains("\"node\""));
+	}
+
+	/// The ecosystem marker path still names a tool, since every candidate a
+	/// marker maps to can drive.
+	#[test]
+	fn suggested_fix_names_a_driving_tool_when_a_marker_gives_one() {
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), "package.json", "{}");
+		write(tmp.path(), ".nvmrc", "20\n");
+		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
+		assert_eq!(err.suggested_fix, suggested_fix_for("pnpm"));
+
+		for tool in ECOSYSTEM_MARKERS
+			.iter()
+			.flat_map(|(_, candidates)| candidates.iter())
+			.chain(["dotnet", "nuget"].iter())
+		{
+			assert!(can_drive(tool), "marker candidate '{tool}' cannot drive");
+		}
 	}
 
 	#[test]

@@ -692,6 +692,23 @@ lat "$ERR" run build ; t_bad "ambiguous driver halts"
 t_has "ambiguity explains itself"      "ambiguous"
 t_has "ambiguity suggests engines fix" "engines"
 
+# A runtime cannot drive tasks, so the fix offered here must not name one --
+# pasting it in has to resolve the halt rather than reproduce it.
+mkerr runtime_only; mkdir -p "$ERR/a"; w "$ERR/a/.nvmrc" "20"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a" } ], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "runtime-only workspace halts"
+t_has "runtime-only suggests scripts, not engines" "scripts"
+t_hasnt "runtime-only does not suggest a runtime" '"node"'
+
+# ...and the suggested fix actually works.
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false,
+    "scripts": { "build": "echo built" } } ], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_ok "the suggested scripts fix resolves the halt"
+
 # Same-role conflict.
 mkerr conflict; mkdir -p "$ERR/a"; w "$ERR/a/bun.lockb" ""; w "$ERR/a/pnpm-lock.yaml" ""; w "$ERR/a/package.json" "{}"
 cat > "$ERR/lattice.json" <<'JSON'
@@ -794,6 +811,15 @@ lat "$CDIR" run build ; t_ok "run with custom cacheDir exits 0"
 t_file "$CDIR/custom-cache" "settings.cacheDir is honored"
 lat "$CDIR" prune --max-size 0B ; t_ok "prune honors custom cacheDir"
 t_has "prune reports removal" "removed"
+
+# A retired setting is not a parse error: `logging` used to validate and do
+# nothing, and a config still carrying it has to keep loading.
+cat > "$CDIR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
+  "tasks": { "build": { "outputs": ["dist/**"] } },
+  "settings": { "cacheDir": "custom-cache", "logging": "debug" } }
+JSON
+lat "$CDIR" run build --no-cache ; t_ok "a config carrying the retired settings.logging still loads"
 
 # Prune on the production cache.
 lat "$PROD" run build --filter core ; t_ok "re-prime prod cache for prune test"

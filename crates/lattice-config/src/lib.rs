@@ -326,8 +326,6 @@ pub struct Settings {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub max_cache_size: Option<CacheSize>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub logging: Option<String>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub cache_dir: Option<String>,
 	#[serde(default)]
 	pub loquacious: bool,
@@ -339,7 +337,6 @@ impl Default for Settings {
 	fn default() -> Self {
 		Settings {
 			max_cache_size: None,
-			logging: None,
 			cache_dir: None,
 			loquacious: false,
 			version_check: true,
@@ -498,6 +495,56 @@ mod tests {
 		);
 		if let Err(error) = validator.validate(&config) {
 			panic!("examples/polyglot/lattice.json failed schema validation: {error}");
+		}
+	}
+
+	/// The example exists to show cross-workspace ordering. A `^task` with no
+	/// workspace edge to expand into demonstrates nothing, so assert the pair.
+	#[test]
+	fn polyglot_example_has_an_edge_for_its_caret_task() {
+		let dir = repo_root().join("examples").join("polyglot");
+		let config = load_config(&dir).expect("examples/polyglot must load");
+
+		let caret_tasks: Vec<&String> = config
+			.tasks
+			.iter()
+			.filter(|(_, task)| {
+				task.depends_on
+					.iter()
+					.flatten()
+					.any(|dep| dep.starts_with('^'))
+			})
+			.map(|(name, _)| name)
+			.collect();
+		assert!(
+			!caret_tasks.is_empty(),
+			"examples/polyglot must keep a `^task` dependency to demonstrate ordering"
+		);
+
+		let edges: Vec<(&str, &Vec<String>)> = config
+			.workspaces
+			.iter()
+			.filter_map(|ws| ws.depends_on.as_ref().map(|deps| (ws.name.as_str(), deps)))
+			.filter(|(_, deps)| !deps.is_empty())
+			.collect();
+		assert!(
+			!edges.is_empty(),
+			"tasks {caret_tasks:?} use `^`, but no workspace in examples/polyglot declares \
+			 `dependsOn`, so they expand to nothing"
+		);
+
+		let names: Vec<&str> = config
+			.workspaces
+			.iter()
+			.map(|ws| ws.name.as_str())
+			.collect();
+		for (workspace, deps) in edges {
+			for dep in deps {
+				assert!(
+					names.contains(&dep.as_str()),
+					"workspace '{workspace}' depends on unknown workspace '{dep}'"
+				);
+			}
 		}
 	}
 

@@ -10,6 +10,84 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The ambiguity error suggests a fix that works — 2026-07-30
+
+- When a workspace had no ecosystem marker, the halt suggested
+  `"engines": { "node": ">=0.0.0" }`. Pasting that in reproduced the same error,
+  because a runtime cannot drive named tasks. It now suggests
+  `"auto": false, "scripts": { "build": "<command>" }`, which resolves it
+- The `node` fallback fired whenever the candidate list was empty, so the two
+  workspaces most likely to hit it were the emptiest ones: a directory holding
+  only a `.nvmrc`, and a directory with nothing Lattice recognizes at all
+- Where a candidate tool does exist, nothing changes — every tool a generic
+  ecosystem marker maps to can drive, so a bare `package.json` still suggests
+  `pnpm`. A test asserts that stays true as the marker table grows
+- The stress test now pastes the suggested fix back in and asserts the run
+  succeeds
+
+### The docs say what happens instead of arguing for it — 2026-07-30
+
+- A voice pass over all 28 pages of `apps/web/src/content/docs/`. Removed the
+  framing sentences that announced what a section was about to say, the
+  commentary on our own choices (`and that is deliberate`, `by design`,
+  `is the point`), and the bolded-lead-in bullet list used as a default
+  structure. Prose where it reads better, tables where the content is a table
+- `environment-variables.md` no longer tells you to prefer flags over variables.
+  Both are supported, the flag wins where both are given, and the page says so
+  once instead of organizing itself around it. The column headed
+  `Flag to prefer` is now `Flag`, and the section justifying the preference is
+  replaced by one explaining the version-switch handover — the actual reason
+  `LATTICE_SWITCHED_FROM` and the release-URL overrides have no flag
+- The same ranking had spread to `output-modes.md` and
+  `continuous-integration.md`, where `CI` and `-l` are now two triggers for one
+  mode rather than a recommendation
+- Source citations are gone from every page. They pointed at line numbers that
+  had already drifted in two crates, and the file a message comes from is not
+  something an end user needs. `architecture.md` keeps the crate layout, since
+  there the directory structure is the subject
+- Eleven factual errors fixed along the way. `drivers.md` had driver selection
+  backwards: role rank decides, and a declared engine only breaks ties within
+  the winning role, so `"engines": { "node": ">=20" }` beside a
+  `pnpm-lock.yaml` resolves to pnpm. `glossary.md` already described this
+  correctly, so the two pages disagreed. Also: an unparseable cache meta file
+  surfaces as a warning and a re-run, not the silent miss `cache-internals.md`
+  described; `DriverSpec` has a `roles` slice, not one `role`; raw-mode
+  `skipped` lines are `-l`-gated; interactive mode discards task output rather
+  than streaming it; `web` does define a `test` script; `init` prompts on a
+  terminal without `--yes` and never consults stdin; a `glob` key in
+  `workspaces` parses and does nothing rather than being rejected
+- `errors.md` gained the archive and release-download messages it was missing
+- `compute_key`'s rustdoc had the same imprecision the docs did: input files and
+  env pairs are sorted before hashing, lockfiles are visited in `LOCKFILES`
+  order
+
+### The multi-language example now orders something — 2026-07-30
+
+- `examples/polyglot` declared `"build": { "dependsOn": ["^build"] }` while no
+  workspace in it declared `dependsOn`. `^build` expanded to nothing, all four
+  workspaces were independent roots, and the example demonstrated none of the
+  cross-language ordering it exists to show. `worker` (Go) now declares
+  `"dependsOn": ["utils"]` (Python), so `utils:build` runs first
+- A test asserts the pair holds: if the example keeps a `^task` but loses every
+  workspace edge, `cargo test -p lattice-config` fails
+- The walkthrough at `apps/web/src/content/docs/multi-language-monorepo.md` no
+  longer demonstrates the edge as a hypothetical addition — the run output on
+  that page is recaptured against the example as it now ships, as is the quick
+  start in the README
+
+### `settings.logging` is gone — 2026-07-30
+
+- The field validated against the bundled schema and changed nothing. Nothing in
+  the tree read it. It is removed from the config type and from the schema
+- Output verbosity is `-l`/`--loquacious`, `settings.loquacious`, and `CI`, which
+  is what it always was
+- A `lattice.json` still carrying `logging` keeps loading — unknown settings are
+  ignored, not rejected — so nothing breaks on upgrade. Editors pointed at the
+  refreshed `.lattice/schema.json` will start flagging the key. Delete it
+- `.lattice/schema.json` is only written when absent, so a repo initialized
+  before this keeps its copy. Delete the file and run any `lattice` command to
+  pick up the current one
+
 ### Flags for what used to be environment variables — 2026-07-29
 
 - `--theme light|dark` replaces `LATTICE_THEME`, and picks the teal shade of the

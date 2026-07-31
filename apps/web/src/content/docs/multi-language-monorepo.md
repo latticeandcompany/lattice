@@ -1,18 +1,15 @@
 ---
 title: A multi-language monorepo
-description: A worked walkthrough of examples/polyglot — four languages, one graph, one cache.
+description: A worked walkthrough of a repo spanning Node, Python, Go and Rust in one task graph.
 group: Guides
 order: 2
 ---
 
 # A multi-language monorepo
 
-`examples/polyglot` in the Lattice repo is a small, real monorepo: a
+`examples/polyglot` in the Lattice repo is a small, working monorepo: a
 JavaScript app, a Rust binary, a Python library, and a Go service, run and
-cached from one root `lattice.json`. This page walks it end to end — what
-each workspace is, what Lattice detects for it and why, how `lattice run
-build` orders the four of them, and what a second run looks like once the
-cache is warm.
+cached from one root `lattice.json`.
 
 ## The repo
 
@@ -28,8 +25,7 @@ examples/polyglot/
     worker/   go.mod — a Go binary
 ```
 
-Four workspaces, four languages, none of them named in the config as
-anything other than a directory:
+The config declares each of the four as a directory and a name:
 
 ```json
 {
@@ -53,6 +49,7 @@ anything other than a directory:
       "name": "worker",
       "path": "services/worker",
       "auto": false,
+      "dependsOn": ["utils"],
       "scripts": {
         "build": "sh -c 'if command -v go >/dev/null; then go build ./...; else echo \"[worker] go not installed, skipping native build\"; fi'",
         "test": "sh -c 'if command -v go >/dev/null; then go test ./...; else echo \"[worker] go not installed, skipping tests\"; fi'",
@@ -87,64 +84,58 @@ anything other than a directory:
 }
 ```
 
-This is the file as shipped, unedited. Every command below runs against a
-copy of this exact directory.
+That is the file as shipped. Every command below runs against a copy of this
+directory.
 
 ## What Lattice detects, workspace by workspace
 
-`web` and `api` use the default `auto: true` and declare no `scripts` at
-all — Lattice has to find their driver on its own. `utils` and `worker` set
-`auto: false` and declare every command by hand. That split is not
-arbitrary; each half exists for a different reason, and the evidence ladder
-(see [Driver detection](/lattice/docs/drivers)) explains why.
+`web` and `api` use the default `auto: true` and declare no `scripts`, so
+Lattice finds their driver from evidence in the directory. `utils` and `worker`
+set `auto: false` and declare every command by hand, for two different reasons.
 
-### `web`: a lockfile picks the driver
+### `web`: npm, from `package-lock.json`
 
-`apps/web` has a `package.json` and a `package-lock.json`. A bare
-`package.json` only says "JavaScript" — Lattice's ladder needs rung 3, a
-tool-unique lockfile, to go further. `package-lock.json` is npm's, and
-nothing else's, so `npm` is the driver, with the package-manager role. Every
-task command comes from the `scripts` block in `apps/web/package.json`:
-`npm run build`, `npm run test`, `npm run lint`.
+`apps/web` has a `package.json` and a `package-lock.json`. A bare `package.json`
+only says "JavaScript", so the ladder needs rung 3, a tool-unique lockfile.
+`package-lock.json` is npm's and nothing else's, so `npm` is the driver, with
+the package-manager role. Every task command comes from the `scripts` block in
+`apps/web/package.json`: `npm run build`, `npm run test`, `npm run lint`.
 
-### `api`: same ladder, a different lockfile
+### `api`: cargo, from `Cargo.lock`
 
 `apps/api` has a `Cargo.toml` and a `Cargo.lock`. `Cargo.lock` is cargo's
-fingerprint (rung 3 again), so the driver is `cargo`, with
-the build-tool role. Its invoke form composes the task name directly onto the
-tool: `cargo build`, `cargo test`. (`cargo lint` is not a real cargo
-subcommand without an alias configured for it — the invoke form is generic,
-not verified against what the tool actually supports, so `lint` here would
-fail if it ran for real. `build` and `test` are the ones this walkthrough
-actually runs.)
+fingerprint (rung 3 again), so the driver is `cargo`, with the build-tool role.
+Its invoke form composes the task name onto the tool: `cargo build`,
+`cargo test`. That form is generic and not checked against what the tool
+supports, so `lint` would fail here — `cargo lint` is not a subcommand without
+an alias configured for it. `build` and `test` are the tasks this walkthrough
+runs.
 
-### `utils`: `auto: false` even though a lockfile exists
+### `utils`: declared `scripts` over an existing lockfile
 
-`libs/utils` has a `uv.lock` — if this workspace were `auto: true`, the
-ladder would resolve `uv` as the driver (also the package-manager role) via that
-lockfile, same as `web` and `api`. It isn't: `utils` sets `auto: false` and
-supplies `scripts` for all four root tasks itself, calling `python3`
-directly instead of `uv run …`.
+`libs/utils` has a `uv.lock`, so at `auto: true` the ladder would resolve `uv`
+as the driver (also the package-manager role). Instead `utils` sets
+`auto: false` and supplies `scripts` for all four root tasks, calling `python3`
+directly rather than `uv run …`.
 
-Because every task has an explicit script, `auto: false` changes nothing
-observable *today* — the explicit command always wins over an inferred one,
-whether or not the workspace is `auto`. What it buys is a safeguard for
-tomorrow: if a task got added to `tasks` in `lattice.json` without a
-matching entry in `utils`'s `scripts`, an `auto: true` workspace would
-silently try to invent a `uv run <task>` command; `auto: false` makes that
-same gap a hard failure instead — the workspace declares no command for
-that task, and the run halts. Also worth knowing: `pyproject.toml`'s own
-`requires-python = ">=3.11"` is metadata for Python tooling, not something
-Lattice reads — the only Python version Lattice would ever check is one
-declared under `engines`, and this config declares none.
+Since every task has an explicit script, `auto: false` changes nothing
+observable today: an explicit command wins over an inferred one whether or not
+the workspace is `auto`. It matters for the next task added to `tasks` without a
+matching `scripts` entry. An `auto: true` workspace would invent a
+`uv run <task>` command for it; `auto: false` makes it a hard failure, because
+the workspace declares no command for that task and the run halts.
 
-### `worker`: `auto: false` because auto would halt
+`pyproject.toml`'s own `requires-python = ">=3.11"` is metadata for Python
+tooling and Lattice does not read it. The only Python version Lattice checks is
+one declared under `engines`, and this config declares none.
 
-`services/worker` has a `go.mod` with no `toolchain` line and no `go.sum`
-(there are no external dependencies to lock). `go.sum` is the only
-fingerprint the driver registry recognizes for Go — without it, `auto: true`
-finds no candidate at all. Flipping `worker` to `auto: true` in a scratch
-copy of this example and running `lattice run build --dry-run` confirms it:
+### `worker`: no detectable driver
+
+`services/worker` has a `go.mod` with no `toolchain` line and no `go.sum` (there
+are no external dependencies to lock). `go.sum` is the only fingerprint the
+driver registry recognizes for Go, so at `auto: true` there is no candidate at
+all. Flipping `worker` to `auto: true` in a scratch copy and running
+`lattice run build --dry-run` shows it:
 
 ```text
 Error: workspace 'worker' has an ambiguous or undeclared task driver.
@@ -153,27 +144,25 @@ Declare the task driver explicitly by adding to this workspace in lattice.json:
   "engines": { "node": ">=0.0.0" }
 ```
 
-So here `auto: false` is load-bearing, not defensive: without it (or an
-explicit `engines` declaration), this workspace can't run at all. Its
-`scripts` shell out to `go` directly and check `command -v go` first, so the
-example still runs — printing a skip notice instead of failing — on a
-machine without Go installed.
+Without `auto: false`, or an explicit `engines` declaration, this workspace
+can't run. Its `scripts` shell out to `go` directly and check `command -v go`
+first, so on a machine without Go the example prints a skip notice instead of
+failing.
 
-### The root `engines`, and who they apply to
+### Root `engines`
 
 `node` and `rust` are declared once, at the root, with no per-workspace
-override. Every workspace's resolved engine map is the same merged map (root
-`engines`, since none of the four workspaces adds its own), so Lattice
-resolves it exactly once for the whole run and reuses the result for all
-four — not once per workspace (see [Engines and
-provisioning](/lattice/docs/engines)). Both constraints are version-only, no
-`installCmd`, so this is validate-only mode: Lattice runs `node --version`
-and `rustc --version` on the host and fails before any task starts if either
-doesn't satisfy its constraint. Nothing is installed. This validation runs
-for the whole graph regardless of which workspace actually uses Node or
-Rust — `utils` and `worker` are checked against the same `node`/`rust`
-constraints as `web` and `api`, even though neither runs a line of
-JavaScript or Rust.
+override. None of the four workspaces adds its own, so every workspace resolves
+the same merged engine map and Lattice resolves it once for the whole run rather
+than once per workspace (see [Engines and provisioning](/lattice/docs/engines)).
+Both constraints are version-only with no `installCmd`, which is validate-only
+mode: Lattice runs `node --version` and `rustc --version` on the host and fails
+before any task starts if either doesn't satisfy its constraint. Nothing is
+installed.
+
+Validation covers the whole graph regardless of which workspace uses Node or
+Rust. `utils` and `worker` are checked against the same constraints as `web` and
+`api`, even though neither runs a line of JavaScript or Rust.
 
 ## Running `build`
 
@@ -181,53 +170,54 @@ JavaScript or Rust.
 
 ```text
 ❖ lattice  dry run · build
-  → worker:build  sh -c 'if command -v go >/dev/null; then go build ./...; else echo "[worker] go not installed, skipping native build"; fi'
   → utils:build  python3 -c "import os; os.makedirs('dist', exist_ok=True); import shutil; shutil.copy('src/utils.py', 'dist/utils.py'); print('utils build complete')"
+  → worker:build  sh -c 'if command -v go >/dev/null; then go build ./...; else echo "[worker] go not installed, skipping native build"; fi'
   → api:build  cargo build
   → web:build  npm run build
 ```
 
-Four nodes, no edges between them. `build`'s task-level `dependsOn: ["^build"]`
-means "build every workspace this one depends on, first" — but none of the
-four workspaces here declares a `dependsOn` of its own, so `^build` has
-nothing to expand into for any of them. All four are graph roots. Running it
-for real (`-l` for plain line-by-line output instead of the interactive TUI)
-shows exactly that: every build starts at once and finishes independently,
-bounded only by the concurrency limit (default: logical CPUs — see
-[Selecting what runs](/lattice/docs/filtering)):
+Four nodes and one edge. `build`'s task-level `dependsOn: ["^build"]` means
+"build every workspace this one depends on, first," and `worker` is the only
+workspace declaring a `dependsOn` of its own (`["utils"]`), so `^build` expands
+to `utils:build` for `worker` and to nothing for the other three. `utils:build`
+precedes `worker:build`; `api` and `web` are independent roots.
+
+Running it for real (`-l` for plain line-by-line output instead of the
+interactive TUI) shows the ordering. `utils`, `api`, and `web` all start at
+once, bounded by the concurrency limit (default: logical CPUs — see [Selecting
+what runs](/lattice/docs/filtering)); `worker` isn't hashed or started until
+`utils:build` finishes:
 
 ```text
 lattice: running `build` across 4 workspace(s)
+lattice: api:build: hash ca9cf431598d41a5
+lattice: web:build: hash 839dbe990f662989
+lattice: api:build: cache miss
+api:build: running
+lattice: utils:build: hash 2328e123c2be5737
+lattice: web:build: cache miss
+web:build: running
+lattice: utils:build: cache miss
+utils:build: running
+utils:build: utils build complete
+utils:build: done (0.14s)
 lattice: worker:build: hash ec52d859e992ff10
 lattice: worker:build: cache miss
 worker:build: running
-lattice: web:build: hash 839dbe990f662989
-lattice: utils:build: hash 2328e123c2be5737
-lattice: utils:build: cache miss
-utils:build: running
-lattice: web:build: cache miss
-web:build: running
-lattice: api:build: hash ca9cf431598d41a5
-lattice: api:build: cache miss
-api:build: running
 worker:build: [worker] go not installed, skipping native build
 worker:build: done (0.01s)
-utils:build: utils build complete
-utils:build: done (0.08s)
-web:build: Building web app...
-web:build: done (0.26s)
 api:build:    Compiling api v0.1.0 (…/apps/api)
-api:build:     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
-api:build: done (0.71s)
-lattice: 4 tasks, 0 cached, 0 failed, 1.05s
+web:build: Building web app...
+web:build: done (0.63s)
+api:build:     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.79s
+api:build: done (0.83s)
+lattice: 4 tasks, 0 cached, 0 failed, 1.09s
 ```
 
-That output is real — captured from `cargo build -p lattice`'s binary run
-against a copy of this example, on a machine with Node and Rust installed
-and Go absent, which is exactly what the `worker` script's own
-`command -v go` check is there to handle. Every task shows a cache miss
-first: nothing has ever built here before, so there's nothing to restore
-(see [Caching](/lattice/docs/caching) for what feeds that hash).
+That output was captured against a copy of this example on a machine with Node
+and Rust installed and Go absent, the case the `worker` script's
+`command -v go` check handles. Every task misses because nothing has ever built
+here before (see [Caching](/lattice/docs/caching) for what feeds the hash).
 
 ## Running it again: the cache
 
@@ -235,47 +225,48 @@ Run `lattice run build -l` a second time with nothing changed:
 
 ```text
 lattice: running `build` across 4 workspace(s)
-lattice: worker:build: hash ec52d859e992ff10
-lattice: web:build: hash 839dbe990f662989
-lattice: api:build: hash ca9cf431598d41a5
 lattice: utils:build: hash 2328e123c2be5737
-worker:build: cache hit [ec52d859]
+lattice: api:build: hash ca9cf431598d41a5
+lattice: web:build: hash 839dbe990f662989
 web:build: cache hit [839dbe99]
 utils:build: cache hit [2328e123]
+lattice: worker:build: hash ec52d859e992ff10
+worker:build: cache hit [ec52d859]
 api:build: cache hit [ca9cf431]
-lattice: 4 tasks, 4 cached, 0 failed, 0.07s
+lattice: 4 tasks, 4 cached, 0 failed, 0.12s
+lattice: full cache — nothing to run
 ```
 
-Same four hashes as the first run — `build`'s `inputs` is `src/**/*`, and no
-source file changed, so every workspace's key is identical and every lookup
-is a hit. 1.05s of real compiling and copying became 0.07s of restoring from
-`.lattice/cache`. Edit one workspace's source and only that workspace's key
-changes: appending a line to `apps/web/src/index.js` and re-running `build`
-reruns `web:build` alone —
+Same four hashes as the first run. `build`'s `inputs` is `src/**/*`, no source
+file changed, so every key is identical and every lookup restores from
+`.lattice/cache` instead of running. Edit one workspace's source and only that
+workspace's key changes; appending a line to `apps/web/src/index.js` and
+re-running `build` reruns `web:build` alone —
 
 ```text
+lattice: running `build` across 4 workspace(s)
+lattice: api:build: hash ca9cf431598d41a5
+lattice: web:build: hash 9f15bc51cad38b32
+lattice: utils:build: hash 2328e123c2be5737
 lattice: web:build: cache miss
 web:build: running
-worker:build: cache hit [ec52d859]
 utils:build: cache hit [2328e123]
+lattice: worker:build: hash ec52d859e992ff10
+worker:build: cache hit [ec52d859]
 api:build: cache hit [ca9cf431]
 web:build: Building web app...
-web:build: done (0.22s)
-lattice: 4 tasks, 3 cached, 0 failed, 0.28s
+web:build: done (0.32s)
+lattice: 4 tasks, 3 cached, 0 failed, 0.39s
 ```
 
 — while `worker`, `utils`, and `api` come back as hits, because `build`'s
-`inputs` (`src/**/*`) never matched anything under `apps/web` for them in
-the first place.
+`inputs` (`src/**/*`) resolves per workspace and never matched anything under
+`apps/web` for them.
 
 ## The cross-language dependency edge
 
-As shipped, `examples/polyglot`'s four workspaces build independently — the
-previous section's dry run has no edges to show. But the mechanism for a
-real cross-language dependency is exactly the same file, one field: a
-workspace's `dependsOn`. Say `worker` (Go) actually needed `utils` (Python)
-built first — for instance, its build step shells out to something `utils`
-produces. You'd declare that on the `worker` workspace, and only there:
+The ordering between `utils` and `worker` comes from one field on one
+workspace:
 
 ```json
 {
@@ -283,61 +274,30 @@ produces. You'd declare that on the `worker` workspace, and only there:
   "path": "services/worker",
   "auto": false,
   "dependsOn": ["utils"],
-  "scripts": {
-    "build": "sh -c 'if command -v go >/dev/null; then go build ./...; else echo \"[worker] go not installed, skipping native build\"; fi'",
-    "test": "sh -c 'if command -v go >/dev/null; then go test ./...; else echo \"[worker] go not installed, skipping tests\"; fi'",
-    "lint": "sh -c 'if command -v go >/dev/null; then go vet ./...; else echo \"[worker] go not installed, skipping lint\"; fi'",
-    "clean": "sh -c 'rm -rf bin && echo worker clean complete'"
-  }
+  "scripts": { … }
 }
 ```
 
-Nothing else in the file changes: `build`'s task-level `dependsOn: ["^build"]`
-already means "build every workspace I depend on first," for every
-workspace that has that dependency. Adding `dependsOn: ["utils"]` to
-`worker` is what gives `^build` something to resolve to for `worker`
-specifically. `lattice run build --dry-run` against that one-line change
-shows the new edge immediately:
+Both halves are required. A workspace's `dependsOn` states what `worker` depends
+on and orders nothing by itself. A task's `dependsOn` states what runs first,
+and `build`'s is `["^build"]`, "the `build` task of each workspace this one
+depends on"; the `^` is what reads the workspace edge. Drop either half and the
+graph flattens: without `worker`'s `dependsOn`, `^build` expands to nothing, and
+with a task-level `build` that has no `^build`, nothing consults the workspace
+edge.
 
-```text
-❖ lattice  dry run · build
-  → utils:build  python3 -c "import os; os.makedirs('dist', exist_ok=True); import shutil; shutil.copy('src/utils.py', 'dist/utils.py'); print('utils build complete')"
-  → worker:build  sh -c 'if command -v go >/dev/null; then go build ./...; else echo "[worker] go not installed, skipping native build"; fi'
-  → api:build  cargo build
-  → web:build  npm run build
-```
+The edge is built from `dependsOn` naming a workspace, not a language or a
+driver, so it works the same across a language boundary as it would between two
+Go workspaces. `worker`'s `go build` waits on `utils`'s `python3`, and neither
+driver knows the other exists.
 
-`utils:build` now precedes `worker:build`; `api` and `web` are still
-independent roots. Running it for real shows the same ordering play out:
-`api:build` and `web:build` start immediately, `utils:build` starts
-immediately too, and `worker:build`'s hash and start only appear once
-`utils:build` finishes —
+The edge does not change `worker`'s cache key. Edit `libs/utils/src/utils.py`
+and re-run: `utils:build` misses and reruns, while `worker:build` still hashes
+to `ec52d859e992ff10` and comes back a hit, because a task's key covers its own
+`inputs`, command, `env`, and toolchain and never its dependencies' (see
+[Caching](/lattice/docs/caching)). `dependsOn` orders `utils:build` first; it
+does not make `worker:build` stale when `utils` changes.
 
-```text
-lattice: utils:build: hash 2328e123c2be5737
-lattice: utils:build: cache miss
-utils:build: running
-lattice: api:build: hash ca9cf431598d41a5
-lattice: web:build: hash ea603568d0b9ef0e
-lattice: web:build: cache miss
-web:build: running
-lattice: api:build: cache miss
-api:build: running
-api:build:     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.00s
-utils:build: utils build complete
-utils:build: done (0.03s)
-lattice: worker:build: hash ec52d859e992ff10
-lattice: worker:build: cache miss
-worker:build: running
-worker:build: [worker] go not installed, skipping native build
-worker:build: done (0.01s)
-```
-
-— confirmed by adding that one field to a scratch copy of this example and
-running both commands against it. Lattice does not care that the dependency
-crosses a language boundary: the edge between `worker:build` and
-`utils:build` is built the same way it would be if both workspaces were
-Go, or both were Python — from `dependsOn` naming a workspace, not a
-language or a driver. The full mechanics of `dependsOn`, the `task` vs.
-`^task` distinction, and how several requested tasks merge into one graph
-are covered in [Task graph](/lattice/docs/task-graph).
+The full mechanics of `dependsOn`, the `task` vs. `^task` distinction, and
+how several requested tasks merge into one graph are covered in
+[Task graph](/lattice/docs/task-graph).

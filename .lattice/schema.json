@@ -12,7 +12,7 @@
     },
     "latticeVersion": {
       "type": "string",
-      "description": "Version of Lattice this config targets."
+      "description": "The version of Lattice this repo runs. An installed binary that is not this version installs it and hands over, so everyone gets the same build."
     },
     "workspaces": {
       "type": "array",
@@ -164,10 +164,6 @@
           "type": "string",
           "description": "Upper bound on the local cache size (e.g. \"10GB\")."
         },
-        "logging": {
-          "type": "string",
-          "description": "Logging verbosity mode (e.g. \"default\")."
-        },
         "cacheDir": {
           "type": "string",
           "description": "Directory for the local cache (defaults to \".lattice/cache\")."
@@ -178,7 +174,7 @@
         },
         "versionCheck": {
           "type": "boolean",
-          "description": "When true (default), enforce engine version checks."
+          "description": "When true (default), compare the running binary against latticeVersion. Set false to run whatever binary is invoked."
         }
       }
     }
