@@ -24,9 +24,10 @@ the message shapes.
 
 Fix: add an `engines` entry to that workspace in `lattice.json` naming the tool
 that should run its tasks — a package manager, build tool, or task runner. The
-line the error suggests is a starting point, not always the right tool; a runtime
-alone will not resolve it. Or set `"auto": false` and declare `scripts` yourself,
-since the halt fires only for `auto: true` workspaces.
+line the error suggests resolves the halt, but it isn't always the tool you want,
+so check it against what the workspace actually uses. Where no candidate could
+drive tasks, the suggestion is the `auto: false` plus `scripts` form instead,
+since no `engines` entry would help there.
 
 ### A task's resolved command isn't what you expected
 

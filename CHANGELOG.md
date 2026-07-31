@@ -10,6 +10,21 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The ambiguity error suggests a fix that works — 2026-07-30
+
+- When a workspace had no ecosystem marker, the halt suggested
+  `"engines": { "node": ">=0.0.0" }`. Pasting that in reproduced the same error,
+  because a runtime cannot drive named tasks. It now suggests
+  `"auto": false, "scripts": { "build": "<command>" }`, which resolves it
+- The `node` fallback fired whenever the candidate list was empty, so the two
+  workspaces most likely to hit it were the emptiest ones: a directory holding
+  only a `.nvmrc`, and a directory with nothing Lattice recognizes at all
+- Where a candidate tool does exist, nothing changes — every tool a generic
+  ecosystem marker maps to can drive, so a bare `package.json` still suggests
+  `pnpm`. A test asserts that stays true as the marker table grows
+- The stress test now pastes the suggested fix back in and asserts the run
+  succeeds
+
 ### The docs say what happens instead of arguing for it — 2026-07-30
 
 - A voice pass over all 28 pages of `apps/web/src/content/docs/`. Removed the

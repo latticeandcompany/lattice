@@ -11,10 +11,12 @@ repo, or the repo doesn't use Lattice yet. `lattice init` creates one.
 
 ## `workspace 'x' has an ambiguous or undeclared task driver`
 
-No rung of the evidence ladder named exactly one tool, or two tools of the same
-role are present at once. Add the `engines` entry the error suggests, naming the
-tool actually used, or set `"auto": false` and declare `scripts`. Ask which tool
-the workspace uses rather than picking from the candidate list.
+No rung of the evidence ladder named exactly one tool, two tools of the same role
+are present at once, or the only candidates are runtimes, which cannot drive
+tasks. Add the `engines` entry the error suggests, naming the tool actually used,
+or set `"auto": false` and declare `scripts` — which is what the error suggests
+when no candidate could drive. Ask which tool the workspace uses rather than
+picking from the candidate list.
 
 ## A task's resolved command isn't what you expected
 

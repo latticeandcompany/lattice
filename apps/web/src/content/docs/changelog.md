@@ -18,6 +18,18 @@ miss, because the running version is one of the inputs hashed into every task's
 cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## The ambiguity error suggests a fix that works — 2026-07-30
+
+A workspace with no ecosystem marker used to be told to add
+`"engines": { "node": ">=0.0.0" }`. Pasting that in produced the same error
+again, because a runtime cannot drive named tasks. The suggestion is now
+`"auto": false, "scripts": { "build": "<command>" }`, which resolves the halt.
+
+Where a candidate tool does exist the message is unchanged — a bare
+`package.json` still suggests `pnpm`. See [Driver
+detection](/lattice/docs/drivers) and
+[Errors](/lattice/docs/errors#ambiguous-or-undeclared-task-driver).
+
 ## `settings.logging` is gone — 2026-07-30
 
 The field validated against the bundled schema and nothing in the tree read it.

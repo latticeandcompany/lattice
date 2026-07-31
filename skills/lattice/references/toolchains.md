@@ -50,7 +50,7 @@ if there were no evidence at all:
 Error: workspace 'app' has an ambiguous or undeclared task driver.
 No task driver could be detected (no lockfile, wrapper, or native declaration).
 Declare the task driver explicitly by adding to this workspace in lattice.json:
-  "engines": { "node": ">=0.0.0" }
+  "auto": false, "scripts": { "build": "<command>" }
 ```
 
 ### `auto: false` turns the ladder's consequences off

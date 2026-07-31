@@ -121,15 +121,18 @@ candidate list is empty and the message says so:
 Error: workspace 'app' has an ambiguous or undeclared task driver.
 No task driver could be detected (no lockfile, wrapper, or native declaration).
 Declare the task driver explicitly by adding to this workspace in lattice.json:
-  "engines": { "node": ">=0.0.0" }
+  "auto": false, "scripts": { "build": "<command>" }
 ```
 
+The suggested line differs between the two because a runtime can't drive tasks.
+Where a candidate tool exists, Lattice names one and declaring it resolves the
+halt. Where none does, no `engines` entry would help, so it suggests declaring
+the commands instead.
+
 Fix either by declaring the tool that should run the tasks — a package manager,
-build tool, or task runner — in that workspace's `engines`, or in the root
+build tool, or task runner — in that workspace's `engines` or in the root
 `engines` map, or by setting `auto: false` and writing the commands yourself.
-Naming a runtime does not resolve it; the suggested line falls back to `node`
-whenever the candidate list is empty, so replace it with the tool you actually
-run. The `>=0.0.0` in the suggestion is a placeholder too — see [Engines and
+The `>=0.0.0` in the first suggestion is a placeholder — see [Engines and
 provisioning](/lattice/docs/engines) for a real constraint.
 
 ## `auto: false`

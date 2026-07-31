@@ -127,7 +127,7 @@ task runner on top of it):
 workspace 'app' has an ambiguous or undeclared task driver.
 No task driver could be detected (no lockfile, wrapper, or native declaration).
 Declare the task driver explicitly by adding to this workspace in lattice.json:
-  "engines": { "node": ">=0.0.0" }
+  "auto": false, "scripts": { "build": "<command>" }
 ```
 
 A bare generic ecosystem marker (e.g. only `package.json`, no lockfile):
@@ -149,10 +149,11 @@ Declare the task driver explicitly by adding to this workspace in lattice.json:
   "engines": { "bun": ">=0.0.0" }
 ```
 
-Fix it by pasting the suggested `engines` line into that workspace's config, or
-naming whichever tool you actually use. This halt only fires for a workspace
-whose `auto` is `true` (the default); set `auto: false` to declare `scripts`
-yourself instead.
+Fix it by pasting the suggested line into that workspace's config, or by naming
+whichever tool you actually use. The suggestion is always one that resolves the
+halt: an `engines` entry where a candidate tool can drive tasks, and the
+`scripts` form where none can, since a runtime alone never can. This halt only
+fires for a workspace whose `auto` is `true` (the default).
 
 ### Workspace path is not a directory
 

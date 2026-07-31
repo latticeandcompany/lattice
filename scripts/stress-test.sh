@@ -692,6 +692,23 @@ lat "$ERR" run build ; t_bad "ambiguous driver halts"
 t_has "ambiguity explains itself"      "ambiguous"
 t_has "ambiguity suggests engines fix" "engines"
 
+# A runtime cannot drive tasks, so the fix offered here must not name one --
+# pasting it in has to resolve the halt rather than reproduce it.
+mkerr runtime_only; mkdir -p "$ERR/a"; w "$ERR/a/.nvmrc" "20"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a" } ], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "runtime-only workspace halts"
+t_has "runtime-only suggests scripts, not engines" "scripts"
+t_hasnt "runtime-only does not suggest a runtime" '"node"'
+
+# ...and the suggested fix actually works.
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false,
+    "scripts": { "build": "echo built" } } ], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_ok "the suggested scripts fix resolves the halt"
+
 # Same-role conflict.
 mkerr conflict; mkdir -p "$ERR/a"; w "$ERR/a/bun.lockb" ""; w "$ERR/a/pnpm-lock.yaml" ""; w "$ERR/a/package.json" "{}"
 cat > "$ERR/lattice.json" <<'JSON'
