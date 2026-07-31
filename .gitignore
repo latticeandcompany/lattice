@@ -38,6 +38,7 @@ dist/
 examples/**/.lattice/cache/
 examples/**/.lattice/toolchains/
 examples/**/.lattice/bin/
+.turbo/
 examples/**/.turbo/
 examples/**/.venv/
 examples/**/bin/
