@@ -15,7 +15,7 @@ graph, so a dependency they share runs once.
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--sequentially` | `-s` | — | off | One graph per named task, each run to completion in the order given, instead of one merged graph |
-| `--filter` | `-f` | `<PATTERN>` | none | Only workspaces whose `name` contains this substring. Accepted once per run |
+| `--filter` | `-f` | `<PATTERN>` | none | The workspaces whose `name` contains this substring, plus everything they depend on. Accepted once per run |
 | `--concurrency` | — | `<N>` | logical CPUs | Cap how many tasks run at once. `0` is ignored |
 | `--continue` | — | — | off | Keep starting tasks that don't transitively depend on the failure |
 | `--no-cache` | — | — | off | No lookup and no store for this run |
@@ -25,6 +25,12 @@ graph, so a dependency they share runs once.
 A filter that matches no workspace, and a repo with an empty `workspaces` array,
 print a message and exit `0`. An unrecognized task name is an error that lists
 the tasks that do exist.
+
+A filter's matches are the roots of the run: the graph also holds the transitive
+dependency closure of those workspaces, and `--dry-run` prints those nodes with a
+trailing `(dependency)`. A workspace pulled in that way is only asked for the
+tasks its dependents need, so `auto: false` with no script for the task you named
+does not halt the run unless the filter matched that workspace.
 
 `--dry-run` returns before any toolchain is provisioned or validated, so it shows
 commands as written — an engine failure only surfaces on a real run or under

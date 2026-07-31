@@ -76,11 +76,11 @@ a task. See [Engines and provisioning](/lattice/docs/engines).
 
 ### Filter
 
-The `-f`/`--filter <PATTERN>` flag on `lattice run`, which keeps only
-workspaces whose `name` contains `PATTERN` (a substring match, not a glob)
-before the task graph is built. Filtering removes a non-matching workspace
-from the graph entirely — it never pulls in that workspace's dependencies, and
-it is never an error, even when nothing matches. See [Selecting what
+The `-f`/`--filter <PATTERN>` flag on `lattice run`, which selects the
+workspaces whose `name` contains `PATTERN` (a substring match, not a glob).
+The matches are the roots of the run: the graph also holds everything they
+depend on, transitively, and nothing that depends on them. A filter that
+matches nothing is not an error. See [Selecting what
 runs](/lattice/docs/filtering).
 
 ### Host mode

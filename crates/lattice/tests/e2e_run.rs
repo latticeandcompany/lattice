@@ -120,6 +120,80 @@ fn filter_runs_only_matching_workspace() {
 	);
 }
 
+/// `base <- mid <- top`, each `dependsOn` the previous, with `build` wired to
+/// `^build` so every workspace waits on its dependencies.
+fn chain_repo(fx: &Fixture) {
+	for dir in ["base", "mid", "top"] {
+		fx.mkdir(dir);
+	}
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "base", "path": "base", "auto": false, "scripts": { "build": "echo B > marker.txt" } },
+    { "name": "mid",  "path": "mid",  "auto": false, "dependsOn": ["base"],
+      "scripts": { "build": "echo M > marker.txt" } },
+    { "name": "top",  "path": "top",  "auto": false, "dependsOn": ["mid"],
+      "scripts": { "build": "echo T > marker.txt" } }
+  ],
+  "tasks": { "build": { "dependsOn": ["^build"] } }
+}
+"#,
+	);
+}
+
+#[test]
+fn filter_pulls_in_transitive_dependencies() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+
+	fx.lattice()
+		.args(["run", "build", "-f", "top", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("across 3 workspace(s)"))
+		.stdout(predicate::str::contains("base:build"))
+		.stdout(predicate::str::contains("mid:build"))
+		.stdout(predicate::str::contains("top:build"));
+
+	assert!(fx.exists("base/marker.txt"), "a transitive dependency ran");
+	assert!(fx.exists("mid/marker.txt"), "a direct dependency ran");
+	assert!(fx.exists("top/marker.txt"), "the matched workspace ran");
+}
+
+#[test]
+fn filter_excludes_workspaces_that_depend_on_the_match() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+
+	fx.lattice()
+		.args(["run", "build", "-f", "mid", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("top:build").not());
+
+	assert!(fx.exists("base/marker.txt"), "mid's dependency ran");
+	assert!(fx.exists("mid/marker.txt"), "the matched workspace ran");
+	assert!(
+		!fx.exists("top/marker.txt"),
+		"a workspace that only depends on the match stays out of the run"
+	);
+}
+
+#[test]
+fn filtered_dry_run_marks_pulled_in_dependencies() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+
+	fx.lattice()
+		.args(["run", "build", "--dry-run", "-f", "top"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("base:build (dependency)"))
+		.stdout(predicate::str::contains("mid:build (dependency)"))
+		.stdout(predicate::str::contains("top:build (dependency)").not());
+}
+
 #[test]
 fn dry_run_lists_tasks_without_executing() {
 	let fx = Fixture::new();

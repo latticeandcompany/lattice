@@ -37,8 +37,9 @@ lattice run clean
 ```
 
 `serve` is filtered to `api` because a manual workspace must declare a script for
-any task you invoke directly, and `frontend` has nothing to serve. Tasks that are
-only pulled in as dependencies are skipped where they don't apply.
+any task you invoke directly, and `frontend` has nothing to serve. The filter picks
+the workspace the run is for, not the whole of it: `serve` depends on `build`, so
+`frontend:build` still runs first (from cache, if the bundle is current).
 
 ## Behavior
 

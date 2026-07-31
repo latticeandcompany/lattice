@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
 use dagger::{
-	build_execution_graph_multi, dry_run_order, includes_persistent_task, ExecutionGraph,
+	build_execution_graph_selected, dry_run_order, includes_persistent_task, ExecutionGraph,
 };
 use lattice_config::find_root;
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, OutputMode};
@@ -34,7 +36,8 @@ pub struct RunArgs {
 	#[arg(short = 's', long = "sequentially")]
 	pub sequentially: bool,
 
-	/// Only run in workspaces whose name contains this pattern.
+	/// Run in the workspaces whose name contains this pattern, plus what they
+	/// depend on.
 	#[arg(short, long, value_name = "PATTERN")]
 	pub filter: Option<String>,
 
@@ -105,16 +108,28 @@ impl RunArgs {
 		// The mode is final here, and nothing has printed yet.
 		apply_color_policy(mode);
 
-		let mut workspaces = discover_workspaces(&root, &config)?;
+		let workspaces = discover_workspaces(&root, &config)?;
 
-		if let Some(filter) = &self.filter {
-			workspaces.retain(|ws| ws.name.contains(filter.as_str()));
-			if workspaces.is_empty() {
-				// A filtered no-op is not a failure; report and exit cleanly.
-				println!("lattice: no workspaces matched filter '{}'.", filter);
-				return Ok(());
+		// A filter picks the workspaces the run is *for*. The graph builder then
+		// pulls in whatever they depend on, so the full set stays available here
+		// for the runner to resolve those dependencies against.
+		let selected: Option<HashSet<String>> = match &self.filter {
+			Some(filter) => {
+				let matched: HashSet<String> = workspaces
+					.iter()
+					.filter(|ws| ws.name.contains(filter.as_str()))
+					.map(|ws| ws.name.clone())
+					.collect();
+				if matched.is_empty() {
+					// A filtered no-op is not a failure; report and exit cleanly.
+					println!("lattice: no workspaces matched filter '{}'.", filter);
+					return Ok(());
+				}
+				Some(matched)
 			}
-		}
+			None => None,
+		};
+		let selected = selected.as_ref();
 
 		if workspaces.is_empty() {
 			// A freshly-scaffolded repo has an empty `workspaces` array; exit 0
@@ -133,13 +148,18 @@ impl RunArgs {
 			if self.sequentially {
 				// Each phase is its own graph; list them in order.
 				for task in &self.tasks {
-					let graph =
-						build_execution_graph_multi(&workspaces, &[task.as_str()], &config)?;
+					let graph = build_execution_graph_selected(
+						&workspaces,
+						&[task.as_str()],
+						&config,
+						selected,
+					)?;
 					print_dry_run(&format!("dry run · {} (phase)", task), &graph);
 				}
 			} else {
 				let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
-				let graph = build_execution_graph_multi(&workspaces, &task_refs, &config)?;
+				let graph =
+					build_execution_graph_selected(&workspaces, &task_refs, &config, selected)?;
 				print_dry_run(&format!("dry run · {}", self.tasks.join(" ")), &graph);
 			}
 			return Ok(());
@@ -165,7 +185,12 @@ impl RunArgs {
 			// Run each task's full graph to completion, in order, before the next.
 			let mut failed_any = false;
 			for task in &self.tasks {
-				let graph = build_execution_graph_multi(&workspaces, &[task.as_str()], &config)?;
+				let graph = build_execution_graph_selected(
+					&workspaces,
+					&[task.as_str()],
+					&config,
+					selected,
+				)?;
 				let opts = ExecuteOptions {
 					graph: &graph,
 					workspaces: &workspaces,
@@ -199,7 +224,7 @@ impl RunArgs {
 
 		// Default: merge every stacked task into one combined graph.
 		let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
-		let graph = build_execution_graph_multi(&workspaces, &task_refs, &config)?;
+		let graph = build_execution_graph_selected(&workspaces, &task_refs, &config, selected)?;
 		let opts = ExecuteOptions {
 			graph: &graph,
 			workspaces: &workspaces,
@@ -231,10 +256,18 @@ impl RunArgs {
 fn print_dry_run(banner: &str, graph: &ExecutionGraph) {
 	println!("{}", banner_line(banner));
 	for node in dry_run_order(graph) {
+		// Tag the nodes a --filter did not match, so it is clear which lines are
+		// there because something matched depends on them.
+		let tag = if node.pulled_in {
+			format!(" {}", style("(dependency)").dim())
+		} else {
+			String::new()
+		};
 		println!(
-			"  {} {}  {}",
+			"  {} {}{}  {}",
 			paint_teal("→"),
 			style(format!("{}:{}", node.workspace_name, node.task_name)).bold(),
+			tag,
 			style(&node.command).dim()
 		);
 	}

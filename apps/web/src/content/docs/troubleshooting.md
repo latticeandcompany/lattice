@@ -227,18 +227,19 @@ alone.
 
 ## Running
 
-### A `--filter` runs fewer workspaces than you expected
+### A `--filter` ran more or fewer workspaces than you expected
 
-`--filter <pattern>` keeps workspaces whose **name** contains `pattern` — a
-substring match, not a glob and not a path match. It applies before the graph is
-built, so a filtered-out workspace has no node at all: an edge from another
-workspace to it is never created. That is not an error, and the dependency does
-not run first. A filter matching nothing prints
+`--filter <pattern>` matches workspaces whose **name** contains `pattern` — a
+substring match, not a glob and not a path match. The matches are the roots of
+the run, so the graph also holds everything they depend on, transitively. Those
+extra nodes are tagged `(dependency)` under `--dry-run`. Nothing that depends on
+a match is included. A filter matching nothing prints
 `lattice: no workspaces matched filter '<pattern>'.` and exits 0.
 
 Fix: match on the workspace `name` as declared in `lattice.json`, not a directory
-name or a glob. To include a dependency's task, widen the pattern enough to match
-it. See [Selecting what runs](/lattice/docs/filtering).
+name or a glob. If a prerequisite you expected is missing, check that the
+depending workspace lists it in its `dependsOn` and that the task's `dependsOn`
+carries the `^`. See [Selecting what runs](/lattice/docs/filtering).
 
 ### `.lattice/schema.json` is missing or your editor shows a stale schema
 

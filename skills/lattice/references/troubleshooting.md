@@ -33,7 +33,9 @@ provisioned tool changes what's first on `PATH`.
 
 A manual workspace must declare a script for every task it participates in. Add
 the entry, or leave the workspace on `auto` so it can sit out tasks that don't
-apply. Silent skipping is only for `auto: true` workspaces.
+apply. Silent skipping is only for `auto: true` workspaces. Under `--filter`, the
+check covers the workspaces the pattern matched; one pulled in as a dependency is
+only asked for the tasks its dependents need.
 
 ## `cycle detected in task dependency graph`
 
@@ -139,12 +141,15 @@ persistent that actually runs to completion and Lattice won't notice it finished
 or failed — the run just sits waiting for Ctrl-C. Only set `persistent: true` on
 a command whose job is to keep running.
 
-## `--filter` ran fewer workspaces than expected
+## `--filter` ran more or fewer workspaces than expected
 
-It's a substring match on workspace `name`, never on `path` and never a glob,
-applied before the graph is built. A filtered-out workspace has no node, so an
-edge into it is never created — not run first, not an error either. A filter
-matching nothing exits `0`.
+It's a substring match on workspace `name`, never on `path` and never a glob. The
+matches are the roots of the run, so their transitive dependencies are in the
+graph too, tagged `(dependency)` under `--dry-run`. Nothing that depends on a
+match is included. A filter matching nothing exits `0`.
+
+If a prerequisite you expected is missing, check that the depending workspace
+lists it in `dependsOn` and that the task's own `dependsOn` carries the `^`.
 
 ## `.lattice/schema.json` is missing or your editor shows a stale schema
 

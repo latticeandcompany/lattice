@@ -238,7 +238,9 @@ add it under this workspace's "scripts" map in lattice.json
 A workspace with `auto: false` opts out of all inference and never invents a
 command, so a requested root task with nothing in that workspace's `scripts` map
 halts the whole run. An `auto: true` workspace instead skips the task quietly if
-its driver doesn't apply. Fatal.
+its driver doesn't apply. Fatal. A `--filter`ed run only holds the workspaces it
+matched to this check: one pulled in as a dependency is asked for the tasks its
+dependents need, not for the task you named.
 
 ### Persistent task depended on
 

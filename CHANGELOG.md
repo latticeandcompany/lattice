@@ -67,6 +67,25 @@ first run after an upgrade re-runs everything.
   meta file records the resolved value that fed its key. The stress test
   asserts the same against a real `.meta.json`
 
+### `--filter` runs what the filtered workspaces depend on — 2026-07-30
+
+- A filter used to be applied before the graph was built, so a `^build` edge into
+  a workspace the pattern excluded resolved to nothing. `lattice run build
+  --filter lattice-runner` in this repo ran one task and reported success, having
+  silently skipped the five workspaces it depends on
+- The matched workspaces are now the roots of the run: the graph adds their
+  transitive dependency closure, deduplicated, and drops everything else. A
+  prerequisite whose inputs haven't changed comes back from cache, so the added
+  cost is a cache lookup per node
+- Nothing that depends *on* a match is included, so `--filter` still narrows a
+  run to one part of the repo
+- `--dry-run` tags each pulled-in node: `→ dagger:build (dependency)  cargo build`
+- A workspace pulled in as a dependency is only asked for the tasks its
+  dependents need, so an `auto: false` workspace outside the filter with no
+  script for the task you named no longer halts the run. Toolchain provisioning
+  and the `across N workspace(s)` count now cover the workspaces in the graph
+  rather than every workspace declared
+
 ### The ambiguity error suggests a fix that works — 2026-07-30
 
 - When a workspace had no ecosystem marker, the halt suggested
