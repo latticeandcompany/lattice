@@ -7,27 +7,26 @@ order: 1
 
 # Configuration
 
-Everything Lattice does in a repo is driven by one file: `lattice.json` at the
-repo root. This page enumerates every field it accepts — type, whether it's
-required, its default, and what it's for. For what these fields mean in
-practice, see [Workspaces](/lattice/docs/workspaces),
+One file drives everything Lattice does in a repo: `lattice.json` at the repo
+root. Every field it accepts is below, with its type, whether it's required,
+and its default. For what these fields mean in practice, see
+[Workspaces](/lattice/docs/workspaces),
 [Task graph](/lattice/docs/task-graph), [Caching](/lattice/docs/caching), and
 [Engines and provisioning](/lattice/docs/engines).
 
 ## Where the file lives
 
-`lattice.json` lives at the repo root. Every command that reads config walks up
-from the current directory looking for the nearest `lattice.json` and treats
-that directory as the repo root — so subcommands work from any workspace
-subdirectory. If no `lattice.json` is found in the current directory or any
-parent, Lattice fails immediately:
+Every command that reads config walks up from the current directory to the
+nearest `lattice.json` and treats that directory as the repo root, so
+subcommands work from any workspace subdirectory. With no `lattice.json` in the
+current directory or any parent, Lattice fails immediately:
 
 ```text
 Error: no lattice.json found in this directory or any parent; run `lattice init` to create one
 ```
 
-An empty `lattice.json` — literally `{}` — is valid: every top-level key is
-optional. Running a task against it fails only because no tasks are declared:
+Every top-level key is optional, so an empty `lattice.json` is valid. Running a
+task against it fails only because no tasks are declared:
 
 ```json
 {}
@@ -48,19 +47,16 @@ a copy of Lattice's bundled JSON Schema written next to your config so editors
 with JSON Schema support (VS Code, JetBrains) validate and autocomplete
 `lattice.json` as you type.
 
-Every command that loads config first calls `ensure_schema`, which writes
-`.lattice/schema.json` **only if it is absent** — an existing copy (including
-one you've pinned or hand-edited) is never overwritten. `lattice init` writes
-it explicitly as part of scaffolding. Commit `.lattice/schema.json`; it isn't
-one of the gitignored `.lattice/` artifacts (`cache/`, `toolchains/`, `bin/`
-are).
+Every command that loads config writes `.lattice/schema.json` **only if it is
+absent**; an existing copy, including one you've pinned or hand-edited, is
+never overwritten. `lattice init` writes it explicitly as part of scaffolding.
+Commit `.lattice/schema.json` — it isn't one of the gitignored `.lattice/`
+artifacts (`cache/`, `toolchains/`, `bin/` are).
 
-The bundled schema is stricter than Lattice's own parser in one respect: the
-schema sets `additionalProperties: false` at every level, so an editor flags an
-unknown key (a stray `projects`, a typo'd field) immediately. The parser itself
-silently ignores unknown keys at parse time — they simply have no effect. Treat
-editor validation against `.lattice/schema.json` as the authoritative check for
-typos; don't rely on `lattice run` to catch them.
+The bundled schema sets `additionalProperties: false` at every level, so an
+editor flags an unknown key (a stray `projects`, a typo'd field) immediately.
+Lattice's own parser ignores unknown keys instead. Editor validation is
+therefore the check that catches typos; `lattice run` will not.
 
 ## `latticeVersion`
 
@@ -92,8 +88,9 @@ version-drift check uses this field and `settings.versionCheck`.
 | `workspaces` | array of workspace objects | no | `[]` |
 
 Each entry is one workspace — a single project directory. There is no glob
-form; the schema and the parser both reject a bare string array or a `glob`
-key on a workspace entry.
+form. A bare string array (`"workspaces": ["apps/*"]`) fails to parse; a `glob`
+key on a workspace entry parses and does nothing, and the bundled schema
+rejects it.
 
 ### The workspace object
 
@@ -280,7 +277,6 @@ inputs, or outputs.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `maxCacheSize` | `string` | no | none | Upper bound on the local cache size. Human byte size: an integer plus `B`/`KB`/`MB`/`GB`/`TB` (base 1024, case-insensitive), or a bare integer of bytes. Used by `lattice prune` when `--max-size` isn't passed. |
-| `logging` | `string` | no | none | Logging verbosity mode. |
 | `cacheDir` | `string` | no | `".lattice/cache"` | Directory for the local cache, relative to the repo root. |
 | `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-l`/`--loquacious`: forces raw, unbuffered output. |
 | `versionCheck` | `boolean` | no | `true` | When true, compare the running binary against `latticeVersion` and nag on drift. `false` disables the check entirely — see [Upgrading](/lattice/docs/upgrading). |
@@ -316,16 +312,14 @@ Error: no max cache size set (pass --max-size or set settings.maxCacheSize in la
 | A task name passed to `lattice run` not present in `tasks` | after config loads | `task '<name>' is not defined in lattice.json; available tasks: ...` |
 | `lattice prune` with no size limit anywhere | after config loads | `no max cache size set (pass --max-size or set settings.maxCacheSize in lattice.json)` |
 
-An unrecognized top-level or nested key (for example a leftover `projects`
-map, or a `glob` key on a workspace) is accepted by the parser and silently
-ignored — it has no effect on any command. The bundled JSON Schema rejects the
-same input, which is why editor validation against `.lattice/schema.json`
-catches typos the CLI itself will not.
+An unrecognized top-level or nested key (a leftover `projects` map, a `glob`
+key on a workspace) parses and has no effect on any command. The bundled JSON
+Schema rejects the same input, so editor validation catches these and the CLI
+does not.
 
 ## Complete example
 
-A repo with a Node app, a Rust service, and a Python library wired for tasks,
-selective caching, and pinned tool versions:
+A repo with a Node app, a Rust service, and a Python library:
 
 ```json
 {

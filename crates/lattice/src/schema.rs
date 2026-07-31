@@ -30,6 +30,45 @@ mod tests {
 	use super::*;
 	use serde_json::Value;
 
+	/// The schema must not advertise a setting the config type has no field for:
+	/// such a key validates in an editor and is then dropped on the floor.
+	#[test]
+	fn schema_settings_match_the_config_type() {
+		let schema: Value = serde_json::from_str(SCHEMA_JSON).unwrap();
+		let advertised: Vec<&String> = schema["$defs"]["settings"]["properties"]
+			.as_object()
+			.expect("settings has a properties object")
+			.keys()
+			.collect();
+
+		let populated = lattice_config::Settings {
+			max_cache_size: Some(lattice_config::CacheSize::parse("1GB").unwrap()),
+			cache_dir: Some(".lattice/cache".to_string()),
+			loquacious: true,
+			version_check: true,
+		};
+		let serialized = serde_json::to_value(&populated).unwrap();
+		let actual: Vec<&String> = serialized
+			.as_object()
+			.unwrap()
+			.keys()
+			.filter(|k| !advertised.contains(k))
+			.collect();
+		assert!(
+			actual.is_empty(),
+			"settings fields missing from the schema: {actual:?}"
+		);
+
+		let orphans: Vec<&&String> = advertised
+			.iter()
+			.filter(|k| serialized.get(k.as_str()).is_none())
+			.collect();
+		assert!(
+			orphans.is_empty(),
+			"schema advertises settings the config type does not have: {orphans:?}"
+		);
+	}
+
 	#[test]
 	fn writes_schema_when_absent() {
 		let dir = tempfile::tempdir().unwrap();

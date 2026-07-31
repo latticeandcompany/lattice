@@ -7,26 +7,17 @@ order: 8
 
 # Output and logging
 
-`lattice run` prints one of two ways: a live terminal display that settles
-into a short summary, or a plain stream of `workspace:task:` lines. Which one
-you get is decided once, at the start of the run, from your terminal and your
-environment — not something you configure per project.
+`lattice run` prints one of two ways: a live terminal display that settles into
+a short summary, or a plain stream of `workspace:task:` lines. Lattice picks
+between them once, before anything prints.
 
 ## How the mode is decided
 
-Lattice picks **raw** output if any of these is true:
-
-- stdout is not a terminal (piped, redirected, or run from something that
-  isn't attached to one)
-- the `CI` environment variable is set
-- you passed `-l`/`--loquacious` (or its hidden alias `-v`/`--verbose`), or
-  `settings.loquacious` is `true` in `lattice.json`
-
-Otherwise you get **interactive** mode — the live display. This is
-`detect_mode` in `crates/lattice-output/src/lib.rs:29`, driven by
-`detect_output_mode` in `crates/lattice/src/cli.rs:131`, which checks
-`console::user_attended() && console::Term::stdout().is_term()` for the TTY
-test and `std::env::var("CI")` for the CI test.
+Lattice picks **raw** output if stdout is not a terminal, or the `CI`
+environment variable is set, or you passed `-l`/`--loquacious` (hidden alias
+`-v`/`--verbose`), or `settings.loquacious` is `true` in `lattice.json`.
+Otherwise you get **interactive** mode. `CI` counts as set whatever its value,
+including empty.
 
 ```json
 {
@@ -36,22 +27,22 @@ test and `std::env::var("CI")` for the CI test.
 }
 ```
 
-Flag and setting combine with OR: either one is enough to force raw output,
-and neither can force interactive mode back on once a real trigger (no TTY,
-or `CI`) applies. There's no flag to force interactive mode when Lattice
-would otherwise pick raw — a pipe or `CI` always wins.
+The triggers combine with OR — any one of them is enough, and none can be
+reversed. There is no flag that forces interactive mode back on once a pipe or
+`CI` applies.
 
-One case overrides an interactive pick after the fact: if the tasks you're
-running pull a `persistent: true` task into the graph, Lattice switches to
-raw even on a real terminal, because a dev server's streaming output can't be
-rendered inside the live display. See
-[Persistent tasks](/lattice/docs/persistent-tasks) for the full rule.
+One thing overrides an interactive pick after the fact: if the tasks you're
+running pull a `persistent: true` task into the graph, Lattice switches to raw
+even on a real terminal. The live display repaints in place and cannot render a
+process that streams indefinitely. See [Persistent
+tasks](/lattice/docs/persistent-tasks) for the rest of what `persistent`
+changes.
 
 ## Interactive mode
 
 On a terminal, with no `CI` and no `-l`, a run looks like this (captured from
-this repo's own `lattice run check`, with the cache cleared first — the
-teal `❖` and green `✓` are real terminal color, flattened here):
+this repo's own `lattice run check`, with the cache cleared first — the teal `❖`
+and green `✓` are real terminal color, flattened here):
 
 ```text
 ❖ lattice  check  · 8 workspaces
@@ -80,8 +71,8 @@ task finishes it settles into a static line in place of its spinner:
 ❖  7 tasks · 0 cached · 0 failed  0.34s
 ```
 
-A cache hit settles the same way, with a teal `●` instead of `✓` and the
-short cache key in place of the duration:
+A cache hit settles the same way, with a teal `●` instead of `✓` and the short
+cache key in place of the duration:
 
 ```text
 ● lattice-cache:check          cache hit [155cfd2a]
@@ -101,25 +92,19 @@ summary — `❖❖❖ FULL CACHE`, painted across the teal ramp (`teal-700` →
 ```
 
 It prints only when nothing executed: at least one task was scheduled, none
-failed, and every one of them was a hit. A run with a single miss, a failure,
-or a `persistent: true` task in the graph does not get it, and neither does a
-filter that matched no workspace — there was no work to skip. The rule is
-`is_full_cache` in `crates/lattice-output/src/lib.rs`.
+failed, and every one was a hit. A run with a single miss, a failure, a
+`persistent: true` task in the graph, or a filter that matched no workspace does
+not get it.
 
-A skipped task (a dependency of a failed task, under `--continue`) settles
-with a dim `○`; a failed one with a red `✗` and `FAILED` in place of the
-duration. Whatever a task printed while it ran is not shown live — it's
-collected and, if the task fails, dumped underneath a `✗ workspace:task
-output` header once the run reaches it. A task that succeeds never shows its
-output at all in this mode. This is the collapse-and-surface-on-failure rule:
-you see progress and a result for everything, and the actual command output
-only for what went wrong.
+A skipped task (a dependency of a failed task, under `--continue`) settles with
+a dim `○`; a failed one with a red `✗` and `FAILED` in place of the duration.
+Whatever a task printed while it ran is not shown live. It's collected and, if
+the task fails, dumped underneath a `✗ workspace:task output` header once the
+run reaches it. A task that succeeds never shows its output in this mode.
 
-The header line, the rule under it, the spinners, and the closing summary are
-all built with `indicatif::MultiProgress` in `InteractiveReporter`
-(`crates/lattice-output/src/lib.rs:613`); nothing in this mode is meant to be
-piped or grepped; it repaints in place and leaves only the settled lines and
-the summary behind once the run ends.
+The header line, the rule under it, the spinners, and the closing summary all
+repaint in place. Once the run ends, only the settled lines and the summary are
+left behind.
 
 ## Raw / CI mode
 
@@ -145,20 +130,19 @@ lattice:check: done (8.33s)
 lattice: 7 tasks, 0 cached, 0 failed, 8.41s
 ```
 
-A cache hit prints `workspace:task: cache hit [<key>]` in place of `done`; a
-skipped task prints `workspace:task: skipped (<reason>)`; a failed one prints
-`workspace:task: FAILED`. This is `CiReporter` in
-`crates/lattice-output/src/lib.rs:474`. Every line is a `println!`/`eprintln!`
-of the label plus plain text, safe to grep or feed to another tool.
+A cache hit prints `workspace:task: cache hit [<key>]` in place of `done`, and a
+failed one prints `workspace:task: FAILED`. A skipped task prints
+`workspace:task: skipped (<reason>)` only under `-l`; without it, a skipped task
+prints nothing here. Every line is the label plus plain text, safe to grep or
+feed to another tool.
 
-Without `-l`, a task's own output (what its command printed) is collapsed
-here too — you get the `running`/`done` lines but not the command's stdout or
-stderr, unless the task fails, in which case its captured lines print
-underneath, each still prefixed `workspace:task:`. `-l` turns on those lines
-for every task, not just failed ones, and adds a few trace lines Lattice
-doesn't otherwise show — `lattice: running <task> across N workspace(s)` at
-the start, and a `lattice: workspace:task: hash <key>` line per task right
-before it looks up the cache:
+Without `-l`, a task's own output is collapsed here too: you get the
+`running`/`done` lines but not the command's stdout or stderr, unless the task
+fails, in which case its captured lines print underneath, each still prefixed
+`workspace:task:`. `-l` turns those lines on for every task, and adds trace
+lines Lattice doesn't otherwise show — `lattice: running <task> across N
+workspace(s)` at the start, and a `lattice: workspace:task: hash <key>` line
+per task right before it looks up the cache:
 
 ```text
 $ lattice run check -l
@@ -185,106 +169,88 @@ That last line is the raw-mode form of interactive mode's `FULL CACHE` banner,
 under the same rule and with no color, so a piped run or a CI log can be
 grepped for it.
 
-`-l` and raw-because-not-a-terminal are the same reporter; the only
-difference `-l` makes to a piped or CI run is turning on these extra lines.
-`-l` on an actual terminal has the same effect: it forces raw mode there too
-(that's one of the three triggers above), so `-l` is also how you get this
-line-by-line stream while sitting at an interactive shell — for copying
-output, or watching a dev server's log inline instead of the live display.
+`-l` and raw-because-not-a-terminal are the same reporter; the only difference
+`-l` makes to a piped or CI run is turning on those extra lines. On a terminal,
+`-l` is also one of the mode triggers, so it's how you get this line-by-line
+stream at an interactive shell.
 
 ### Label colors
 
 On a terminal, the `workspace:task` label at the head of each line is colored,
-and every task in the run gets its own color. That's what the raw stream needs
-most: tasks run in parallel, so their lines interleave, and the color is what
-lets you follow one task down a screen of eight.
+and every task in the run gets its own color. Tasks run in parallel, so their
+lines interleave; the color is what lets you follow one task down a screen of
+eight.
 
-Colors come from `LABEL_PALETTE` (`crates/lattice-output/src/lib.rs:126`) —
-eight hues one 45° step apart around the wheel, all at the same saturation and
-lightness so no label shouts louder than its neighbors. The wheel starts at
-25° so nothing in it reads as the red a `FAILED` marker uses.
+The palette is eight hues one 45° step apart around the wheel, all at the same
+saturation and lightness. It starts at 25° so nothing in it reads as the red a
+`FAILED` marker uses.
 
-`LabelColors` (`crates/lattice-output/src/lib.rs:240`) hands them out in the
-order labels are first seen, so the first eight distinct `workspace:task`
-pairs in a run never share a color; a ninth wraps back to the first. Because
-assignment follows first-seen order and tasks start in parallel, which color a
-given task gets can differ between runs. Within one run it never changes.
+Colors are handed out in the order labels are first seen, so the first eight
+distinct `workspace:task` pairs in a run never share a color; a ninth wraps back
+to the first. Because assignment follows first-seen order and tasks start in
+parallel, which color a given task gets can differ between runs. Within one run
+it never changes.
 
-Both halves of the label count, so `web:build`, `web:test`, and `api:build`
-are three different colors. The trace lines get the same treatment: the
-`web:build` inside `lattice: web:build: hash …` carries that task's color, so
-a task's trace and its output read as one stream.
+Both halves of the label count, so `web:build`, `web:test`, and `api:build` are
+three different colors. Trace lines get the same treatment: the `web:build`
+inside `lattice: web:build: hash …` carries that task's color.
 
-Nothing else on the line is styled — the message text after the label stays
-your terminal's default, and `FAILED` is still the word `FAILED`, so nothing
-here is conveyed by color alone. Off a terminal the labels print bare and
-every line is byte-for-byte what it was before.
+Nothing else on the line is styled. The message text after the label stays your
+terminal's default and `FAILED` is still the word `FAILED`, so nothing here is
+conveyed by color alone. Off a terminal the labels print bare.
 
 ## Persistent output always streams
 
-A `persistent: true` task's own output streams live the moment it's
-produced, in both modes — dev server logs and watcher output are the reason
-the task exists, so Lattice never buffers or collapses them, even in
-interactive mode's otherwise-quiet middle. Everything else in this page's
-collapse-on-success rule is about ordinary, one-shot tasks. See
-[Persistent tasks](/lattice/docs/persistent-tasks) for what a persistent task
-changes about a run beyond its output.
+A `persistent: true` task forces the raw stream, and inside it that task's own
+output lines print the moment they're produced, with or without `-l`. The
+collapse-on-success behavior above applies to ordinary, one-shot tasks. See
+[Persistent tasks](/lattice/docs/persistent-tasks).
 
 ## Color
 
-Color depends on whether stdout is a real terminal, not on which mode you
-got. Both modes color when it is; neither does when it isn't. So an `-l` run
-at your shell has colored labels, and the same run piped into `cat`, into a
-file, or through a CI log emits no escapes at all — nothing downstream has to
-strip them.
+Color depends on whether stdout is a real terminal, not on which mode you got.
+Both modes color when it is; neither does when it isn't. An `-l` run at your
+shell has colored labels; the same run piped into `cat`, into a file, or
+through a CI log emits no escapes at all.
 
-`NO_COLOR` (any value; see <https://no-color.org/>) turns color off
-everywhere, in either mode, with no other change to the layout: the escape
-codes disappear and nothing else does. The rule is `should_enable_color` in
-`crates/lattice-output/src/lib.rs`, applied once per run by
-`apply_color_policy` after the mode is final and before anything prints —
-which is why a `persistent: true` task forcing raw mode still keeps its
-color.
+`NO_COLOR` (any value; see <https://no-color.org/>) turns color off everywhere,
+in either mode, with no other change to the layout. The color decision is made
+once per run, after the mode is final and before anything prints, which is why a
+`persistent: true` task forcing raw mode still keeps its color.
 
-What each mode spends color on is different. Interactive mode uses the teal
-accent on the header, the rosette, spinners, and cache hits, plus green
-`✓`/red `✗` on results. Raw mode colors exactly one thing: the
-`workspace:task` label at the head of every line.
+What each mode spends color on differs. Interactive mode uses the teal accent on
+the header, the rosette, spinners, and cache hits, plus green `✓`/red `✗` on
+results. Raw mode colors exactly one thing: the `workspace:task` label at the
+head of every line.
 
 ## stdout versus stderr
 
-This is what matters if you're piping a run into something else. In raw
-mode, `CiReporter` (`crates/lattice-output/src/lib.rs:474`) sends:
+In raw mode the streams split like this:
 
-- `running`, `cache hit`, `done`, `skipped`, and the final summary line to
-  **stdout**
-- `FAILED`, `warn` lines, and a task's own stderr output to **stderr**
-- a task's own stdout output to stdout, its stderr output to stderr — each
-  line keeps the stream it was originally written to, including when it's
-  replayed later because the task failed
+| Line | Stream |
+| --- | --- |
+| `running`, `cache hit`, `done`, final summary | stdout |
+| `skipped` and `note` trace lines (both `-l` only) | stdout |
+| `FAILED`, `warn` lines | stderr |
+| A task's own output | whichever stream the task wrote it to, including on a later replay after failure |
 
-So `lattice run build 2>/dev/null` still shows you every task's progress and
-its stdout output, and only drops warnings, `FAILED` markers, and stderr
-output. In interactive mode, the equivalent split exists but matters less in
-practice — the live display itself goes to stdout via
-`indicatif::MultiProgress`, and failure output is written with `eprintln!`
-through `mp.suspend`, so redirecting stdout away still leaves you the
-failure dump on the terminal.
+So `lattice run build 2>/dev/null` still shows every task's progress and its
+stdout output, and drops only warnings, `FAILED` markers, and stderr output. In
+interactive mode the live display goes to stdout while failure output goes to
+stderr, so redirecting stdout away still leaves the failure dump on the terminal.
 
 ## Trace lines (`note`/`warn`)
 
-Two categories of line exist outside the per-task events above. `note`
-carries hashing/cache/toolchain trace detail and is shown only when
-loquacious — silently dropped in raw mode without `-l`, and shown dim in
-interactive mode regardless (the `hash <key>` lines above are `note` calls).
-`warn` always prints, in both modes, prefixed `lattice: warning:` in raw
-mode and with a yellow `warn` label in interactive mode.
+Two categories of line exist outside the per-task events above. `note` carries
+hashing, cache, and toolchain trace detail; it is dropped silently in raw mode
+without `-l`, and shown dim in interactive mode regardless (the `hash <key>`
+lines above are `note` lines). `warn` always prints in both modes, prefixed
+`lattice: warning:` in raw mode and with a yellow `warn` label in interactive
+mode.
 
 ## Related pages
 
-- [Continuous integration](/lattice/docs/continuous-integration) covers
-  running Lattice in CI specifically — where `CI` gets set, and what a
-  greppable log buys you there.
-- [Persistent tasks](/lattice/docs/persistent-tasks) covers the forcing rule
-  in full: what pulls a task into "persistent", and what else changes about
-  a run beyond its output.
+- [Continuous integration](/lattice/docs/continuous-integration) — running
+  Lattice on a build machine.
+- [Persistent tasks](/lattice/docs/persistent-tasks) — what pulls a run into
+  raw mode, and what else `persistent` changes.

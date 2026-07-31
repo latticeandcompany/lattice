@@ -795,6 +795,15 @@ t_file "$CDIR/custom-cache" "settings.cacheDir is honored"
 lat "$CDIR" prune --max-size 0B ; t_ok "prune honors custom cacheDir"
 t_has "prune reports removal" "removed"
 
+# A retired setting is not a parse error: `logging` used to validate and do
+# nothing, and a config still carrying it has to keep loading.
+cat > "$CDIR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
+  "tasks": { "build": { "outputs": ["dist/**"] } },
+  "settings": { "cacheDir": "custom-cache", "logging": "debug" } }
+JSON
+lat "$CDIR" run build --no-cache ; t_ok "a config carrying the retired settings.logging still loads"
+
 # Prune on the production cache.
 lat "$PROD" run build --filter core ; t_ok "re-prime prod cache for prune test"
 lat "$PROD" prune --max-size 0B ; t_ok "prune --max-size 0B exits 0"

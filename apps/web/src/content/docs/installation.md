@@ -7,9 +7,8 @@ order: 2
 
 # Installation
 
-Lattice ships as a single binary. Installing it writes files only inside the
-repo you install it into — a `.lattice/bin/` directory holds the binary, and
-nothing else on the machine changes.
+Lattice ships as a single binary. The install script puts it in `.lattice/bin/`
+inside the repo you install it into.
 
 ## Platforms
 
@@ -27,12 +26,10 @@ The install script and the published release archives cover:
 aarch64 Linux is published only for glibc; an aarch64-musl host has no release
 asset and needs a source build (see below).
 
-The install script itself needs a POSIX shell, so on Windows run it inside
-WSL2 — under WSL2, `uname` reports Linux and the script installs the matching
-Linux archive. Outside WSL2, on native Windows, there is no scripted
-installer: download the `x86_64-pc-windows-msvc` archive from the release page
-by hand, extract `lattice.exe`, and put it wherever you keep other command-line
-tools on `PATH`.
+The install script needs a POSIX shell. On Windows, run it inside WSL2, where
+`uname` reports Linux and the script installs the matching Linux archive. Native
+Windows has no scripted installer: download the `x86_64-pc-windows-msvc` archive
+from the release page, extract `lattice.exe`, and put it on `PATH`.
 
 ## Install with the script
 
@@ -45,9 +42,7 @@ curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
 This downloads the archive for your platform, verifies its SHA-256 against the
 release's published checksums file, and refuses to install on a mismatch. The
 binary lands at `.lattice/bin/lattice-<version>`, with `.lattice/bin/lattice`
-symlinked to it — nothing is written outside that directory, and no shell
-profile is sourced by the install itself beyond the `PATH` line described
-below.
+symlinked to it.
 
 Which version it installs, in order:
 
@@ -76,14 +71,14 @@ Without it on `PATH`, invoke the binary by its relative path instead:
 ./.lattice/bin/lattice run build
 ```
 
-If `.lattice/bin/` isn't already in the repo's `.gitignore`, the script adds
-it — the binaries there are machine-local, never committed.
+If `.lattice/bin/` isn't already in the repo's `.gitignore`, the script adds it.
+The binaries there are machine-local.
 
-Once a repo's `lattice.json` pins a `latticeVersion`, every later invocation
-of the installed binary reads that pin and switches to it if it differs, so a
-branch that bumps the pin takes effect on the next command with no
-re-install step. See [Upgrading](/lattice/docs/upgrading) for how pinning and
-that switch work.
+Once a repo's `lattice.json` pins a `latticeVersion`, every later invocation of
+the installed binary reads that pin and switches to it if it differs, so a
+branch that bumps the pin takes effect on the next command with no re-install
+step. See [Upgrading](/lattice/docs/upgrading) for how pinning and that switch
+work.
 
 ## Building from source
 
@@ -103,9 +98,9 @@ cd lattice
 cargo build --release
 ```
 
-The binary is at `target/release/lattice`. A binary built this way is never
-touched by the version-pin switch described above — that only ever replaces
-files it put in a repo's own `.lattice/bin/`.
+The binary is at `target/release/lattice`. The version-pin switch described
+above never touches a binary built this way; it only replaces files it put in a
+repo's own `.lattice/bin/`.
 
 ## Verifying the install
 
@@ -159,9 +154,9 @@ lattice completions powershell >> $PROFILE
 echo 'eval (lattice completions elvish | slurp)' >> ~/.config/elvish/rc.elv
 ```
 
-Regenerate the script after every upgrade: completions are generated from the
-exact `clap` command tree of the binary that produced them, so an out-of-date
-script can omit flags a newer `lattice` added.
+Regenerate the script after every upgrade. Completions come from the command
+tree of the binary that produced them, so an out-of-date script omits flags a
+newer `lattice` added.
 
 ## What's on disk, and uninstalling
 
@@ -176,24 +171,21 @@ root:
   schema.json  the lattice.json JSON Schema (committed)
 ```
 
-The only thing that can land outside the repo is the `PATH` line the install
-script adds to a shell config, and only when `--no-modify-path` /
-`LATTICE_NO_PATH` isn't used.
+The one file outside the repo is the shell config the install script appends
+its `PATH` line to, and only when `--no-modify-path` / `LATTICE_NO_PATH` isn't
+used.
 
-To remove everything the install script and every later `lattice` invocation
-wrote:
+To remove every binary, cached result, and provisioned toolchain:
 
 ```sh
 rm -rf .lattice
 ```
 
-That deletes every installed binary, the cache, and every provisioned
-toolchain. If the install script added a `PATH` line to a shell config, delete
-that line by hand — the script names the file it edited in its own output, so
-that's the one to check.
+Delete the `PATH` line by hand if the script added one. It names the file it
+edited in its own output.
 
 ## Next
 
-Install Lattice, then follow [Getting started](/lattice/docs/getting-started)
-to write a `lattice.json` and run your first cached task. To move a repo
-between versions afterward, see [Upgrading](/lattice/docs/upgrading).
+[Getting started](/lattice/docs/getting-started) writes a `lattice.json` and
+runs a first cached task. To move a repo between versions, see
+[Upgrading](/lattice/docs/upgrading).

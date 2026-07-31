@@ -7,34 +7,46 @@ order: 9
 
 # Changelog
 
-This page curates the user-facing history from the repo's own `CHANGELOG.md`,
-newest first. That file is the source of record; this page drops the entries
-that only matter to someone working inside the repo and links out to the
-relevant docs where they exist.
+The user-facing history from the repo's own `CHANGELOG.md`, newest first. That
+file is the source of record; this page drops the entries that only matter
+inside the repo and links out to the relevant docs.
 
-Lattice is currently at `1.0.0-beta-2` — a pre-release build; there is no
-`1.0.0` yet. Versions follow semver: a major bump means a breaking change to
-the `lattice.json` schema or the CLI surface. A version bump is also a full
-cache miss, because the running version is one of the inputs hashed into every
-task's cache key, so the first run after an upgrade re-runs everything. See
+Lattice is currently at `1.0.0-beta-2`, a pre-release build; there is no `1.0.0`
+yet. Versions follow semver: a major bump means a breaking change to the
+`lattice.json` schema or the CLI surface. A version bump is also a full cache
+miss, because the running version is one of the inputs hashed into every task's
+cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
+
+## `settings.logging` is gone — 2026-07-30
+
+The field validated against the bundled schema and nothing in the tree read it.
+It is removed from the config type and from the schema. Output verbosity is
+`-l`/`--loquacious`, `settings.loquacious`, and `CI`; see [Output and
+logging](/lattice/docs/output-modes).
+
+A `lattice.json` still carrying `logging` keeps loading, since an unrecognized
+setting is ignored rather than rejected. Your editor will flag the key once
+`.lattice/schema.json` is current. That file is only written when missing, so
+delete it and run any `lattice` command to refresh it, then delete the setting.
+See [Configuration](/lattice/docs/configuration).
 
 ## Flags for what used to be environment variables — 2026-07-29
 
 Four settings that could only be given through the environment are now flags.
 `--theme light|dark` picks the splash art's teal shade, and `--release-base-url`
-sets where release archives are downloaded from — both global, so they parse on
-`lattice` and on every subcommand. `--release-latest-url` and
-`--release-list-url` sit on `lattice upgrade`, which is the only command that
-resolves `latest`.
+sets where release archives are downloaded from. Both are global, so they parse
+on `lattice` and on every subcommand. `--release-latest-url` and
+`--release-list-url` sit on `lattice upgrade`, the only command that resolves
+`latest`.
 
 The matching `LATTICE_*` variables all still work; the flag wins where both are
-given. Two things stay variables on purpose: `LATTICE_SWITCHED_FROM`, which is
-read by a *different build* of Lattice after a version switch and so cannot be a
-flag that build might not know, and `LATTICE_TOOLCHAIN_DIR`, which Lattice hands
-to your `installCmd` rather than reads. See
-[Environment variables](/lattice/docs/environment-variables) and the
-[CLI reference](/lattice/docs/cli).
+given. `LATTICE_SWITCHED_FROM` stays a variable, because it is read by a
+*different build* of Lattice after a version switch, which may not know the
+flag. `LATTICE_TOOLCHAIN_DIR` also stays one: Lattice hands it to your
+`installCmd` rather than reading it. See [Environment
+variables](/lattice/docs/environment-variables) and the [CLI
+reference](/lattice/docs/cli).
 
 ## One color per task in the plain stream — 2026-07-29
 
@@ -46,16 +58,14 @@ run never share one.
 
 Color now follows the terminal rather than the mode, so `-l` at a shell paints
 labels while the same run piped, redirected, or under `CI` emits nothing to
-strip. `NO_COLOR` still turns it all off. See
-[Output and logging](/lattice/docs/output-modes).
+strip. `NO_COLOR` still turns it all off. See [Output and
+logging](/lattice/docs/output-modes).
 
 ## A run that executes nothing says so — 2026-07-29
 
 A run where every task came back from cache now ends with a `FULL CACHE` line
-under the summary, so "nothing ran" is one thing to look at instead of a count
-to compare against another count. Plain output carries the same line without
-color, greppable in a CI log. See
-[Output and logging](/lattice/docs/output-modes) and
+under the summary. Plain output carries the same line without color, greppable in
+a CI log. See [Output and logging](/lattice/docs/output-modes) and
 [Caching](/lattice/docs/caching).
 
 ## The toolchain table, filled in — 2026-07-29
@@ -65,24 +75,23 @@ runtimes as well as the roles they already had, and the gaps between the driver
 table and the engine list are closed. See [Toolchains](/lattice/docs/toolchains)
 and [Driver detection](/lattice/docs/drivers).
 
-### Four tools that were only half-known
+### Four tools that were only half-wired
 - `pod` had a driver row but no engine rule and no dependency installer; `pip`
   had an installer no driver could reach; `nuget` and `kotlin` were missing
   outright. All four are now drivers, well-known engines, and known to
   `lattice setup`
 - `pip` and `kotlin` have no fingerprint on purpose. A `requirements.txt` is
   read by pip, uv, and pip-tools alike, and a Kotlin project is driven by gradle
-  or maven, so both are selected by declaring them in `engines` rather than by
-  guessing from a file that names no tool
+  or maven, so both are selected by declaring them in `engines`
 - `nuget` fingerprints only the legacy `packages.config` layout. A
   `packages.lock.json` counts toward cache keys but is not driver evidence: an
   SDK-style project can carry one and still be a `dotnet` workspace
 
-### One table for engines instead of two that disagreed
+### One table for engines instead of two
 - `uv`, `poetry`, `just`, `turbo`, `nx`, `swift`, `dart`, `composer`, `mix`,
   `stack`, `cabal`, `pdm`, and `pipenv` each had a built-in version command but
   were rejected in the string form, so `"engines": { "uv": ">=0.5" }` failed to
-  load for no good reason. Every built-in driver is now a well-known engine
+  load. Every built-in driver is now a well-known engine
 - `"python3"` was version-checked by running `python --version`, which on many
   machines is a different interpreter. It runs `python3 --version`
 
@@ -106,8 +115,8 @@ and [Driver detection](/lattice/docs/drivers).
 
 ## Installing, upgrading, and running the version a repo pins — 2026-07-28
 
-Lattice can now be installed without a Rust toolchain, and a repo's
-`latticeVersion` is enforced rather than merely announced. See
+Lattice can be installed without a Rust toolchain, and a repo's
+`latticeVersion` is enforced rather than announced. See
 [Installation](/lattice/docs/installation) and
 [Upgrading](/lattice/docs/upgrading).
 
@@ -120,9 +129,9 @@ Lattice can now be installed without a Rust toolchain, and a repo's
 - Version resolution, in order: `$LATTICE_VERSION`, then `latticeVersion` from
   `./lattice.json`, then the newest release when the directory has no config
   at all. A `lattice.json` that exists but pins nothing is an error
-- It fails loudly, before installing anything, on an unsupported platform, a
-  missing pin, a missing release asset, a missing checksums entry, or a digest
-  that does not match
+- It fails before installing anything on an unsupported platform, a missing
+  pin, a missing release asset, a missing checksums entry, or a digest that
+  does not match
 - `.lattice/bin/` is now one of the `.gitignore` lines `lattice init` maintains
 
 ### Every invocation runs the version the repo pins
@@ -140,8 +149,7 @@ Lattice can now be installed without a Rust toolchain, and a repo's
   binary that was invoked, and a completion script has to be the only thing
   on stdout
 - A pinned version that cannot be installed is a hard failure naming the
-  version and the way past it, rather than silently running a build the repo
-  did not ask for
+  version and the way past it
 
 ### `lattice upgrade <version|latest>`
 - Installs the version, points `.lattice/bin/lattice` at it, and rewrites
@@ -150,8 +158,7 @@ Lattice can now be installed without a Rust toolchain, and a repo's
 - The config is edited as text, so key order, indentation and the rest of the
   file survive a bump
 - Re-running for a version already pinned and installed reports that and
-  repoints the symlink — the one case where doing nothing would leave the
-  repo on the wrong binary
+  repoints the symlink
 
 ### Releases are published for six targets
 - macOS x86_64/aarch64, Linux x86_64 (gnu and musl), Linux aarch64, and
@@ -165,16 +172,16 @@ Groundwork for the first tagged release: statements in the README, the docs,
 or a manifest that the code contradicted.
 
 - The minimum Rust version is `1.86`, not the `1.75` every doc previously
-  claimed — the real floor, once the lockfile is resolved against each
+  claimed. The real floor, once the lockfile is resolved against each
   dependency's own requirement, comes from `clap`, `sha2`, `indexmap`, and the
   ICU crates reached through `jsonschema`
 - `lattice version --json` now reports a real target triple
   (`aarch64-apple-darwin`) in its `target` field instead of a bare
   architecture (`aarch64`); the bare architecture moved to its own `arch`
   field rather than being dropped. See [CLI reference](/lattice/docs/cli)
-- Windows is not supported: `lattice-workspace`'s toolchain probe hardcodes a
-  Unix shell and a Unix `PATH` separator, so engine version checks and
-  toolchain provisioning cannot work there. The docs now say macOS and Linux,
+- Windows is not supported: the toolchain probe hardcodes a Unix shell and a
+  Unix `PATH` separator, so engine version checks and toolchain provisioning
+  cannot work there. The docs now say macOS and Linux,
   and point Windows users at WSL2. See
   [Installation](/lattice/docs/installation)
 
@@ -189,9 +196,9 @@ or a manifest that the code contradicted.
 ## Nested repos: docs, worked example, and tests — 2026-07-28
 
 - A subtree that already has its own task runner can be declared as a manual
-  workspace whose `scripts` shell out to that runner — ordering, `dependsOn`,
-  caching as one opaque unit, and validation all fall out of the existing
-  workspace mechanism, with no separate feature needed
+  workspace whose `scripts` shell out to that runner. Ordering, `dependsOn`,
+  caching as one opaque unit, and validation fall out of the existing
+  workspace mechanism
 - Two limitations: a manual workspace must declare any task invoked directly,
   and a downstream workspace must not copy an upstream artifact at build
   time, because a cache key covers only the inputs its own workspace declares
@@ -239,7 +246,7 @@ or a manifest that the code contradicted.
 - `run`, `setup`, and `prune` write `.lattice/schema.json` when it is
   missing, as happens with a cleared cache directory or a clone where it was
   never committed, so an editor's JSON language server can resolve the
-  config's `$schema`. An existing copy is left untouched to avoid churn. See
+  config's `$schema`. An existing copy is left untouched. See
   [Task graph](/lattice/docs/task-graph) and [CLI reference](/lattice/docs/cli)
 
 ## The documented install command installed the wrong software — 2026-07-27

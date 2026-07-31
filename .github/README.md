@@ -57,25 +57,28 @@ lattice run build
 `lattice init` asks what the repo needs Lattice for, which directories are workspaces, and which tool versions to pin, then writes `lattice.json` alongside its JSON schema. `lattice init --yes` skips the questions and writes a minimal skeleton. Then run a task:
 
 ```
-worker:build: running
 web:build: running
-api:build: running
 utils:build: running
+api:build: running
+utils:build: done (0.09s)
+worker:build: running
 worker:build: done (0.01s)
-api:build: done (0.02s)
-web:build: done (0.40s)
-utils:build: done (0.40s)
-lattice: 4 tasks, 0 cached, 0 failed, 0.52s
+web:build: done (1.07s)
+api:build: done (1.07s)
+lattice: 4 tasks, 0 cached, 0 failed, 1.43s
 ```
+
+`worker` starts after `utils` because it declares `"dependsOn": ["utils"]` — a Go service waiting on a Python library. Everything else has no edges, so it all starts at once.
 
 Run it again. Nothing changed, so nothing runs:
 
 ```
-worker:build: cache hit [bff6d3d0]
-utils:build: cache hit [795cc88d]
-web:build: cache hit [4d4c6d35]
-api:build: cache hit [e5f9de2e]
-lattice: 4 tasks, 4 cached, 0 failed, 0.09s
+web:build: cache hit [839dbe99]
+utils:build: cache hit [2328e123]
+worker:build: cache hit [ec52d859]
+api:build: cache hit [ca9cf431]
+lattice: 4 tasks, 4 cached, 0 failed, 0.07s
+lattice: full cache — nothing to run
 ```
 
 <sub>Captured from <code>examples/polyglot</code> in this repository — a repo spanning Node, Python and Go.</sub>
@@ -107,7 +110,7 @@ One file at the root. Every command is visible, and you can run any of them by h
 
 `web` and `api` are detected: Lattice reads the lockfile or declaration file already in the directory and runs that tool. `utils` opts out with `auto: false` and declares its commands outright. `^build` means "build my dependencies first."
 
-## Features
+## How it works
 
 Every task result is keyed by a hash over its command, inputs, environment and lockfiles, so changing one file rebuilds only what depends on it. The repo is one graph, and independent tasks run in parallel.
 

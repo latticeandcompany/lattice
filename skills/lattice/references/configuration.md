@@ -142,7 +142,6 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
 | `cacheDir` | `string` | no | `".lattice/cache"` | Local cache directory, relative to the repo root. |
 | `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-l`. |
 | `versionCheck` | `boolean` | no | `true` | `false` disables the `latticeVersion` drift check and handover entirely. |
-| `logging` | `string` | no | none | Logging verbosity mode. |
 
 ## Validation summary
 

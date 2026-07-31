@@ -19,6 +19,7 @@
       "name": "worker",
       "path": "services/worker",
       "auto": false,
+      "dependsOn": ["utils"],
       "scripts": {
         "build": "sh -c 'if command -v go >/dev/null; then go build ./...; else echo \"[worker] go not installed, skipping native build\"; fi'",
         "test": "sh -c 'if command -v go >/dev/null; then go test ./...; else echo \"[worker] go not installed, skipping tests\"; fi'",

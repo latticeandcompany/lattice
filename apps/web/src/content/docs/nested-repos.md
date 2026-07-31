@@ -7,30 +7,28 @@ order: 3
 
 # Nested repos
 
-Some subtrees in a monorepo are not a single project. They are a project *of*
-projects, already wired together by a task runner of their own: a JS monorepo
-with its own task graph, a Gradle multi-module build, a directory driven by a
-`Makefile`. You do not need to flatten that subtree into individual Lattice
-workspaces to bring it into the graph. Declare it as one workspace whose
-`scripts` shell out to the runner it already has, and it becomes a single node
-that Lattice schedules and caches like any other.
+Some subtrees are a project of projects, already wired together by a task runner
+of their own — a JS monorepo with its own task graph, or a Gradle multi-module
+build. You do not have to flatten one into individual Lattice workspaces to bring
+it into the graph. Declare it as a single workspace whose `scripts` shell out to
+the runner it already has, and it becomes one node Lattice schedules and caches
+like any other.
 
-This page walks through `examples/nested-repo`, a small repo with exactly this
-shape, and the commands below are real output from running it.
+This page walks through `examples/nested-repo`; the output below is from running
+it.
 
 ## The shape
 
 ```text
-lattice.json          two workspaces: frontend, api
-frontend/             an inner monorepo with its own task runner and lockfile
+lattice.json           two workspaces: frontend, api
+frontend/              an inner monorepo with its own task runner and lockfile
   packages/ui/         built first (inner dependency)
   packages/site/       depends on ui, emits dist/bundle.js
-services/api/          a plain workspace; serves site's bundle at run time
+services/api/          reads site's bundle at run time
 ```
 
-`frontend` wraps a repo with its own task runner and its own inner dependency
-graph (`ui` before `site`). `services/api` is an ordinary workspace that reads
-`frontend`'s output. The root `lattice.json`:
+`frontend` wraps a repo with its own inner dependency graph (`ui` before `site`).
+`api` reads `frontend`'s output. The root `lattice.json`:
 
 ```json
 {
@@ -88,36 +86,35 @@ graph (`ui` before `site`). `services/api` is an ordinary workspace that reads
 
 Nothing here names the inner packages, and the root declares no `engines`: the
 runner Lattice invokes for `frontend:build` comes from that repo's own
-`node_modules`, installed the ordinary way for that ecosystem
-(`cd frontend && npm install`). See
-[Workspaces](/lattice/docs/workspaces) for `path`, `dependsOn`, and `scripts` in
-general; this page covers the one pattern where a workspace's script hands off
-to a whole other build.
+`node_modules`, installed the ordinary way for its ecosystem
+(`cd frontend && npm install`). See [Workspaces](/lattice/docs/workspaces) for
+`path`, `dependsOn`, and `scripts` in general.
 
-## `auto: false`: full manual control
+## `auto: false` on the wrapper
 
-Both workspaces set `"auto": false`. On an `auto` workspace, Lattice runs the
-evidence ladder to detect a driver and infers commands from it; on a manual
-workspace it skips detection entirely and runs only the commands you wrote in
-`scripts`. For a wrapped subtree this is not optional: the inner directory may
-contain a lockfile or config file Lattice would otherwise use to infer a
-command for the *outer* language, and that guess would be wrong — the real
-entry point is "invoke the inner runner," not "run this package's own script."
-`auto: false` says exactly that: no inference, only what you declared.
+Both workspaces set `"auto": false`. An `auto` workspace runs the evidence ladder
+and infers commands from the driver it detects; a manual workspace skips detection
+and runs only what you wrote in `scripts`.
 
-A manual workspace must declare a script for any task you run directly against
-it. `frontend` has no `serve` script, because there is nothing for the frontend
-to serve. Running `serve` scoped to it fails to resolve; running it repo-wide
-(or filtered to `api`) works, because tasks that are only pulled in as
-dependencies are skipped where a workspace doesn't apply.
+A wrapped subtree wants the manual form, because the handoff command is specific:
+which runner binary, invoked from where, with which flags. In this example the
+script calls `node_modules/.bin/turbo` rather than whatever `turbo` resolves to on
+`PATH`, and prints an install hint when that binary is missing. Inference has no
+way to produce that.
 
-## `inputs` and `outputs`: still yours to declare
+A manual workspace needs a script for any task you run directly against it.
+`frontend` has no `serve` script, since it has nothing to serve. Running `serve`
+scoped to `frontend` fails to resolve; running it repo-wide, or filtered to `api`,
+works — a task pulled in only as a dependency is skipped where a workspace doesn't
+apply.
 
-The inner runner already tracks its own file dependencies and has its own
-cache. That does not remove the need to declare `inputs` and `outputs` in
-`lattice.json` — it changes what they need to cover. Lattice hashes `frontend`
-as one opaque unit; it has no visibility into `ui` or `site` individually, so
-its `inputs` glob has to be broad enough to catch a change anywhere inside:
+## `inputs` and `outputs` are still yours to declare
+
+The inner runner tracks its own file dependencies and keeps its own cache. That
+changes what Lattice's `inputs` and `outputs` need to cover, not whether you
+declare them. Lattice hashes `frontend` as one opaque unit with no visibility into
+`ui` or `site` individually, so its `inputs` glob has to catch a change anywhere
+inside:
 
 ```json
 {
@@ -132,44 +129,38 @@ its `inputs` glob has to be broad enough to catch a change anywhere inside:
 }
 ```
 
-`**/*` is deliberately wide, because the wrapped repo owns its own internal
-layout and Lattice is not going to enumerate it. The precision moves to
-`ignore`, and three things have to stay out of the hash:
+`**/*` is wide because the wrapped repo owns its internal layout. The precision
+lives in `ignore`:
 
-- `**/node_modules/**` — the installed tree; the package manager's lockfile is
-  hashed instead (see [Caching](/lattice/docs/caching))
-- `**/.turbo/**` — the inner runner's own cache directory, which changes on
-  every run regardless of source changes and would make every build a miss
-- `**/dist/**` — build output; an output glob left inside `inputs` would feed
-  yesterday's build into today's cache key
+| Ignored | Why |
+| --- | --- |
+| `**/node_modules/**` | The installed tree. The package manager's lockfile is hashed instead — see [Caching](/lattice/docs/caching). |
+| `**/.turbo/**` | The inner runner's own cache directory. It changes on every run regardless of source, making every build a miss. |
+| `**/dist/**` | Build output. An output glob left inside `inputs` feeds yesterday's build into today's cache key. |
 
-`outputs` still has to name every artifact directory the wrapped repo
-produces, at every level (`dist/**` for `api`, `packages/*/dist/**` for each
-inner package) — Lattice restores exactly those paths on a hit, and no others.
+`outputs` has to name every artifact directory the wrapped repo produces, at every
+level — `dist/**` for `api`, `packages/*/dist/**` for each inner package. Lattice
+restores exactly those paths on a hit and no others.
 
 ## Two caches, not one
 
-Wrapping a subtree does not disable its inner cache. It adds a second one
-above it, and each skips a different kind of repeated work:
+Wrapping a subtree does not disable its inner cache; it adds a second one above
+it. Lattice's cache covers `frontend` as a whole, and a hit restores every inner
+package's `dist/` in one step without invoking the inner runner at all. The inner
+cache covers individual packages, and only comes into play on a Lattice miss, when
+`frontend`'s hash has changed and Lattice hands the whole workspace back to its
+runner; from there the inner runner decides package by package what reruns.
 
-- **Lattice's cache** covers `frontend` as a whole. A hit restores every inner
-  package's `dist/` in one step and skips invoking the inner runner at all.
-- **The inner runner's cache** covers individual inner packages, and only runs
-  at all on a Lattice miss — when `frontend`'s hash has changed and Lattice
-  hands the whole workspace back to it. From there the inner runner still
-  decides, package by package, what actually needs to rerun.
-
-So a change inside `frontend` costs one inner rebuild the first time (Lattice
-miss, inner cache narrows it to the package that changed) and zero the second
-time (Lattice hit, the inner runner never runs). Neither cache makes the other
-redundant: Lattice's is coarse and language-agnostic, which is why the rest of
-the repo can treat `frontend` as one node; the inner one is fine-grained and
+So the first build after a change inside `frontend` costs one inner rebuild,
+narrowed by the inner cache to the package that changed, and the second costs
+nothing. Lattice's cache is coarse and language-agnostic, which is what lets the
+rest of the repo treat `frontend` as one node; the inner one is fine-grained and
 specific to that ecosystem.
 
 ## Running it
 
-With the inner repo's dependencies installed once (`cd frontend && npm
-install`), from the repo root:
+With the inner repo's dependencies installed once (`cd frontend && npm install`),
+from the repo root:
 
 ```sh
 $ lattice run build
@@ -180,8 +171,8 @@ api:build: done (0.01s)
 lattice: 2 tasks, 0 cached, 0 failed, 0.68s
 ```
 
-Run it again with nothing changed and both workspaces come back from cache
-without the inner runner executing:
+Again with nothing changed, and both workspaces come back from cache without the
+inner runner executing:
 
 ```sh
 $ lattice run build
@@ -190,9 +181,9 @@ api:build: cache hit [11b8de60]
 lattice: 2 tasks, 2 cached, 0 failed, 0.01s
 ```
 
-Edit a file anywhere under `frontend` (say, `packages/ui/src/index.js`) and
-only `frontend` misses; `api` still depends on `frontend` completing, but its
-own inputs haven't changed:
+Edit a file anywhere under `frontend` — say `packages/ui/src/index.js` — and only
+`frontend` misses. `api` still waits on `frontend` completing, but its own inputs
+haven't changed:
 
 ```sh
 $ lattice run build
@@ -202,8 +193,8 @@ api:build: cache hit [11b8de60]
 lattice: 2 tasks, 1 cached, 0 failed, 0.52s
 ```
 
-`--dry-run` shows the resolved commands without running them — useful for
-confirming the handoff script is right before it executes:
+`--dry-run` shows the resolved commands without running them, which is how to
+check the handoff script before it executes:
 
 ```sh
 $ lattice run build --dry-run
@@ -212,9 +203,8 @@ $ lattice run build --dry-run
   → api:build  mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh && echo 'api built'
 ```
 
-`serve` is filtered to `api`, since `frontend` has nothing to serve
-(`--filter` is covered in full in
-[Selecting what runs](/lattice/docs/filtering)):
+`serve` is filtered to `api`, since `frontend` has nothing to serve (`--filter` is
+covered in [Selecting what runs](/lattice/docs/filtering)):
 
 ```sh
 $ lattice run serve --filter api -l
@@ -229,15 +219,14 @@ lattice: 2 tasks, 1 cached, 0 failed, 0.01s
 
 ## Don't copy an upstream artifact at build time
 
-A workspace's cache key covers only its own declared `inputs`; it does not
-fold in the keys of the workspaces it depends on, and an `inputs` glob cannot
-reach outside its own workspace directory. So if `api:build` copied
-`frontend`'s bundle into its own `dist/`, a `frontend`-only edit would rebuild
-`frontend` and still hand `api` a cache hit — serving a stale copy.
+A workspace's cache key covers only its own declared `inputs`. It does not fold in
+the keys of the workspaces it depends on, and an `inputs` glob cannot reach outside
+its own workspace directory. If `api:build` copied `frontend`'s bundle into its own
+`dist/`, a `frontend`-only edit would rebuild `frontend` and still hand `api` a
+cache hit, serving a stale copy.
 
-That is why, in this example, `api` builds only from its own `src/` and reads
-`frontend`'s bundle at run time instead, in the uncached `serve` task
-(`services/api/src/serve.sh`):
+So `api` builds only from its own `src/` and reads `frontend`'s bundle at run time,
+in the uncached `serve` task (`services/api/src/serve.sh`):
 
 ```sh
 #!/bin/sh
@@ -248,29 +237,25 @@ echo "api serving:"
 cat ../../frontend/packages/site/dist/bundle.js
 ```
 
-If a downstream workspace genuinely needs a copy of an upstream build
-artifact at build time, that artifact belongs in the downstream workspace's
-own `inputs`, or the copy step has to happen somewhere Lattice's cache can see
-it — otherwise the two caches disagree about what's current and the second one
-wins silently.
+When a downstream workspace genuinely needs a copy of an upstream artifact at
+build time, that artifact belongs in the downstream workspace's own `inputs`, or
+the copy has to happen somewhere Lattice's cache can see it. Otherwise the two
+caches disagree about what's current and the stale one wins without a warning.
 
 ## When to wrap, when to flatten
 
 Wrap the subtree as one workspace when:
 
-- it already has its own task runner, lockfile, and internal dependency
-  graph, and that graph is not something the rest of the repo needs to see or
-  schedule around
-- the packages inside it are only ever built or tested together, never
-  targeted individually from outside the subtree
+- it has its own task runner, lockfile, and internal dependency graph, and the
+  rest of the repo does not need to see or schedule that graph
+- its packages are only ever built or tested together, never targeted individually
+  from outside the subtree
 - adopting it incrementally matters more than exposing its internals — see
   [Adopting Lattice](/lattice/docs/adopting-lattice)
 
-Flatten it into individual workspaces instead when another workspace in the
-repo needs to depend on *one specific inner package* rather than the whole
-subtree, when you want Lattice's cache to narrow a rebuild down to the single
-inner package that changed instead of the whole wrapped unit, or when the
-inner runner would otherwise become the only thing standing between you and
-running a single package's tests directly. Flattening costs you the one-line
-handoff; it buys you per-package caching and dependency edges at Lattice's own
-level of resolution.
+Flatten it into individual workspaces when another workspace needs to depend on
+one specific inner package, when you want Lattice's cache to narrow a rebuild to
+the single inner package that changed, or when the inner runner is the only thing
+standing between you and running one package's tests directly. Flattening trades
+the one-line handoff for per-package caching and dependency edges at Lattice's own
+resolution.

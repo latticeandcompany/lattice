@@ -7,21 +7,17 @@ order: 2
 
 # CLI reference
 
-This is the complete `lattice` command surface: every subcommand, every flag,
-every default. It is generated against the actual clap definitions in
-`crates/lattice/src/cli.rs` and `crates/lattice/src/commands/`, and confirmed
-against `lattice <command> --help`. If a flag here ever disagrees with
-`--help`, trust `--help` and file it as a docs bug.
+Every subcommand, every flag, every default. Where this page and `lattice
+<command> --help` disagree, `--help` is right and this page is a docs bug.
 
 For *why* a flag behaves the way it does, see [Selecting what
 runs](/lattice/docs/filtering), [Caching](/lattice/docs/caching), [Engines and
 provisioning](/lattice/docs/engines), and [Upgrading](/lattice/docs/upgrading).
-This page stays scannable — behavior lives on those pages.
 
 ## Bare `lattice`
 
 Running `lattice` with no subcommand prints the same branded splash as
-`lattice version` — an ASCII mark, the version line, and the tagline — then a
+`lattice version` (an ASCII mark, the version line, and the tagline), then a
 line pointing at `--help`. It exits `0`; there is no "missing subcommand"
 error.
 
@@ -128,8 +124,8 @@ lattice init [OPTIONS]
 Scaffolds a `lattice.json` in the current directory, along with a committed
 `.lattice/schema.json` and the `.gitignore` lines that keep the cache and
 provisioned toolchains out of version control. On an interactive terminal
-with neither `--yes` nor a piped stdin, it prompts for workspaces and engines
-instead of writing the bare skeleton.
+without `--yes`, it prompts for workspaces and engines instead of writing the
+bare skeleton.
 
 **Flags**
 
@@ -146,10 +142,9 @@ lattice init --yes
 lattice init --force
 ```
 
-Without a TTY (for example, in a script or CI), `init` always writes the
-skeleton, whether or not `--yes` is passed — it never blocks a pipeline
-waiting on prompts. Running `init` against an existing `lattice.json` without
-`--force` is an error.
+Without a TTY (a script, CI), `init` writes the skeleton whether or not
+`--yes` is passed, so it never blocks waiting on prompts. Running `init`
+against an existing `lattice.json` without `--force` is an error.
 
 ## `lattice prune`
 
@@ -203,9 +198,9 @@ commit the change and everyone on the repo moves together.
 | `--release-latest-url` | `<URL>` | GitHub API | Endpoint that names the newest stable release, for `upgrade latest` |
 | `--release-list-url` | `<URL>` | GitHub API | Endpoint listing every release, used when no release is stable yet |
 
-Both are consulted only by `upgrade latest`; `upgrade 0.2.0` asks neither of
-them anything. The archive itself comes from the global
-`--release-base-url`. Plus the [global flags](#global-flags) below.
+Both are consulted only by `upgrade latest`; `upgrade 0.2.0` asks neither. The
+archive itself comes from the global `--release-base-url`. Plus the [global
+flags](#global-flags) below.
 
 ```sh
 lattice upgrade 0.2.0
@@ -267,8 +262,8 @@ lattice version --json
 
 ## Global flags
 
-These are declared `global = true` in clap, so they parse on `lattice` itself
-and on every subcommand — put them before or after the subcommand name.
+These parse on `lattice` itself and on every subcommand: put them before or
+after the subcommand name.
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -279,36 +274,35 @@ and on every subcommand — put them before or after the subcommand name.
 | `--release-base-url` | — | `<URL>` | GitHub releases | Base URL to download release archives from. A `file://` base works offline |
 
 `--theme` takes `light` or `dark` and nothing else; a third value is a parse
-error rather than a silent fall-back to detection. With no flag, Lattice reads
+error, not a fall-back to detection. With no flag, Lattice reads
 `LATTICE_THEME`, then the terminal's own `COLORFGBG`.
 
-`--release-base-url` is global rather than an `upgrade` flag because `upgrade`
-is not the only thing that downloads: an invocation in a repo pinning a version
-that isn't installed fetches it too, under whatever command you typed.
+`--release-base-url` is global because `upgrade` is not the only command that
+downloads: an invocation in a repo pinning a version that isn't installed
+fetches it too, under whatever command you typed.
 
-`--verbose`/`-v` does not appear in `--help` output — it is a hidden alias,
-kept for muscle memory, that sets exactly the same flag as `--loquacious`.
+`--verbose`/`-v` is a hidden alias for `--loquacious` and does not appear in
+`--help`.
 
-`-h`/`--help` is also available on `lattice` and on every subcommand, but it
-is clap's own per-command help, not a value this flag table propagates.
-`-V`/`--version` prints the compiled-in binary version (e.g. `1.0.0-beta-2`)
-but exists only on `lattice` itself — `lattice run -V` is a parse error, not
-version output.
+`-h`/`--help` works on `lattice` and on every subcommand. `-V`/`--version`
+prints the compiled-in binary version (e.g. `1.0.0-beta-2`) and exists only on
+`lattice` itself — `lattice run -V` is a parse error.
 
 ## Option precedence
 
 Wherever a setting can come from more than one place, Lattice resolves it in
 this order, highest first:
 
-1. **CLI flag** — e.g. `-l`, `--no-version-check`, `--theme`, `--release-base-url`
-2. **Environment variable** — e.g. `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL`
-3. **`settings` in `lattice.json`** — e.g. `settings.loquacious`, `settings.versionCheck`
-4. **Built-in default**
+| Source | Examples |
+| --- | --- |
+| CLI flag | `-l`, `--no-version-check`, `--theme`, `--release-base-url` |
+| Environment variable | `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL` |
+| `settings` in `lattice.json` | `settings.loquacious`, `settings.versionCheck` |
+| Built-in default | — |
 
-This is stated once, here, and holds everywhere in this reference: a flag
-always wins, a bare default always loses. See [Environment
-variables](/lattice/docs/environment-variables) for the full list of
-variables Lattice reads.
+This holds everywhere in this reference. See [Environment
+variables](/lattice/docs/environment-variables) for the full list of variables
+Lattice reads.
 
 ## Exit codes
 
@@ -316,16 +310,16 @@ variables Lattice reads.
 | --- | --- |
 | `0` | Success — including a `run` whose filter matched no workspace, and a `run` against an empty `workspaces` array |
 | `1` | Any error Lattice itself raises: a missing `lattice.json`, an unrecognized task name, a failed task, an unset cache limit on `prune`, or any other failure |
-| `2` | clap rejected the command line itself — an unknown subcommand, an unrecognized flag, or a missing required argument — before Lattice ran anything |
+| `2` | The command line itself was rejected before Lattice ran anything: an unknown subcommand, an unrecognized flag, or a missing required argument |
 
-A failing task always makes `lattice run` exit `1`, whether the run stopped
-at the first failure or kept going with `--continue`. With `--continue`, the
-run summary line (task/cache/fail counts, plus any downstream tasks skipped
-because a prerequisite failed) is what's printed — there is no separate error
-line, since the summary already said what failed. Without `--continue`, the
-first failing task's name is printed as the error (`task '<workspace>:<task>'
-failed, stopping pipeline`) and no further tasks are started, though any
-already in flight run to completion. `--sequentially` applies the same rule
-per phase: a failing phase stops the remaining phases unless `--continue` is
-also set, in which case every phase runs and the process exits `1` if any of
-them failed.
+A failing task exits `1` whether the run stopped at the first failure or kept
+going with `--continue`.
+
+Without `--continue`, the first failing task is printed as the error (`task
+'<workspace>:<task>' failed, stopping pipeline`) and no further tasks start,
+though any already in flight run to completion. With `--continue`, the run
+summary line reports it instead — task, cache, and fail counts, plus any
+downstream tasks skipped because a prerequisite failed — with no separate error
+line. `--sequentially` applies the same rule per phase: a failing phase stops
+the remaining phases unless `--continue` is also set, in which case every phase
+runs and the process exits `1` if any failed.

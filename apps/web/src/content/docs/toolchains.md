@@ -7,32 +7,28 @@ order: 3
 
 # Toolchains
 
-This is the exhaustive reference for the tools Lattice knows about out of the
-box: every built-in task driver, and every engine it can version-check without
-help. The models behind these tables are [Driver detection](/lattice/docs/drivers)
-(how a workspace's task driver gets picked) and [Engines and
-provisioning](/lattice/docs/engines) (how a version constraint gets satisfied).
-Read those for the *why*; this page is the lookup.
+The exhaustive reference for the tools Lattice knows out of the box: every
+built-in task driver, and every engine it can version-check without help. For the
+models behind these tables see [Driver detection](/lattice/docs/drivers) and
+[Engines and provisioning](/lattice/docs/engines).
 
 ## The built-in driver table
 
-Each driver is a `DriverSpec`: a fingerprint that identifies it in a workspace
-directory, one or more `Role`s, the command that prints its version, and the
-shell template it invokes a task with
-(`crates/lattice-workspace/src/lib.rs:86-332`). A driver's role decides how it
-competes: different roles in the same workspace compose into a stack (a node
-runtime plus a pnpm package manager); two drivers competing for the *same* role
-conflict until you disambiguate. A tool with more than one role — `deno`, `bun`,
-`mix` — competes with its highest-ranked one. A pure `Runtime` — node, python,
-ruby, java, kotlin below — never drives a workspace by itself; on its own it
-still halts as an ambiguous/undetected driver, the same as no evidence at all.
-See [Driver detection](/lattice/docs/drivers) for the full evidence ladder and
-the composition/conflict rule.
+Every built-in driver is defined by a fingerprint that identifies it in a
+workspace directory, one or more roles, the command that prints its version, and
+the template it invokes a task with. The tables below are generated from that
+definition set in the source. `{task}` is the literal placeholder each driver
+substitutes the task name into.
 
-`{task}` below is the literal placeholder each driver substitutes the task
-name into. Two drivers have no fingerprint at all: nothing on disk belongs to
-`pip` or to the Kotlin toolchain alone, so those are selected by naming them in
-`engines` (or in a `.tool-versions` file) and never by detection.
+The candidate with the highest-ranked role drives a workspace; a tool with
+several roles competes with its highest one; two candidates holding the same role
+conflict until a declaration names one. A pure runtime — `node`, `python`,
+`ruby`, `java`, `kotlin` below — never drives a workspace on its own. See [Driver
+detection](/lattice/docs/drivers) for the evidence ladder and the full rule.
+
+Two drivers have no fingerprint: nothing on disk belongs to `pip` or to the Kotlin
+toolchain alone, so both are selected by naming them in `engines` or in a
+`.tool-versions` file, never by detection.
 
 ### JavaScript and TypeScript
 
@@ -68,9 +64,9 @@ name into. Two drivers have no fingerprint at all: nothing on disk belongs to
 | `pip` | Package Manager | none — declaration only | `pip --version` | `pip {task}` |
 | `python` | Runtime | `.python-version` | `python --version` | `python -m {task}` |
 
-A `requirements.txt` is read by pip, uv, and pip-tools alike, so it names no
-tool and is not a pip fingerprint. Declare `pip` in `engines` for a workspace
-you want pip to drive.
+A `requirements.txt` is read by pip, uv, and pip-tools alike, so it names no tool
+and is not a pip fingerprint. Declare `pip` in `engines` for a workspace you want
+pip to drive.
 
 ### Ruby
 
@@ -89,10 +85,10 @@ you want pip to drive.
 | `java` | Runtime | `.java-version` | `java -version` | `java {task}` |
 | `kotlin` | Runtime | none — declaration only | `kotlinc -version` | `kotlin {task}` |
 
-A Kotlin project is driven by gradle or maven, and no file on disk pins the
-Kotlin toolchain specifically, so `kotlin` is a runtime you declare and compose
+A Kotlin project is driven by gradle or maven, and no file on disk pins the Kotlin
+toolchain specifically, so `kotlin` is a runtime you declare and compose
 underneath one of those. A `.tool-versions` entry naming `kotlin` counts as a
-declaration too.
+declaration.
 
 ### .NET
 
@@ -102,11 +98,10 @@ declaration too.
 | `nuget` | Package Manager | `packages.config` | `nuget help` | `nuget {task}` |
 
 `nuget` fingerprints only the legacy `packages.config` layout. A
-`packages.lock.json` is deliberately *not* nuget evidence: an SDK-style project
-can restore with a lockfile and still be a `dotnet` workspace, and a package
-manager outranks a build tool, so treating it as one would take the driver away
-from `dotnet`. The lockfile still counts toward
-[cache keys](/lattice/docs/cache-internals).
+`packages.lock.json` is not nuget evidence: an SDK-style project can restore with
+a lockfile and still be a `dotnet` workspace, and since a package manager outranks
+a build tool, counting it would take the driver away from `dotnet`. The lockfile
+still counts toward [cache keys](/lattice/docs/cache-internals).
 
 ### Swift and Objective-C
 
@@ -142,9 +137,8 @@ from `dotnet`. The lockfile still counts toward
 
 ### Generic task runners
 
-These aren't tied to one language — any of them can sit above a
-language-specific driver in a workspace (see [Driver
-detection](/lattice/docs/drivers) on composition).
+Not tied to one language. Any of them can sit above a language-specific driver in
+a workspace.
 
 | Tool | Role | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
@@ -153,25 +147,20 @@ detection](/lattice/docs/drivers) on composition).
 | `turbo` | Task Runner | `turbo.json` | `turbo --version` | `turbo run {task}` |
 | `nx` | Task Runner | `nx.json` | `nx --version` | `nx run {task}` |
 
-That is the complete `DRIVERS` table: 34 drivers across 13 language and
-ecosystem groups (`crates/lattice-workspace/src/lib.rs:86-332`).
+That is the complete built-in driver set: 34 drivers across 13 language and
+ecosystem groups.
 
 ## Well-known engines
 
-An `engines` entry can be a bare version-constraint string only if Lattice
-already has a built-in rule for checking that tool's version — the
-`WELL_KNOWN_ENGINES` table (`crates/lattice-config/src/lib.rs:14-69`), which is
-also where every driver above gets its version command. A string naming
+An `engines` entry can be a bare version-constraint string only if Lattice has a
+built-in rule for reading that tool's version. The table below is that rule set,
+and it is where every driver above gets its version command too. A string naming
 anything else is rejected by `lattice.json` validation. Every name below is
-accepted in the short string form:
+accepted in the short form:
 
 ```json
 { "engines": { "node": ">=20.0.0" } }
 ```
-
-Every tool in the driver table is here, so any driver can be pinned in string
-form. Six names appear only here: they pin a compiler or interpreter that some
-other tool drives tasks with.
 
 | Engine | Version rule (command Lattice runs) |
 | --- | --- |
@@ -216,29 +205,27 @@ other tool drives tasks with.
 | `turbo` | `turbo --version` |
 | `nx` | `nx --version` |
 
-The six that are engines but not drivers are `rust`, `python3`, `php`,
-`elixir`, `haskell`, and `ghc`. Cargo is the task driver for a Rust workspace,
-composer for PHP, mix for Elixir, stack or cabal for Haskell — but each
-language's own toolchain is a separate, valid engine name for pinning the
-compiler version itself. `haskell` and `ghc` are two spellings of the same
-rule, as `python` and `python3` are two different interpreters.
+Every tool in the driver table appears here, so any driver can be pinned in string
+form. Six names are engines but not drivers: `rust`, `python3`, `php`, `elixir`,
+`haskell`, and `ghc`. Each pins a compiler or interpreter that some other tool
+drives tasks with — cargo drives a Rust workspace, composer PHP, mix Elixir, stack
+or cabal Haskell. `haskell` and `ghc` are two spellings of one rule; `python` and
+`python3` are two different interpreters.
 
 `nuget help` is the version rule because nuget.exe has no `--version` flag; its
 help output prints `NuGet Version: x.y.z` on the first line. Lattice reads the
 first version-looking substring of whatever a version command prints, so banner
 text around it doesn't matter.
 
-A bare string is shorthand for a version-only constraint — no `installCmd`
-means [validate-only](/lattice/docs/engines): Lattice runs the version command
-above against whatever is already on `PATH` and fails if it doesn't satisfy
-the constraint. It never installs anything for a well-known engine unless you
-add an explicit `installCmd` in the object form.
+A bare string means [validate-only](/lattice/docs/engines): Lattice runs the
+version command above against whatever is on `PATH` and fails if it doesn't
+satisfy the constraint. It installs nothing for a well-known engine unless you add
+an `installCmd` in the object form.
 
 ## Declaring a tool Lattice doesn't know
 
-Any other tool name needs the object form, with an explicit `versionCmd` —
-skip it and `lattice.json` validation rejects the config with the exact fix
-(`crates/lattice-config/src/lib.rs:403-415`):
+Any other tool name needs the object form with an explicit `versionCmd`. Skip it
+and `lattice.json` validation rejects the config with the exact fix:
 
 ```text
 engine 'alpes' in root uses the string (version-only) form, but 'alpes' is not
@@ -247,7 +234,7 @@ with an explicit `versionCmd`, e.g. "alpes": { "version": ">=1.0.0", "versionCmd
 "alpes --version" }
 ```
 
-A working example, validating a tool already on `PATH` without installing it:
+Validating a tool already on `PATH`, without installing it:
 
 ```json
 {
@@ -260,8 +247,8 @@ A working example, validating a tool already on `PATH` without installing it:
 }
 ```
 
-Add `installCmd` (and optionally `bin`, which defaults to `bin`) to move this
-from validate-only to provisioned — Lattice installs it into
+Add `installCmd` (and optionally `bin`, which defaults to `bin`) to move from
+validate-only to provisioned. Lattice then installs into
 `.lattice/toolchains/alpes/` and pins the result instead of trusting `PATH`:
 
 ```json
@@ -277,6 +264,6 @@ from validate-only to provisioned — Lattice installs it into
 }
 ```
 
-The full mechanics of that gradient — what `$LATTICE_TOOLCHAIN_DIR` receives,
-how a pin is reused across runs, and what gets prepended to a task's `PATH` —
-are on the [Engines and provisioning](/lattice/docs/engines) page.
+[Engines and provisioning](/lattice/docs/engines) covers what
+`$LATTICE_TOOLCHAIN_DIR` receives, how a pin is reused across runs, and what gets
+prepended to a task's `PATH`.

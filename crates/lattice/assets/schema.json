@@ -164,10 +164,6 @@
           "type": "string",
           "description": "Upper bound on the local cache size (e.g. \"10GB\")."
         },
-        "logging": {
-          "type": "string",
-          "description": "Logging verbosity mode (e.g. \"default\")."
-        },
         "cacheDir": {
           "type": "string",
           "description": "Directory for the local cache (defaults to \".lattice/cache\")."
