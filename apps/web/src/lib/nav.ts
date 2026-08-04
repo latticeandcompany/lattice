@@ -15,6 +15,9 @@ export const navLinks: NavLink[] = [
 
 export const githubUrl = 'https://github.com/latticeandcompany/lattice';
 
+/** The parent-company site. The footer lockup points here, not at this site's own home. */
+export const parentSiteUrl = 'https://latticeandcompany.github.io';
+
 /** Every "Get started" call to action on the site lands here. */
 export const getStartedUrl = withBase('/get-started');
 
