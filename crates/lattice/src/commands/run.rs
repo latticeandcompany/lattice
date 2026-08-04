@@ -49,11 +49,11 @@ pub struct RunArgs {
 	#[arg(long = "continue")]
 	pub keep_going: bool,
 
-	/// Ignore the cache and re-run every task.
+	/// Neither read nor write the cache: re-run every task and store nothing.
 	#[arg(long)]
 	pub no_cache: bool,
 
-	/// Ignore the cache for this run (alias for --no-cache).
+	/// Re-run every task and write fresh cache entries, replacing what is there.
 	#[arg(long)]
 	pub force: bool,
 
@@ -142,7 +142,10 @@ impl RunArgs {
 			return Ok(());
 		}
 
+		// Both skip lookups; only --no-cache also skips writing. --force exists to
+		// replace a bad entry, which it cannot do if it never stores one.
 		let no_cache = self.no_cache || self.force;
+		let no_store = self.no_cache;
 
 		if self.dry_run {
 			if self.sequentially {
@@ -197,6 +200,7 @@ impl RunArgs {
 					config: &config,
 					root: &root,
 					no_cache,
+					no_store,
 					concurrency: self.concurrency,
 					keep_going: self.keep_going,
 					reporter: reporter.as_ref(),
@@ -231,6 +235,7 @@ impl RunArgs {
 			config: &config,
 			root: &root,
 			no_cache,
+			no_store,
 			concurrency: self.concurrency,
 			keep_going: self.keep_going,
 			reporter: reporter.as_ref(),

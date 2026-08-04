@@ -17,29 +17,58 @@ Lattice caches and how to control it, see [Caching](/lattice/docs/caching).
 A task's cache key is a 64-character lowercase hex SHA-256 digest, computed by
 `compute_key`. The hasher consumes fields in this fixed order:
 
-1. `lattice_version` — the running Lattice version.
-2. `task` — the task name (e.g. `build`).
-3. `command` — the fully resolved shell command for this task in this workspace.
-4. `toolchain_identity` — the identity string of the workspace's resolved
+1. `cache_format` — the on-disk cache format. Also names the subdirectory entries
+   are written under, so a release that changes this list cannot read entries
+   whose keys were built from the old one.
+2. `lattice_version` — the running Lattice version.
+3. `platform` — `<os>-<arch>`, e.g. `macos-aarch64`.
+4. `shell` — `sh -c` or `cmd /C`, whichever will run the command.
+5. `workspace` — the workspace's declared name. Without it, two workspaces
+   running the same command with nothing else to tell them apart would share one
+   entry and restore each other's artifacts.
+6. `task` — the task name (e.g. `build`).
+7. `command` — the fully resolved shell command for this task in this workspace.
+8. `toolchain_identity` — the identity string of the workspace's resolved
    toolchains (empty if the workspace declares none).
-5. `env.name` / `env.value` — one pair per name listed in the task's `env`,
-   resolved from the process environment, sorted by name.
-6. `input.path` / `input.content` — one pair per file matched by the task's
-   `inputs` globs (after removing anything matched by `ignore`), sorted by path
-   relative to the workspace, with the file's full contents hashed in.
-7. `lockfile.name` / `lockfile.content` — one pair for each dependency-state
-   file that exists in the workspace, checked in this fixed order:
-   `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `bun.lock`,
-   `Cargo.lock`, `go.sum`, `poetry.lock`, `uv.lock`, `Gemfile.lock`,
-   `npm-shrinkwrap.json`, `deno.lock`, `pdm.lock`, `Pipfile.lock`,
-   `requirements.txt`, `Podfile.lock`, `packages.lock.json`, `composer.lock`,
-   `mix.lock`, `pubspec.lock`, `Package.resolved`, `stack.yaml.lock`,
-   `cabal.project.freeze`. The same list decides whether `lattice setup`
-   reinstalls dependencies, so the two never disagree.
+9. `dep.key` — one per task this task depends on, each that task's own resolved
+   cache key, sorted. This is what carries a change upstream to everything
+   downstream of it.
+10. `pattern.inputs` / `pattern.outputs` / `pattern.ignore` — the raw glob
+    strings as declared, or the literal `<unset>` when the field is absent.
+    Widening `outputs` therefore produces a different key, rather than hitting an
+    entry that captured the narrower set and restoring less than the run made.
+11. `env.name` / `env.value` — one pair per name listed in the task's `env`,
+    resolved from the process environment, sorted by name.
+12. `input.path` / `input.content` — one pair per input file, sorted by path
+    relative to the workspace, with the file's full contents hashed in. The set
+    is the files matched by `inputs`, or — when `inputs` is absent — every file
+    in the workspace that the applicable `.gitignore` files do not exclude. In
+    both cases anything matched by `ignore` or by the task's own `outputs` is
+    removed first, and `.lattice`, `.git`, `.hg`, `.svn` and `.jj` are never
+    walked. Symlinks are not followed.
+13. `manifest.name` / `manifest.content` — one pair for each manifest present in
+    the workspace. A resolved command is usually an indirection: `npm run build`
+    names a script in `package.json` and `make test` names a target in a
+    `Makefile`, so the command string alone does not pin the work.
+14. `lockfile.name` / `lockfile.content` — one pair for each dependency-state
+    file that exists in the workspace, checked in this fixed order:
+    `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `bun.lock`,
+    `Cargo.lock`, `go.sum`, `poetry.lock`, `uv.lock`, `Gemfile.lock`,
+    `npm-shrinkwrap.json`, `deno.lock`, `pdm.lock`, `Pipfile.lock`,
+    `requirements.txt`, `Podfile.lock`, `packages.lock.json`, `composer.lock`,
+    `mix.lock`, `pubspec.lock`, `Package.resolved`, `stack.yaml.lock`,
+    `cabal.project.freeze`. The same list decides whether `lattice setup`
+    reinstalls dependencies, so the two never disagree.
+15. `root.lockfile.name` / `root.lockfile.content` — the same list again, checked
+    at the repo root when the workspace is not itself the root. A layout that
+    hoists one lockfile to the top — pnpm, yarn and npm workspaces, a Cargo
+    virtual workspace, a Go workspace — keeps no lockfile beside the workspace,
+    so without this a dependency bump would invalidate nothing.
 
-Env pairs and input files are sorted before hashing, and lockfiles are visited
-in the fixed order listed above, so the key never depends on filesystem
-iteration order or on the order fields were declared in `lattice.json`.
+Env pairs, input files and dependency keys are sorted before hashing, and
+manifests and lockfiles are visited in the fixed order listed above, so the key
+never depends on filesystem iteration order, on the order fields were declared in
+`lattice.json`, or on the order prerequisites happened to finish in.
 
 ### Domain separation and length prefixing
 
@@ -59,16 +88,24 @@ value hashed under one field name from being read as a value under another.
 ## On-disk layout
 
 Every cache entry lives under the configured cache directory (default
-`.lattice/cache`, overridable with `settings.cacheDir`) as two files sharing the
-key as their stem:
+`.lattice/cache`, overridable with `settings.cacheDir`), inside a subdirectory
+named for the cache format, as two files sharing the key as their stem:
 
 ```text
-.lattice/cache/<key>.tar.gz       the artifact: gzip-compressed tar of outputs
-.lattice/cache/<key>.meta.json    the metadata: everything needed to verify and restore
+.lattice/cache/v2/<key>.tar.gz       the artifact: gzip-compressed tar of outputs
+.lattice/cache/v2/<key>.meta.json    the metadata: everything needed to verify and restore
 ```
 
-There is no subdirectory nesting and no sharding by key prefix. The cache
-directory is a flat list of `<key>.tar.gz` / `<key>.meta.json` pairs.
+Within a format directory there is no further nesting and no sharding by key
+prefix: it is a flat list of `<key>.tar.gz` / `<key>.meta.json` pairs. Sibling
+directories are entries from other formats; `lattice prune` deletes them
+outright, since a key computed under one format never means the same thing under
+another.
+
+Both files are written to a temporary name in the same directory and renamed into
+place. A rename is atomic, so a concurrent reader sees either the previous file
+or the complete new one — never a half-written artifact — and two `lattice`
+processes storing the same key cannot interleave into one broken entry.
 
 ## The metadata file
 
@@ -83,7 +120,9 @@ written by running a task with `outputs: ["dist/**"]`:
   "durationMs": 5,
   "lastUsed": "2026-07-29T01:26:44.096642Z",
   "env": {},
-  "outputDigest": "7b9b704caefd130afd5440ce20ec161676fe24497cf344eb8473f06cf2984b75"
+  "outputDigest": "7b9b704caefd130afd5440ce20ec161676fe24497cf344eb8473f06cf2984b75",
+  "outputs": ["dist/**"],
+  "artifactSize": 148
 }
 ```
 
@@ -96,6 +135,8 @@ written by running a task with `outputs: ["dist/**"]`:
 | `lastUsed` | RFC 3339 timestamp, updated on every write and every hit. Drives eviction order — see below. |
 | `env` | The resolved `(name, value)` pairs for the task's declared `env`, as they were when the key was computed. The key is a hash, so this is the only place those values are legible afterwards. |
 | `outputDigest` | SHA-256 hex of the `.tar.gz` bytes, recorded when the artifact is written and checked on every lookup. |
+| `outputs` | The task's `outputs` globs as they were when the entry was written. A restore clears what these match before unpacking, so a hit reproduces the tree the run produced instead of layering onto whatever is already there. |
+| `artifactSize` | Byte length of the `.tar.gz`. Checked before the digest, so a truncated artifact is rejected without reading it. |
 
 `key` and `outputDigest` are both 64-character hex SHA-256 digests over
 different things: `key` is the identity computed by `compute_key` from the
@@ -104,32 +145,47 @@ computed after the tarball is written.
 
 ## Archive format and the output digest
 
-`store` collects every file matched by the task's `outputs` globs (a directory
-pattern like `dist/**` captures every file beneath it) and writes them, relative
-to the workspace root, into a gzip-compressed tar archive at `<key>.tar.gz`.
-Files are collected and added in sorted order, so the archive is reproducible
-for identical outputs. Once the archive is finished its bytes are hashed and the
-result is written into `meta.outputDigest` before the metadata file is saved.
-`restore` opens the tarball and unpacks it directly into the target workspace
-path, overwriting whatever is there. Files are all a hit gives you: no process
-runs, so the entry's recorded `env` is not exported into anything.
+`store` collects everything matched by the task's `outputs` globs and writes it,
+relative to the workspace root, into a gzip-compressed tar archive at
+`<key>.tar.gz`. A directory pattern like `dist/**` captures every file beneath it;
+a pattern with no glob characters that names a directory, like `dist`, is expanded
+to the same thing. Directories and symlinks are recorded as themselves, not
+flattened, so an empty output directory survives a round trip and a symlink comes
+back a symlink rather than a copy of its target.
+
+Entries are collected and added in sorted order. Once the archive is finished its
+bytes are hashed and the result is written into `meta.outputDigest`, then the
+archive is renamed into place and the metadata saved.
+
+If a task declares `outputs` but nothing matches them, `store` fails rather than
+writing an empty archive. An empty archive would verify perfectly on every later
+lookup, so the task would report a hit, restore nothing, and never run again. The
+runner surfaces the failure as a warning and the run continues uncached.
+
+`restore` opens the tarball, deletes what the entry's recorded `outputs` match,
+then unpacks into the workspace. Clearing first is what makes a hit reproduce the
+run: a file the task deleted stays deleted, and content-hashed names do not
+accumulate across builds. Files are all a hit gives you — no process runs, so the
+entry's recorded `env` is not exported into anything.
 
 ## The lookup sequence
 
 `lookup(key)` runs these checks in order:
 
-1. Read and parse `<key>.meta.json`. A missing file is a miss. A file that is
-   present but fails to parse as JSON is an error from the store rather than a
-   miss: the runner warns (`cache lookup failed: …`) and runs the task.
+1. Read and parse `<key>.meta.json`. A missing file is a miss, and so is one that
+   fails to parse — metadata nobody can read describes an entry nobody can use,
+   so the task simply re-runs and overwrites it.
 2. Check `<key>.tar.gz` exists. Meta present but no tarball → miss.
-3. Open the tarball and compute its SHA-256. Unreadable file → miss.
-4. Compare that digest against `meta.outputDigest`. Mismatch → miss.
+3. Compare the file's length against `meta.artifactSize`. Mismatch → miss. This
+   is the cheap check, and it catches the common damage.
+4. Compute the tarball's SHA-256. Unreadable file → miss.
+5. Compare that digest against `meta.outputDigest`. Mismatch → miss.
 
-`lookup` returns `Some(CacheEntry)` only when all four checks pass: a hit
-requires that the meta parses, the tarball opens, and its digest matches the
-recorded `outputDigest`. A truncated download, a manually edited archive, or a
-half-written file from a crashed process makes the runner fall through and rerun
-the task rather than restore corrupt output.
+`lookup` returns `Some(CacheEntry)` only when every check passes. A truncated
+download, a manually edited archive, or a half-written file from a crashed process
+makes the runner fall through and rerun the task rather than restore corrupt
+output. A restore that fails partway is also a miss: the task runs, so a damaged
+entry costs a re-run and can never hand back the wrong output.
 
 ## `lastUsed` bookkeeping and eviction order
 
@@ -140,12 +196,23 @@ runner calls on every cache hit after a successful restore. It is the only field
 `prune(max_bytes)` enforces `settings.maxCacheSize` (or `--max-size` on
 `lattice prune`) by:
 
-1. Scanning the cache directory for every `<key>.meta.json`, reading each
-   entry's `lastUsed` and combined on-disk size (`.tar.gz` + `.meta.json`).
-2. If the total is already at or under `max_bytes`, doing nothing.
-3. Otherwise sorting entries by `lastUsed` ascending and deleting the oldest
-   first — removing both files for each evicted key — until the running total is
-   at or under `max_bytes`.
+1. Reclaiming what can never be read: artifacts with no metadata beside them,
+   leftover temporary files, and directories belonging to other cache formats.
+   This happens first, before the current format's directory is even opened, so a
+   repo that has just upgraded — and has no directory for the new format yet —
+   still gets the old one retired.
+2. Scanning the format directory for every `<key>.meta.json`, reading each
+   entry's `lastUsed` and combined on-disk size (`.tar.gz` + `.meta.json`). An
+   entry whose metadata no longer parses is evicted here rather than aborting the
+   prune.
+3. If the total is already at or under `max_bytes`, stopping.
+4. Otherwise sorting entries by `lastUsed` ascending and deleting the oldest
+   first until the running total is at or under `max_bytes`.
+
+Each eviction removes the metadata before the artifact. That order matters: without
+metadata the entry is already a miss, so a failure in between leaves something the
+next prune can still find and reclaim. The other order would leave metadata
+pointing at nothing and, on a failure, leak the artifact permanently.
 
 Eviction is strict least-recently-used: an entry that is hit often stays however
 old it is, because every hit advances `lastUsed`, and an entry nobody has
@@ -159,21 +226,27 @@ than picking an arbitrary limit.
 The key is computed from the fields above and nothing else. Four notable
 exclusions:
 
-A task's `outputs` patterns are not hashed. Changing what a task declares as
-output does not change its identity and does not invalidate an existing entry
-for the same inputs.
+A task's own output *files* are not hashed, even when `inputs` matches them.
+Hashing them would move the key the run was about to store under, so the task
+could never hit its own entry. The `outputs` patterns themselves are hashed; the
+files they match are removed from the input set.
 
-Files outside `inputs` are not hashed. A file the workspace contains but no
-`inputs` glob matches has no effect on the key, even if the command reads it. If
-a task depends on a file, it belongs in `inputs`.
+Files a task reads but does not declare are not hashed. When `inputs` is declared
+it is the whole input set, so a file the command reads but no glob matches has no
+effect on the key. Omit `inputs` entirely and the whole workspace is hashed
+instead, which is slower but cannot miss a file this way.
 
 Environment variables not named in the task's `env` list are not hashed. Only
 declared variables are resolved and hashed; the rest of the ambient environment
-would otherwise perturb every key from every shell.
+would otherwise perturb every key from every shell. The user's global gitignore is
+excluded on the same grounds — it lives outside the repo, so honoring it would
+make a key depend on whose machine computed it.
 
-Wall-clock time, hostname, and working directory path are not hashed. The key is
-a pure function of the fields above, which is what makes it reproducible across
-machines and across clones of the same repository.
+Wall-clock time, hostname, and absolute paths are not hashed. Input paths are
+hashed relative to the workspace, so the same commit produces the same keys in a
+different checkout directory. Note that the *platform* is hashed, deliberately: a
+cache directory shared between machines must not answer one operating system's
+lookup with another's artifacts.
 
 Anything not in the key can change without producing a miss, so an incomplete
 `inputs` or `env` list is the usual cause of a stale hit.

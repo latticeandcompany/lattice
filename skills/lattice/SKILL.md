@@ -67,10 +67,11 @@ authoritative if anything here disagrees with the installed binary.
   depend on, transitively. So a filtered run also runs its prerequisites (from
   cache where they're current), and `--dry-run` tags those nodes `(dependency)`.
   Nothing that depends *on* a match is included.
-- **A task with no `inputs` has no files in its cache key.** It hits on every
-  re-run with an unchanged command, including right after you edit the source it
-  builds from. That is a stale result served confidently, not a bug. Declare
-  `inputs`, or set `cache: false` until you're ready to.
+- **A task with no `inputs` hashes its whole workspace.** Everything the
+  applicable `.gitignore` files don't exclude goes into the key, minus the task's
+  own `outputs`. It is correct but slower than it needs to be, and it re-runs on
+  changes the command never reads. Declare `inputs` to narrow it — under-declare
+  and you get a stale hit, so start broad and tighten.
 - **A workspace `path` is a literal directory.** `packages/*` is treated as a
   directory named `*` and fails. One entry per project directory.
 - **An unknown key in `lattice.json` fails the load.** Every command that reads
@@ -95,7 +96,8 @@ lattice run test --filter api          # workspaces named *api*, plus what they 
 lattice run build --dry-run            # resolve and print, run nothing
 lattice run lint test --continue       # keep going past a failure, still exit 1
 lattice run build --concurrency 4      # cap parallelism (default: logical CPUs)
-lattice run build --no-cache           # ignore the cache this run (--force is an alias)
+lattice run build --no-cache           # neither read nor write the cache this run
+lattice run build --force              # re-run and overwrite the stored entry
 lattice run build -l                   # plain line-by-line log instead of the live display
 ```
 
@@ -159,22 +161,33 @@ Full field-by-field reference, including every type and default:
 
 ## Caching decisions
 
-The cache key is a hash over the task name and its resolved command, the
-contents of every file matched by `inputs` minus `ignore`, any tool-unique
-lockfile in the workspace, the resolved values of the variables named in `env`,
-the resolved toolchain identity, and the Lattice version. Nothing else is
-consulted.
+The cache key is a hash over the workspace name, the task name and its resolved
+command, the manifest that command resolves through (`package.json`, `Makefile`,
+…), the contents of every file matched by `inputs` minus `ignore`, the cache key
+of every task this one depends on, any tool-unique lockfile in the workspace or
+at the repo root, the resolved values of the variables named in `env`, the
+resolved toolchain identity, the OS, architecture and shell, and the Lattice
+version. Nothing else is consulted.
+
+Two consequences worth knowing before you debug a hit or a miss:
+
+- Editing a dependency re-runs its dependents. A workspace is one node, so a
+  dependent re-runs whenever its dependency's key moves — even if the particular
+  files it reads didn't change.
+- A task's own outputs never affect its key, so you don't need to repeat them in
+  `ignore`.
 
 That makes four fields yours to get right:
 
-- `inputs` — what the command reads. Under-declare and you get a stale hit;
-  over-declare and unrelated edits force rebuilds.
-- `ignore` — subtracts from what `inputs` matched. Reach for it when a broad
-  glob sweeps in logs, an inner tool's cache directory, or the task's own
-  output.
+- `inputs` — what the command reads. Omit it and the whole workspace is hashed,
+  which is safe but slow. Declare it to narrow the key: under-declare and you get
+  a stale hit, over-declare and unrelated edits force rebuilds.
+- `ignore` — subtracts from what `inputs` matched. Reach for it when a broad glob
+  sweeps in logs or an inner tool's cache directory.
 - `outputs` — what gets archived on success and restored on a hit. A file the
-  command produces that no `outputs` glob matches is never saved. `test` and
-  `lint` usually need none.
+  command produces that no `outputs` glob matches is never saved. A task that
+  declares `outputs` and produces none of them is not cached at all, and warns.
+  `test` and `lint` usually need none.
 - `env` — variable *names*, not `NAME=value` pairs. The resolved value is
   hashed and exported to the task. An unset name contributes nothing. Lattice
   does not read `.env` files.
@@ -265,8 +278,10 @@ Nothing about declaring a workspace stops its existing `package.json` scripts,
 
 A subtree that already has its own task runner does not need flattening:
 declare it as one workspace with `auto: false` whose `scripts` call that runner,
-give it a broad `inputs` glob with the inner cache directory and `node_modules`
-in `ignore`, and Lattice schedules and caches it as a single node. Flatten it
+put the inner runner's own cache directory in `ignore` (its per-invocation state
+would otherwise move the key on every run), and Lattice schedules and caches it
+as a single node. Its outputs and anything gitignored are excluded for you.
+Flatten it
 instead when another workspace needs to depend on one specific inner package, or
 when you want a rebuild narrowed below the whole subtree.
 

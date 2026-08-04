@@ -19,7 +19,7 @@ graph, so a dependency they share runs once.
 | `--concurrency` | — | `<N>` | logical CPUs | Cap how many tasks run at once. `0` is ignored |
 | `--continue` | — | — | off | Keep starting tasks that don't transitively depend on the failure |
 | `--no-cache` | — | — | off | No lookup and no store for this run |
-| `--force` | — | — | off | Alias for `--no-cache`, not a stricter mode |
+| `--force` | — | — | off | Skip the lookup but still store, replacing the entry |
 | `--dry-run` | — | — | off | Print the resolved graph and every command, run nothing |
 
 A filter that matches no workspace, and a repo with an empty `workspaces` array,

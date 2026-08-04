@@ -476,9 +476,12 @@ lat "$PROD" run build --filter core ; t_ok "run build core after edit exits 0"
 t_hasnt "edited input busts the cache" "cache hit"
 t_has  "busted key re-runs the task"   "core:build"
 
-# --no-cache / --force ignore the cache entirely.
+# --no-cache and --force both skip the lookup; only --force writes. The split
+# matters: --no-cache leaves a suspect entry in place to be served again, while
+# --force is what actually replaces it.
 lat "$PROD" run build --filter core --no-cache ; t_hasnt "--no-cache never hits cache" "cache hit"
 lat "$PROD" run build --filter core --force    ; t_hasnt "--force never hits cache"    "cache hit"
+lat "$PROD" run build --filter core            ; t_has   "--force left a fresh entry behind" "cache hit"
 
 # cache:false task is never cached.
 lat "$PROD" run nocache --filter core ; t_ok "nocache run 1 exits 0"
@@ -493,10 +496,18 @@ late "STRESS_VAR=beta"  "$PROD" run envtask --filter core ; t_hasnt "changed env
 
 # The stored entry records the value its key was computed from, so an opaque key
 # stays explainable.
-if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*.meta.json 2>/dev/null; then
+if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*/*.meta.json 2>/dev/null; then
   pass "the cache entry records the env value it was keyed on"
 else
   fail "the cache entry records the env value it was keyed on" "no meta file names STRESS_VAR=alpha"
+fi
+
+# Entries are grouped by cache format, so changing what goes into a key retires
+# the old group instead of risking a read against keys that meant something else.
+if [ -d "$PROD/.lattice/cache/v2" ]; then
+  pass "cache entries live under a format directory"
+else
+  fail "cache entries live under a format directory" "no .lattice/cache/v2 in $PROD"
 fi
 
 # Full cache: a run where every scheduled task came back from cache is called
@@ -515,6 +526,57 @@ t_hasnt "a partial hit is not a full cache"     "full cache"
 lat "$PROD" run build ; t_has "the leaf edit settles back to a full cache" "full cache"
 
 lat "$PROD" run build --filter nonexistent ; t_hasnt "a run that scheduled nothing is not a full cache" "full cache"
+
+# A change in a dependency has to reach the tasks that depend on it. `core` is
+# upstream of the apps, so editing it must re-run them too — serving a dependent
+# from cache after its dependency rebuilt is how a stale artifact ships.
+lat "$PROD" run build ; t_ok "run build settles before the dependency test"
+w "$PROD/libs/core/src/lib.src" "core source v3 DEPENDENCY CHANGED
+"
+lat "$PROD" run build ; t_ok "run build after a dependency edit exits 0"
+t_has   "the edited dependency re-ran"            "core:build"
+t_hasnt "its dependents did not hit the cache"    "full cache"
+
+# Two workspaces must never share an entry. Every cache key names its workspace,
+# so a hit in one can't restore the other's artifacts.
+CROSSWS="$ENVROOT/cross-ws"
+mkdir -p "$CROSSWS/alpha" "$CROSSWS/beta"
+w "$CROSSWS/lattice.json" '{
+  "workspaces": [
+    { "name": "alpha", "path": "alpha", "auto": false, "scripts": { "build": "echo I-AM-ALPHA > out.txt" } },
+    { "name": "beta",  "path": "beta",  "auto": false, "scripts": { "build": "echo I-AM-BETA > out.txt" } }
+  ],
+  "tasks": { "build": { "outputs": ["out.txt"] } }
+}'
+lat "$CROSSWS" run build ; t_ok "two workspaces sharing a command run"
+t_grepfile "$CROSSWS/alpha/out.txt" "I-AM-ALPHA" "alpha kept its own artifact"
+t_grepfile "$CROSSWS/beta/out.txt"  "I-AM-BETA"  "beta was not handed alpha's artifact"
+
+# A task with no `inputs` hashes its whole workspace, so a source edit re-runs it.
+# It used to hash no files at all and hit forever.
+NOINPUTS="$ENVROOT/no-inputs"
+mkdir -p "$NOINPUTS/w"
+w "$NOINPUTS/lattice.json" '{
+  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "cat src.txt" } } ],
+  "tasks": { "build": {} }
+}'
+w "$NOINPUTS/w/src.txt" "version one"
+lat "$NOINPUTS" run build ; t_ok "undeclared-inputs task primes"
+lat "$NOINPUTS" run build ; t_has "undeclared-inputs task hits when nothing changed" "cache hit"
+w "$NOINPUTS/w/src.txt" "version two CHANGED"
+lat "$NOINPUTS" run build ; t_hasnt "a task with no inputs still notices a source edit" "cache hit"
+
+# A task that declares outputs but produces none is not cached: an empty artifact
+# would verify forever, so the task would hit, restore nothing, and never re-run.
+EMPTYOUT="$ENVROOT/empty-outputs"
+mkdir -p "$EMPTYOUT/w"
+w "$EMPTYOUT/lattice.json" '{
+  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo built nothing" } } ],
+  "tasks": { "build": { "outputs": ["dist/**"] } }
+}'
+lat "$EMPTYOUT" run build ; t_ok "a task producing none of its declared outputs still succeeds"
+t_has "unmatched outputs are reported rather than cached" "no files matched outputs"
+lat "$EMPTYOUT" run build ; t_hasnt "an unmatched-outputs task is not a hit next run" "cache hit"
 
 # =========================================================================
 # 7. run: PATH injection, concurrency, loquacious, other tasks.
@@ -1139,7 +1201,12 @@ printf '{"tag_name":"v%s"}\n' "$FAKEVER" > "$REL/latest.json"
 RELBASE="file://$REL"
 RELFLAG="--release-base-url $RELBASE"
 LATESTFLAG="--release-latest-url file://$REL/latest.json"
-RELENV="LATTICE_RELEASE_BASE_URL=$RELBASE"
+# LATTICE_NO_PATH keeps the installer out of the developer's shell config. Its
+# idempotence guard keys on the install directory, which is a fresh temp path on
+# every run, so without this each invocation appends another dead PATH entry to
+# the real ~/.zshrc. The PATH-editing path is covered on its own below, under a
+# throwaway HOME.
+RELENV="LATTICE_RELEASE_BASE_URL=$RELBASE LATTICE_NO_PATH=1"
 
 # curl built without the file:// protocol cannot serve a local release; the rest
 # of the section is meaningless without it.
@@ -1194,6 +1261,46 @@ JSON
   tar -czf "$REL/v$FAKEVER/$STEM.tar.gz" -C "$ENVROOT/relbuild" "$STEM"
   printf '%s  %s\n' "$(sha256_of "$REL/v$FAKEVER/$STEM.tar.gz")" "$STEM.tar.gz" \
     > "$REL/v$FAKEVER/lattice-$FAKEVER-checksums.txt"
+
+  # --- PATH editing, against a throwaway HOME ----------------------------
+  # The one place the installer is allowed to touch a shell config. Pointing HOME
+  # and ZDOTDIR at a temp dir keeps it off the real one while still exercising the
+  # code that writes the line — and, more importantly, the guard that stops it
+  # being written twice.
+  PATHHOME="$ENVROOT/fakehome"
+  PATHINST="$ENVROOT/path-install"
+  mkdir -p "$PATHHOME" "$PATHINST"
+  cat > "$PATHINST/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [], "tasks": { "build": {} } }
+JSON
+  PATHENV="LATTICE_RELEASE_BASE_URL=$RELBASE HOME=$PATHHOME ZDOTDIR=$PATHHOME SHELL=/bin/zsh"
+  OUTPUT="$(cd "$PATHINST" && env $PATHENV sh "$INSTALLER" 2>&1)"; RC=$?
+  t_ok  "installer exits 0 when it may edit PATH"
+  t_has "installer says where it added the line" "added .lattice/bin to PATH in"
+  t_grepfile "$PATHHOME/.zshrc" "$PATHINST/.lattice/bin" "the PATH line names the install dir"
+
+  # Second run, same install dir: the line is already there and must not repeat.
+  OUTPUT="$(cd "$PATHINST" && env $PATHENV sh "$INSTALLER" 2>&1)"; RC=$?
+  t_ok "installer re-run with PATH already edited exits 0"
+  PATHLINES="$(grep -cF "$PATHINST/.lattice/bin" "$PATHHOME/.zshrc" 2>/dev/null || echo 0)"
+  if [ "$PATHLINES" -eq 1 ]; then
+    pass "a second install does not duplicate the PATH line"
+  else
+    fail "a second install does not duplicate the PATH line" \
+      "found $PATHLINES copies in $PATHHOME/.zshrc"
+  fi
+
+  # And --no-modify-path writes nothing, it only tells you what it would have done.
+  NOMOD="$ENVROOT/path-nomod"; mkdir -p "$NOMOD"
+  NOMODHOME="$ENVROOT/fakehome-nomod"; mkdir -p "$NOMODHOME"
+  cat > "$NOMOD/lattice.json" <<JSON
+{ "latticeVersion": "$FAKEVER", "workspaces": [], "tasks": { "build": {} } }
+JSON
+  OUTPUT="$(cd "$NOMOD" && env "LATTICE_RELEASE_BASE_URL=$RELBASE" "HOME=$NOMODHOME" \
+    "ZDOTDIR=$NOMODHOME" "SHELL=/bin/zsh" sh "$INSTALLER" --no-modify-path 2>&1)"; RC=$?
+  t_ok     "installer exits 0 with --no-modify-path"
+  t_has    "--no-modify-path prints the line instead of writing it" "to put it on PATH:"
+  t_nofile "$NOMODHOME/.zshrc" "--no-modify-path leaves the shell config alone"
 fi
 
 # The installer refuses to guess, and refuses to trust.
@@ -1212,7 +1319,7 @@ if [ "$CAN_FETCH" = "1" ]; then
 { "latticeVersion": "$FAKEVER", "workspaces": [] }
 JSON
   OUTPUT="$(cd "$BADSUM" && env "LATTICE_RELEASE_BASE_URL=file://$ENVROOT/release-bad" \
-    sh "$INSTALLER" 2>&1)"; RC=$?
+    LATTICE_NO_PATH=1 sh "$INSTALLER" 2>&1)"; RC=$?
   t_bad    "installer fails on a checksum mismatch"
   t_has    "checksum-mismatch message is explicit" "checksum mismatch"
   t_nofile "$BADSUM/.lattice/bin/lattice-$FAKEVER" "a failed checksum installs nothing"

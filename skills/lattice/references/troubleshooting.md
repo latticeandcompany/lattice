@@ -84,8 +84,13 @@ field moved the hash. Narrow it by elimination.
 
 The inverse: the command reads a file or a variable that isn't declared. `inputs`
 only matches what its globs say, and only names listed in `env` are hashed.
-Neither case warns. A wider `inputs` glob or a fuller `env` list is the only fix.
-Use `--no-cache` (or `--force`) to force a fresh run while investigating.
+Neither case warns. A wider `inputs` glob — or dropping `inputs` entirely, which
+hashes the whole workspace — or a fuller `env` list is the fix.
+
+While investigating, `--no-cache` runs without reading or writing. Once you've
+found it, `--force` re-runs and overwrites the stored entry, which is what clears
+a bad one: `--no-cache` leaves it in place to be served again on the next plain
+run.
 
 ## The output looks wrong after a cache hit
 

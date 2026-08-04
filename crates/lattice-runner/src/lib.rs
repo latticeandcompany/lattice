@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -79,7 +79,12 @@ pub struct ExecuteOptions<'a> {
 	pub workspaces: &'a [Workspace],
 	pub config: &'a LatticeConfig,
 	pub root: &'a std::path::Path,
+	/// Ignore existing cache entries and re-run every task.
 	pub no_cache: bool,
+	/// Do not write results to the cache. `--no-cache` sets both; `--force` sets
+	/// only `no_cache`, so it re-runs and refreshes the entry instead of leaving
+	/// the old one in place to be served again next time.
+	pub no_store: bool,
 	pub concurrency: Option<usize>,
 	pub keep_going: bool,
 	pub reporter: &'a dyn Reporter,
@@ -113,8 +118,17 @@ struct TaskRunContext {
 	store: Arc<dyn CacheStore>,
 	semaphore: Arc<Semaphore>,
 	abort: Arc<AtomicBool>,
+	/// Skip cache lookups for this run.
 	no_cache: bool,
+	/// Skip storing results for this run. Separate from `no_cache` so `--force` can
+	/// re-run a task and refresh its entry, which is the whole point of reaching
+	/// for it after a bad hit.
+	no_store: bool,
 	lattice_version: Arc<str>,
+	/// Repo root, for hashing lockfiles hoisted above the workspace.
+	repo_root: Arc<Path>,
+	/// Resolved cache keys of this task's prerequisites.
+	dep_keys: Arc<[String]>,
 	tx: UnboundedSender<RunnerMsg>,
 	persistent_watches: Arc<Mutex<Vec<PersistentWatch>>>,
 	shutting_down: Arc<AtomicBool>,
@@ -323,6 +337,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		config,
 		root,
 		no_cache,
+		no_store,
 		concurrency,
 		keep_going,
 		reporter,
@@ -421,7 +436,13 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let mut remaining_indegree = schedule.indegree.clone();
 	let mut completed = vec![false; n];
 	let mut in_flight = 0usize;
-	let mut join_set: JoinSet<(usize, TaskOutcome)> = JoinSet::new();
+	let mut join_set: JoinSet<(usize, TaskOutcome, Option<String>)> = JoinSet::new();
+
+	// Each node's resolved cache key, recorded as it finishes. A node is only
+	// scheduled once every prerequisite has finished, so by the time we build a
+	// node's `dep_keys` every entry it needs is already populated.
+	let mut node_keys: Vec<Option<String>> = vec![None; n];
+	let repo_root: Arc<Path> = Arc::from(root);
 
 	let mut total = 0usize;
 	let mut cached = 0usize;
@@ -452,18 +473,29 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 					}
 					Some(spec) => {
 						in_flight += 1;
+						let mut dep_keys: Vec<String> = schedule.prerequisites[pos]
+							.iter()
+							.filter_map(|&dep| node_keys[dep].clone())
+							.collect();
+						dep_keys.sort();
 						let ctx = TaskRunContext {
 							spec,
 							store: store.clone(),
 							semaphore: semaphore.clone(),
 							abort: abort.clone(),
 							no_cache,
+							no_store,
 							lattice_version: lattice_version.clone(),
+							repo_root: repo_root.clone(),
+							dep_keys: Arc::from(dep_keys),
 							tx: tx.clone(),
 							persistent_watches: persistent_watches.clone(),
 							shutting_down: shutting_down.clone(),
 						};
-						join_set.spawn(async move { (pos, run_one(ctx).await) });
+						join_set.spawn(async move {
+							let (outcome, key) = run_one(ctx).await;
+							(pos, outcome, key)
+						});
 					}
 				}
 			}
@@ -475,7 +507,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
 		tokio::select! {
 			joined = join_set.join_next() => {
-				let (pos, outcome) = match joined {
+				let (pos, outcome, node_key) = match joined {
 					Some(Ok(res)) => res,
 					Some(Err(e)) => {
 						// A spawned task panicked: a runner-internal fault. Treat
@@ -492,6 +524,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 				};
 				in_flight -= 1;
 				completed[pos] = true;
+				node_keys[pos] = node_key;
 
 				match outcome {
 					TaskOutcome::Noop => {
@@ -598,7 +631,15 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 /// command through the platform shell (with per-task PATH injection), and store
 /// cache artifacts on success. Persistent tasks are started and detached without
 /// holding the permit.
-async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
+async fn run_one(ctx: TaskRunContext) -> (TaskOutcome, Option<String>) {
+	let mut key_slot = None;
+	let outcome = run_one_inner(ctx, &mut key_slot).await;
+	(outcome, key_slot)
+}
+
+/// The body of [`run_one`], reporting the computed cache key through `key_slot`
+/// so the scheduler can feed it to this node's dependents' keys.
+async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> TaskOutcome {
 	let _permit = ctx.semaphore.acquire().await.expect("semaphore not closed");
 	if ctx.abort.load(Ordering::SeqCst) {
 		return TaskOutcome::Noop;
@@ -622,11 +663,14 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 	let key = match compute_key(&HashInputs {
 		task: &task,
 		command: &spec.command,
+		workspace_name: &ws,
 		workspace_path: &spec.ws_path,
+		repo_root: &ctx.repo_root,
 		pipeline_task: pt,
 		env_values: &env_values,
 		toolchain_identity: &spec.toolchain_identity,
 		lattice_version: ctx.lattice_version.as_ref(),
+		dep_keys: &ctx.dep_keys,
 	}) {
 		Ok(k) => k,
 		Err(e) => {
@@ -638,6 +682,8 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 			};
 		}
 	};
+
+	*key_slot = Some(key.clone());
 
 	// Loquacious trace: the computed cache identity for this task.
 	let _ = ctx.tx.send(RunnerMsg::TaskNote {
@@ -786,7 +832,7 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 
 	if success {
 		// Store cache artifacts on success (never for persistent / cache:false).
-		if pt.is_cacheable() && !ctx.no_cache {
+		if pt.is_cacheable() && !ctx.no_store {
 			let meta = CacheMeta {
 				key: key.clone(),
 				task: task.clone(),
@@ -795,6 +841,8 @@ async fn run_one(ctx: TaskRunContext) -> TaskOutcome {
 				last_used: chrono::Utc::now(),
 				env: env_values.iter().cloned().collect(),
 				output_digest: String::new(),
+				outputs: Vec::new(),
+				artifact_size: 0,
 			};
 			if let Err(e) = ctx.store.store(
 				&key,
@@ -1072,6 +1120,142 @@ mod tests {
 		}
 	}
 
+	/// Two workspaces whose `build` writes different bytes to the same relative
+	/// path. Nothing distinguished their cache keys, so building one and then the
+	/// other served the first workspace's artifact into the second.
+	#[tokio::test]
+	async fn a_cache_hit_never_crosses_workspaces() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![
+			ws("alpha", root, &[("build", "echo I-AM-ALPHA > out.txt")]),
+			ws("beta", root, &[("build", "echo I-AM-BETA > out.txt")]),
+		];
+		let build = PipelineTask {
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
+		o.no_cache = false;
+		o.no_store = false;
+		let res = execute_tasks(o).await.unwrap();
+
+		assert_eq!(res.cached, 0, "neither workspace may hit the other's entry");
+		assert_eq!(
+			std::fs::read_to_string(root.join("alpha/out.txt"))
+				.unwrap()
+				.trim(),
+			"I-AM-ALPHA"
+		);
+		assert_eq!(
+			std::fs::read_to_string(root.join("beta/out.txt"))
+				.unwrap()
+				.trim(),
+			"I-AM-BETA",
+			"beta must not be handed alpha's artifact"
+		);
+	}
+
+	/// The point of a monorepo cache: editing a dependency has to invalidate
+	/// everything downstream of it, not just re-run the dependency itself.
+	#[tokio::test]
+	async fn changing_a_dependency_invalidates_its_dependents() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let lib = ws("lib", root, &[("build", "echo built > out.txt")]);
+		let mut app = ws("app", root, &[("build", "echo built > out.txt")]);
+		app.depends_on = vec!["lib".to_string()];
+		let source = root.join("lib/src.txt");
+		std::fs::write(&source, "v1").unwrap();
+		let workspaces = vec![lib, app];
+
+		let build = PipelineTask {
+			depends_on: Some(vec!["^build".to_string()]),
+			inputs: Some(vec!["src.txt".to_string()]),
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let r1 = RecordingReporter::new();
+		let mut o1 = opts(&graph, &workspaces, &config, root, &r1);
+		o1.no_cache = false;
+		o1.no_store = false;
+		execute_tasks(o1).await.unwrap();
+
+		// Everything is warm: a second run with nothing touched is all cache.
+		let r2 = RecordingReporter::new();
+		let mut o2 = opts(&graph, &workspaces, &config, root, &r2);
+		o2.no_cache = false;
+		o2.no_store = false;
+		let res2 = execute_tasks(o2).await.unwrap();
+		assert_eq!(res2.cached, 2, "an untouched run must be fully cached");
+
+		// Touch only the dependency's input. Both must re-run.
+		std::fs::write(&source, "v2").unwrap();
+		let r3 = RecordingReporter::new();
+		let mut o3 = opts(&graph, &workspaces, &config, root, &r3);
+		o3.no_cache = false;
+		o3.no_store = false;
+		let res3 = execute_tasks(o3).await.unwrap();
+		assert_eq!(
+			res3.cached, 0,
+			"a dependency change must invalidate its dependents, not just itself"
+		);
+		assert!(r3.has("started:lib:build"));
+		assert!(
+			r3.has("started:app:build"),
+			"app depends on lib and must re-run when lib changes"
+		);
+	}
+
+	/// `--force` re-runs and refreshes; `--no-cache` re-runs and stores nothing.
+	/// They used to be the same flag, so there was no way to replace a bad entry.
+	#[tokio::test]
+	async fn force_refreshes_the_entry_while_no_cache_stores_nothing() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", "echo hi > out.txt")])];
+		let build = PipelineTask {
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		// --no-cache: re-runs, stores nothing, so the next plain run is still a miss.
+		let r1 = RecordingReporter::new();
+		let o1 = opts(&graph, &workspaces, &config, root, &r1);
+		execute_tasks(o1).await.unwrap();
+		let r2 = RecordingReporter::new();
+		let mut o2 = opts(&graph, &workspaces, &config, root, &r2);
+		o2.no_cache = false;
+		o2.no_store = false;
+		assert_eq!(execute_tasks(o2).await.unwrap().cached, 0);
+
+		// --force: skips the lookup but writes, so the following run hits.
+		let r3 = RecordingReporter::new();
+		let mut o3 = opts(&graph, &workspaces, &config, root, &r3);
+		o3.no_cache = true;
+		o3.no_store = false;
+		assert_eq!(execute_tasks(o3).await.unwrap().cached, 0);
+
+		let r4 = RecordingReporter::new();
+		let mut o4 = opts(&graph, &workspaces, &config, root, &r4);
+		o4.no_cache = false;
+		o4.no_store = false;
+		assert_eq!(
+			execute_tasks(o4).await.unwrap().cached,
+			1,
+			"--force must leave a fresh entry behind"
+		);
+	}
+
 	fn config_with(tasks: &[(&str, PipelineTask)]) -> LatticeConfig {
 		let mut cfg = LatticeConfig::default();
 		for (name, pt) in tasks {
@@ -1114,6 +1298,7 @@ mod tests {
 			config,
 			root,
 			no_cache: true,
+			no_store: true,
 			concurrency: None,
 			keep_going: false,
 			reporter,
@@ -1301,10 +1486,11 @@ mod tests {
 		let config = config_with(&[("build", build)]);
 		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
 
-		// First run with caching enabled (no_cache=false), so it stores.
+		// First run with caching enabled, so it stores.
 		let r1 = RecordingReporter::new();
 		let mut o1 = opts(&graph, &workspaces, &config, root, &r1);
 		o1.no_cache = false;
+		o1.no_store = false;
 		execute_tasks(o1).await.unwrap();
 		assert!(r1.has("finished:app:build"));
 		assert!(!r1.has("cachehit:app:build"));
@@ -1317,6 +1503,7 @@ mod tests {
 		let r2 = RecordingReporter::new();
 		let mut o2 = opts(&graph, &workspaces, &config, root, &r2);
 		o2.no_cache = false;
+		o2.no_store = false;
 		let res2 = execute_tasks(o2).await.unwrap();
 		assert_eq!(res2.cached, 1);
 		assert!(r2.has("cachehit:app:build"));
@@ -1324,7 +1511,9 @@ mod tests {
 		assert!(out_file.exists(), "cache hit must restore outputs");
 
 		// Corrupt the stored tarball: the digest mismatch is a miss, so it re-runs.
-		let cache_dir = root.join(config.settings.cache_dir());
+		let cache_dir = root
+			.join(config.settings.cache_dir())
+			.join(lattice_cache::CACHE_FORMAT);
 		let tarball = std::fs::read_dir(&cache_dir)
 			.unwrap()
 			.flatten()
@@ -1336,6 +1525,7 @@ mod tests {
 		let r3 = RecordingReporter::new();
 		let mut o3 = opts(&graph, &workspaces, &config, root, &r3);
 		o3.no_cache = false;
+		o3.no_store = false;
 		let res3 = execute_tasks(o3).await.unwrap();
 		assert_eq!(res3.cached, 0, "corrupt tarball must be a miss");
 		assert!(r3.has("started:app:build"));
@@ -1360,9 +1550,12 @@ mod tests {
 		let reporter = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
 		o.no_cache = false;
+		o.no_store = false;
 		execute_tasks(o).await.unwrap();
 
-		let cache_dir = root.join(config.settings.cache_dir());
+		let cache_dir = root
+			.join(config.settings.cache_dir())
+			.join(lattice_cache::CACHE_FORMAT);
 		let meta_path = std::fs::read_dir(&cache_dir)
 			.unwrap()
 			.flatten()

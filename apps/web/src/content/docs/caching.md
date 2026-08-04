@@ -20,26 +20,43 @@ For the byte layout of the key and the on-disk artifact format, see
 
 A task's cache key is a hash over:
 
-- the task name and its fully resolved command
+- the workspace it runs in, the task name, and its fully resolved command
 - the contents of every file matched by `inputs`, minus anything matched by
   `ignore`
+- the cache key of every task it depends on, so a change upstream reaches
+  everything downstream of it
+- the contents of the manifest the command resolves through — `npm run build`
+  names a script in `package.json`, `make test` names a target in a `Makefile`,
+  and changing that script changes the work
 - the resolved value of every environment variable named in `env`
 - the identity of the resolved toolchain (see
   [Engines and provisioning](/lattice/docs/engines))
+- the operating system, architecture, and shell
 - the running Lattice version
-- the contents of any lockfile present in the workspace, so a dependency bump
-  invalidates the cache even if you never listed the lockfile in `inputs` (the
+- the contents of any lockfile in the workspace *or at the repo root*, so a
+  dependency bump invalidates the cache even if you never listed the lockfile in
+  `inputs`, and even in a layout that keeps one lockfile at the top (the
   internals page has the
   [full lockfile list](/lattice/docs/cache-internals#cache-key-composition))
 
 Nothing outside that set is consulted. A hit tells you those specific things
 have not changed, not that the workspace is otherwise identical to last time.
 
+## Dependencies
+
+A task's key includes the keys of everything it depends on. Edit a library and
+the apps that build against it re-run, because the library's key moved and the
+apps' keys are built from it.
+
+This is deliberately conservative. A workspace is one node, so when its key
+moves Lattice cannot tell which of its outputs changed — only that something
+did. A dependent re-runs even if the specific files it reads are untouched. The
+alternative is serving a build that was made against code you have since
+changed.
+
 ## Declaring inputs
 
-`inputs` is the set of files whose contents make the key. Without it, a task has
-no files in its key at all: the same command with the same environment always
-hits, even after you edit the source it builds from.
+`inputs` is the set of files whose contents make the key:
 
 ```json
 {
@@ -54,8 +71,17 @@ hits, even after you edit the source it builds from.
 
 Miss a file the command actually reads and you get a stale hit — the recorded
 output is restored even though that file changed. Glob in files the command
-never reads, like fixtures or generated output, and every incidental change to
-them forces a rebuild that did not need to happen.
+never reads, like fixtures, and every incidental change to them forces a rebuild
+that did not need to happen.
+
+Leave `inputs` off and the whole workspace is hashed, minus anything your
+`.gitignore` files exclude and minus the task's own `outputs`. That is slower
+than a narrow list and it re-runs more often than it strictly needs to, which is
+the right way round to be wrong. Declare `inputs` when you want the speed.
+
+You never need to list a task's `outputs` in `ignore`. Outputs are excluded from
+the key automatically — otherwise writing them would move the key the run was
+about to store under, and the task could never hit its own entry.
 
 ## Excluding noise with `ignore`
 
@@ -94,11 +120,22 @@ and what a later hit restores:
 }
 ```
 
-A directory pattern like `dist/**` captures every file beneath it. A file your
-command produces that no `outputs` pattern matches is never saved, so a hit will
-not restore it and a later step depending on it will find it missing. Only a
-successful run is stored. `outputs` is optional; a task without any still caches
-on success, it just has nothing to restore.
+A directory pattern like `dist/**` captures every file beneath it, and a bare
+`dist` does the same. A file your command produces that no `outputs` pattern
+matches is never saved, so a hit will not restore it and a later step depending
+on it will find it missing. Only a successful run is stored. `outputs` is
+optional; a task without any still caches on success, it just has nothing to
+restore.
+
+Symlinks come back as symlinks and directories that end up empty are recreated,
+so a restored tree matches what the run produced. A hit also clears what
+`outputs` matches before unpacking: a file the task deletes stays deleted, and
+content-hashed names like `app.a1b2.js` do not pile up across builds.
+
+If a task declares `outputs` and produces none of them, nothing is cached and
+the run warns. That combination almost always means the patterns are wrong —
+they are relative to the workspace, not the repo root — and caching an empty
+artifact would turn every later run into a hit that restores nothing.
 
 ## Declaring env
 
@@ -147,10 +184,14 @@ for a run.
 
 ## Bypassing the cache for one run
 
-`lattice run build --no-cache` ignores the cache for that invocation: no lookup,
-and nothing stored afterward either. `--force` is a plain alias for it, not a
-stricter mode. Reach for either when you suspect a stale result and want to
-re-run from scratch without disturbing what is already stored.
+`lattice run build --no-cache` ignores the cache for that invocation entirely:
+no lookup, and nothing stored afterward either. Use it to check what a run does
+without touching what is already stored.
+
+`lattice run build --force` also skips the lookup, but it does store the result,
+replacing whatever was there. That is the one to reach for when you think an
+entry is wrong: `--no-cache` re-runs and leaves the suspect entry in place to be
+served again next time, while `--force` overwrites it.
 
 ## When the whole run is a hit
 
@@ -180,6 +221,11 @@ root. Move it with `settings.cacheDir`:
   }
 }
 ```
+
+Inside it, entries are grouped by the cache format they were written in. When a
+release changes what goes into a key, it writes under a new format and the old
+group is retired by the next `lattice prune` — so an upgrade means one full
+rebuild rather than a risk of reading entries whose keys meant something else.
 
 That directory is safe to delete at any time. The next run has nothing to
 restore and starts from a clean cache.

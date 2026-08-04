@@ -118,6 +118,40 @@ pub const LOCKFILES: &[&str] = &[
 	"cabal.project.freeze",
 ];
 
+/// Files that can define what a task command actually does. A task's resolved
+/// command is usually an indirection — `npm run build` names a script in
+/// `package.json`, `make test` names a target in a `Makefile` — so the command
+/// string alone does not pin the work. Each of these present in a workspace is
+/// hashed into that workspace's cache keys. Order is fixed: it is part of the
+/// cache key.
+pub const MANIFESTS: &[&str] = &[
+	"package.json",
+	"Cargo.toml",
+	"go.mod",
+	"pyproject.toml",
+	"setup.py",
+	"Gemfile",
+	"Rakefile",
+	"pom.xml",
+	"build.gradle",
+	"build.gradle.kts",
+	"composer.json",
+	"mix.exs",
+	"pubspec.yaml",
+	"Package.swift",
+	"stack.yaml",
+	"cabal.project",
+	"deno.json",
+	"deno.jsonc",
+	"Makefile",
+	"makefile",
+	"GNUmakefile",
+	"Justfile",
+	"justfile",
+	"Taskfile.yml",
+	"Taskfile.yaml",
+];
+
 fn default_true() -> bool {
 	true
 }

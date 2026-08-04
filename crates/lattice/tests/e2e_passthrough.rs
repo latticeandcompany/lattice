@@ -169,8 +169,11 @@ fn nested_repo_caches_as_one_unit() {
 		"a hit on the passthrough workspace must restore the inner artifacts"
 	);
 
-	// A source edit anywhere inside the nested repo busts its key and re-runs
-	// the inner runner. `api` is untouched, so it still hits.
+	// A source edit anywhere inside the nested repo busts its key and re-runs the
+	// inner runner. `api` consumes what that runner produces, so it has to re-run
+	// too: `frontend` is one opaque node, and nothing here can tell which of its
+	// outputs moved. A dependent that hits cache after its dependency rebuilt is
+	// how a stale artifact ships.
 	fx.write(
 		"frontend/packages/ui/src/index.js",
 		"export const ui = 2;\n",
@@ -183,7 +186,16 @@ fn nested_repo_caches_as_one_unit() {
 		.stdout(predicate::str::contains(
 			"frontend:build: turbo-stub: build complete",
 		))
-		.stdout(predicate::str::contains("api:build: cache hit ["));
+		.stdout(predicate::str::contains("api:build: cache hit").not())
+		.stdout(predicate::str::contains("api:build: api-built"));
+
+	// Nothing touched: both hit again, so the invalidation above was caused by the
+	// edit and not by a key that simply never settles.
+	lattice(&fx)
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("2 cached"));
 }
 
 #[test]

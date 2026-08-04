@@ -72,8 +72,8 @@ the closest field within a couple of characters. A workspace entry is indexed â€
 
 Writing `output` for `outputs` is the case this exists for. The task would
 declare nothing to capture, so a cache hit would restore no files. `input` for
-`inputs` is worse: with no file globs to hash, the task hits the cache after its
-first run no matter what you edit.
+`inputs` would silently widen the key to the whole workspace, turning a narrow,
+fast task into one that re-runs on any change in its directory.
 
 There is no way to keep extra keys in the file. A `lattice.json` upgraded from
 an earlier release, or one holding a note under a key of your own, has to drop
@@ -262,15 +262,16 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `dependsOn` | array of `string` | no | none | Task dependencies. `^task` means the same task name in this task's dependency workspaces; a bare `task` means that task in the same workspace. |
-| `inputs` | array of `string` | no | none | File globs hashed to compute the cache key. |
-| `outputs` | array of `string` | no | none | File globs captured as the cached artifact. |
+| `inputs` | array of `string` | no | the whole workspace | File globs hashed to compute the cache key. Omitted, every file in the workspace is hashed except what `.gitignore` excludes and what this task's own `outputs` match. |
+| `outputs` | array of `string` | no | none | File globs captured as the cached artifact. Never hashed as input. |
 | `ignore` | array of `string` | no | none | File globs excluded from input hashing. |
 | `env` | array of `string` | no | none | Environment variable **names** whose resolved values feed the cache key. |
 | `persistent` | `boolean` | no | `false` | Long-running task (e.g. a dev server). Never cached regardless of `cache`. See [Persistent tasks](/lattice/docs/persistent-tasks). |
 | `cache` | `boolean` | no | `true` | Set `false` to opt a non-persistent task out of caching entirely. |
 
 An empty task object, `{}`, is valid â€” a task with no declared dependencies,
-inputs, or outputs.
+inputs, or outputs. It still caches: its key covers the whole workspace, so it
+re-runs whenever anything in that directory changes.
 
 ```json
 {

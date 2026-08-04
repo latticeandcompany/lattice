@@ -58,7 +58,7 @@ runs once.
 | `--concurrency` | — | `<N>` | number of CPUs | Cap how many tasks run at once |
 | `--continue` | — | — | off | Keep running independent tasks after a failure instead of stopping |
 | `--no-cache` | — | — | off | Ignore the cache and re-run every task |
-| `--force` | — | — | off | Ignore the cache for this run (alias for `--no-cache`) |
+| `--force` | — | — | off | Skip the lookup but still store, replacing the entry |
 | `--dry-run` | — | — | off | List the tasks that would run, then exit without running them |
 
 Plus the [global flags](#global-flags) below.

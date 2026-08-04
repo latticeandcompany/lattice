@@ -910,6 +910,7 @@ dependencies = [
  "flate2",
  "globset",
  "hex",
+ "ignore",
  "lattice-config",
  "serde",
  "serde_json",

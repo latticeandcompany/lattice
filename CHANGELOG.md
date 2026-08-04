@@ -10,6 +10,75 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The cache key covers what actually determines a task's result — 2026-08-03
+
+The first run after this upgrade re-runs everything. Entries are now grouped by
+cache format on disk, and the previous group is retired by the next
+`lattice prune` rather than read.
+
+- Two workspaces could share one cache entry and restore each other's artifacts.
+  The key did not include the workspace, so a task running the same command in
+  two places with nothing else to distinguish it resolved to one identity — the
+  second workspace reported a hit and unpacked the first one's build. The
+  workspace name is now part of every key
+- A change in a dependency did not reach the tasks that depend on it. `dependsOn`
+  decided the order and nothing else, so editing a library rebuilt the library
+  and then served its consumers from cache — against code that no longer existed.
+  Every task's key now includes the resolved keys of its prerequisites. This is
+  conservative by design: a workspace is one node, so a dependent re-runs when
+  its dependency changes even if the specific files it reads did not
+- A task with no `inputs` hashed no source files at all, so it cached on its
+  first run and never ran again however much the workspace changed. Such a task
+  now hashes its whole workspace, minus what the applicable `.gitignore` files
+  exclude and minus its own `outputs`. Declaring `inputs` is now an optimization
+  rather than a correctness requirement
+- Only the invocation was hashed, never what the invocation resolves to.
+  `npm run build` names a script in `package.json` and `make test` names a target
+  in a `Makefile`; rewriting that script left the key unchanged and served the
+  old artifact. Manifests present in a workspace are now hashed
+- Lockfiles were only looked for beside the workspace, so every layout that
+  hoists one to the top — pnpm, yarn and npm workspaces, a Cargo virtual
+  workspace — got no invalidation at all from a dependency bump. The repo root is
+  now checked too
+- The operating system, architecture and shell are in the key. A cache directory
+  shared between runners, or between a host and a container, could answer one
+  platform's lookup with another platform's artifacts
+- A task's own outputs no longer feed its key. Previously an `outputs` glob
+  inside the `inputs` set moved the key the run was about to store under, so the
+  task could never hit its own entry; the workaround was to repeat every output
+  in `ignore`. That is no longer necessary
+- The `inputs`, `outputs` and `ignore` patterns are hashed as declared. Widening
+  `outputs` used to leave the key alone, so the next run hit an entry that had
+  captured the narrower set and silently restored less than the run produced
+
+Storage got the same treatment:
+
+- Artifacts and metadata are written to a temporary name and renamed into place.
+  Nothing can read a half-written entry, and two `lattice` processes storing the
+  same key can no longer interleave into one broken one
+- A task that declares `outputs` and produces none of them is no longer cached.
+  It used to store an empty archive, which verified perfectly forever after — so
+  the task reported a hit, restored nothing, and never ran again
+- A restore clears what the entry's `outputs` match before unpacking. A file the
+  task deleted stays deleted, and content-hashed names like `app.a1b2.js` no
+  longer pile up across builds
+- Symlinks are stored as symlinks and empty output directories survive. Symlinks
+  were previously followed and flattened into copies of their targets
+- `lattice prune` can see artifacts left without metadata by an interrupted run.
+  It enumerated entries by metadata alone, so those bytes were invisible to it
+  and could never be reclaimed, which made `maxCacheSize` unenforceable. It now
+  also retires other formats' directories, and one unreadable metadata file
+  evicts that entry instead of aborting the prune
+- A directory symlink inside an input or output tree no longer recurses until the
+  stack runs out
+- An `outputs` pattern with no glob characters that names a directory, like
+  `dist`, now captures that subtree. It previously matched nothing
+
+`--no-cache` and `--force` are no longer the same flag. `--no-cache` neither
+reads nor writes. `--force` skips the lookup but still stores, so it replaces a
+suspect entry — which is what it was always reached for, and what it could not
+do while it also declined to write.
+
 ### `lattice init` reads the repo instead of asking about it — 2026-07-31
 
 - `init` opened with "what does this repo need Lattice for — build tool,
