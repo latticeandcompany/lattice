@@ -438,8 +438,9 @@ pub struct LatticeConfig {
 
 impl LatticeConfig {
 	/// Any engine (root or per-workspace) declared in string form whose key is
-	/// not a well-known engine is an error. Workspace names must be unique and
-	/// workspace paths must be non-empty.
+	/// not a well-known engine is an error. Workspace names must be unique,
+	/// workspace paths must be non-empty and stay inside the repo, and every
+	/// `dependsOn` must name something that exists.
 	pub fn validate(&self) -> Result<()> {
 		check_string_engines(&self.engines, "root")?;
 		for ws in &self.workspaces {
@@ -452,6 +453,7 @@ impl LatticeConfig {
 			if ws.path.trim().is_empty() {
 				bail!("workspace '{}' has an empty path", ws.name);
 			}
+			check_contained_path(&ws.name, &ws.path)?;
 			if !seen.insert(ws.name.as_str()) {
 				bail!(
 					"duplicate workspace name '{}': workspace names must be unique",
@@ -460,8 +462,96 @@ impl LatticeConfig {
 			}
 		}
 
+		self.check_workspace_deps()?;
+		self.check_task_deps()?;
+
 		Ok(())
 	}
+
+	/// A workspace `dependsOn` entry that names no declared workspace builds no
+	/// edge at all, so `^task` expands to nothing and the run silently loses its
+	/// ordering. Name the typo instead.
+	fn check_workspace_deps(&self) -> Result<()> {
+		let names: Vec<String> = self.workspaces.iter().map(|ws| ws.name.clone()).collect();
+		for ws in &self.workspaces {
+			for dep in ws.depends_on.iter().flatten() {
+				if dep == &ws.name {
+					bail!("workspace '{}' lists itself in `dependsOn`", ws.name);
+				}
+				if names.contains(dep) {
+					continue;
+				}
+				let mut message = format!(
+					"workspace '{}' depends on '{dep}', which is not a declared workspace",
+					ws.name
+				);
+				if let Some(near) = closest_field(dep, &names) {
+					message.push_str(&format!("\nDid you mean `{near}`?"));
+				}
+				if !names.is_empty() {
+					message.push_str(&format!("\nDeclared workspaces: {}", names.join(", ")));
+				}
+				bail!(message);
+			}
+		}
+		Ok(())
+	}
+
+	/// A task `dependsOn` entry naming a task the `tasks` map does not define
+	/// resolves to no node, so the prerequisite is quietly dropped.
+	fn check_task_deps(&self) -> Result<()> {
+		let names: Vec<String> = self.tasks.keys().cloned().collect();
+		for (task, cfg) in &self.tasks {
+			for dep in cfg.depends_on.iter().flatten() {
+				let bare = dep.strip_prefix('^').unwrap_or(dep);
+				if bare == task && bare == dep {
+					bail!("task '{task}' lists itself in `dependsOn`");
+				}
+				if names.iter().any(|n| n == bare) {
+					continue;
+				}
+				let mut message = format!(
+					"task '{task}' depends on '{dep}', but '{bare}' is not defined in `tasks`"
+				);
+				if let Some(near) = closest_field(bare, &names) {
+					message.push_str(&format!("\nDid you mean `{near}`?"));
+				}
+				if !names.is_empty() {
+					message.push_str(&format!("\nDefined tasks: {}", names.join(", ")));
+				}
+				bail!(message);
+			}
+		}
+		Ok(())
+	}
+}
+
+/// A workspace path has to stay inside the repo. Everything downstream — the
+/// input walk, the output globs, the clear-before-restore a cache hit does —
+/// treats it as the boundary of what a task may touch.
+fn check_contained_path(name: &str, path: &str) -> Result<()> {
+	let p = Path::new(path);
+	if p.is_absolute() {
+		bail!(
+			"workspace '{name}' has an absolute path '{path}'; workspace paths are \
+			 relative to the repo root"
+		);
+	}
+	let mut depth: i32 = 0;
+	for comp in p.components() {
+		match comp {
+			std::path::Component::ParentDir => depth -= 1,
+			std::path::Component::CurDir => {}
+			_ => depth += 1,
+		}
+		if depth < 0 {
+			bail!(
+				"workspace '{name}' has a path '{path}' that points outside the repo root; \
+				 workspace paths must stay inside the repo"
+			);
+		}
+	}
+	Ok(())
 }
 
 /// Reject string-form engines whose key is not a well-known engine.
@@ -984,6 +1074,112 @@ mod tests {
 			config.validate().is_err(),
 			"duplicate workspace names must be rejected"
 		);
+	}
+
+	/// A `dependsOn` naming a workspace that does not exist builds no edge, so the
+	/// run loses the ordering it was written to guarantee and says nothing.
+	#[test]
+	fn validate_rejects_a_workspace_dep_that_names_nothing() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [
+				{ "name": "lib", "path": "lib" },
+				{ "name": "app", "path": "app", "dependsOn": ["libb"] }
+			]
+		}))
+		.unwrap();
+		let message = config
+			.validate()
+			.expect_err("an unknown workspace dep must be rejected")
+			.to_string();
+		assert!(message.contains("'libb'"), "must name the typo: {message}");
+		assert!(
+			message.contains("Did you mean `lib`?"),
+			"must offer the near miss: {message}"
+		);
+	}
+
+	#[test]
+	fn validate_accepts_a_workspace_dep_that_resolves() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [
+				{ "name": "lib", "path": "lib" },
+				{ "name": "app", "path": "app", "dependsOn": ["lib"] }
+			]
+		}))
+		.unwrap();
+		config
+			.validate()
+			.expect("a resolvable dep must be accepted");
+	}
+
+	#[test]
+	fn validate_rejects_a_self_dependent_workspace() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [{ "name": "app", "path": "app", "dependsOn": ["app"] }]
+		}))
+		.unwrap();
+		assert!(config.validate().is_err());
+	}
+
+	/// Same failure mode one level up: a task dep that matches no task in the
+	/// map resolves to no node, so the prerequisite is dropped in silence.
+	#[test]
+	fn validate_rejects_a_task_dep_that_names_nothing() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"tasks": { "build": { "dependsOn": ["codegen"] } }
+		}))
+		.unwrap();
+		let message = config
+			.validate()
+			.expect_err("an undefined task dep must be rejected")
+			.to_string();
+		assert!(message.contains("'codegen'"), "{message}");
+		assert!(message.contains("Defined tasks: build"), "{message}");
+	}
+
+	/// `^build` is the same task in dependency workspaces, so it resolves against
+	/// the task map exactly like a bare `build` does.
+	#[test]
+	fn validate_checks_the_caret_form_against_the_task_map() {
+		let ok: LatticeConfig = serde_json::from_value(json!({
+			"tasks": { "build": { "dependsOn": ["^build"] } }
+		}))
+		.unwrap();
+		ok.validate()
+			.expect("^build resolves to the declared build task");
+
+		let bad: LatticeConfig = serde_json::from_value(json!({
+			"tasks": { "build": { "dependsOn": ["^compile"] } }
+		}))
+		.unwrap();
+		let message = bad
+			.validate()
+			.expect_err("^compile names nothing")
+			.to_string();
+		assert!(message.contains("'compile'"), "{message}");
+	}
+
+	#[test]
+	fn validate_rejects_a_workspace_path_outside_the_repo() {
+		for path in ["../outside", "apps/../../outside", "/etc"] {
+			let config: LatticeConfig =
+				serde_json::from_value(json!({ "workspaces": [{ "name": "esc", "path": path }] }))
+					.unwrap();
+			assert!(
+				config.validate().is_err(),
+				"path '{path}' must be rejected: everything downstream treats the \
+				 workspace dir as the boundary of what a task may touch"
+			);
+		}
+	}
+
+	#[test]
+	fn validate_allows_a_path_that_dips_and_returns() {
+		let config: LatticeConfig = serde_json::from_value(
+			json!({ "workspaces": [{ "name": "a", "path": "apps/../apps/web" }] }),
+		)
+		.unwrap();
+		config.validate().expect("the path stays inside the repo");
 	}
 
 	#[test]
