@@ -26,6 +26,20 @@ fn fixture() -> Fixture {
 	fx
 }
 
+/// Where a version-stamped install lands. The suffix comes from the platform,
+/// so spelling it out asserted a unix convention rather than the install.
+fn installed_bin(version: &str) -> String {
+	format!(
+		".lattice/bin/lattice-{version}{}",
+		std::env::consts::EXE_SUFFIX
+	)
+}
+
+/// The stable path the versioned install is linked from.
+fn stable_bin() -> String {
+	format!(".lattice/bin/lattice{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// The version the binary under test reports, which is what a pin has to differ
 /// from for anything interesting to happen.
 fn bin_version() -> String {
@@ -61,13 +75,10 @@ fn upgrade_installs_the_release_and_rewrites_the_pin() {
 		.stdout(predicates::str::contains("9.9.9"));
 
 	assert!(
-		fx.exists(".lattice/bin/lattice-9.9.9"),
+		fx.exists(&installed_bin("9.9.9")),
 		"the version-stamped binary should be installed"
 	);
-	assert!(
-		fx.exists(".lattice/bin/lattice"),
-		"the stable path should exist"
-	);
+	assert!(fx.exists(&stable_bin()), "the stable path should exist");
 	assert!(
 		fx.read("lattice.json")
 			.contains(r#""latticeVersion": "9.9.9""#),
@@ -228,7 +239,7 @@ fn upgrade_refuses_an_archive_that_fails_its_checksum() {
 		.stderr(predicates::str::contains("checksum mismatch"));
 
 	assert!(
-		!fx.exists(".lattice/bin/lattice-9.9.9"),
+		!fx.exists(&installed_bin("9.9.9")),
 		"a binary that failed verification must not be installed"
 	);
 	assert!(
@@ -257,7 +268,7 @@ fn the_release_url_env_vars_still_work_without_a_flag() {
 		.success()
 		.stdout(predicates::str::contains("9.9.9"));
 
-	assert!(fx.exists(".lattice/bin/lattice-9.9.9"));
+	assert!(fx.exists(&installed_bin("9.9.9")));
 }
 
 /// ...and where both are given, the flag is the one that counts.
@@ -284,7 +295,7 @@ fn a_release_url_flag_beats_the_environment() {
 		.assert()
 		.success();
 
-	assert!(fx.exists(".lattice/bin/lattice-9.9.9"));
+	assert!(fx.exists(&installed_bin("9.9.9")));
 }
 
 /// A blank value is not a value — an inherited `LATTICE_RELEASE_BASE_URL=` must
@@ -344,7 +355,7 @@ fn a_pinned_repo_switches_to_the_version_it_pins() {
 		.stderr(predicates::str::contains("this repo pins"))
 		.stderr(predicates::str::contains("switching"));
 
-	assert!(fx.exists(".lattice/bin/lattice-9.9.9"));
+	assert!(fx.exists(&installed_bin("9.9.9")));
 	assert_eq!(fx.stable_link_target(), "lattice-9.9.9");
 }
 
