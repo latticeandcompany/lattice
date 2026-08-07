@@ -6,7 +6,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{bail, Result};
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef;
 use petgraph::Direction;
+
+use serde::Serialize;
 
 use lattice_config::LatticeConfig;
 use lattice_workspace::Workspace;
@@ -290,6 +293,83 @@ pub fn dry_run_order(graph: &ExecutionGraph) -> Vec<&TaskNode> {
 		.iter()
 		.map(|&idx| &graph.graph[idx])
 		.collect()
+}
+
+/// How a node is named outside the graph. Positions are meaningless to anything
+/// that did not build the graph, so a dump identifies nodes the way the rest of
+/// Lattice does — the label a run reports and a filter matches.
+pub fn node_id(workspace: &str, task: &str) -> String {
+	format!("{workspace}:{task}")
+}
+
+/// One node of a [`GraphDump`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphNode {
+	pub id: String,
+	pub workspace: String,
+	pub task: String,
+	pub command: String,
+	pub persistent: bool,
+	pub pulled_in: bool,
+}
+
+/// A dependency: `from` must finish before `to` may start.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphEdge {
+	pub from: String,
+	pub to: String,
+	/// A `^task` dependency, satisfied by another workspace rather than this one.
+	pub cross_workspace: bool,
+}
+
+/// A graph in a form something outside this crate can read.
+///
+/// `nodes` follows the topological order, so reading it front to back is a valid
+/// execution order and a layered drawing can assign depth without sorting first.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphDump {
+	pub nodes: Vec<GraphNode>,
+	pub edges: Vec<GraphEdge>,
+}
+
+pub fn dump_graph(graph: &ExecutionGraph) -> GraphDump {
+	let nodes: Vec<GraphNode> = graph
+		.topo_order
+		.iter()
+		.map(|&idx| {
+			let node = &graph.graph[idx];
+			GraphNode {
+				id: node_id(&node.workspace_name, &node.task_name),
+				workspace: node.workspace_name.clone(),
+				task: node.task_name.clone(),
+				command: node.command.clone(),
+				persistent: node.is_persistent,
+				pulled_in: node.pulled_in,
+			}
+		})
+		.collect();
+
+	let mut edges: Vec<GraphEdge> = graph
+		.graph
+		.edge_references()
+		.map(|edge| {
+			let from = &graph.graph[edge.source()];
+			let to = &graph.graph[edge.target()];
+			GraphEdge {
+				from: node_id(&from.workspace_name, &from.task_name),
+				to: node_id(&to.workspace_name, &to.task_name),
+				cross_workspace: from.workspace_name != to.workspace_name,
+			}
+		})
+		.collect();
+	// Petgraph's edge order is an insertion detail. Sorting makes two dumps of
+	// the same graph compare equal, which is what lets a caller diff them.
+	edges.sort_unstable_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+
+	GraphDump { nodes, edges }
 }
 
 /// The scheduling shape of the DAG, decoupled from petgraph so it can be unit
@@ -678,5 +758,120 @@ mod tests {
 		assert_eq!(sched.dependents[a], vec![b]);
 		assert!(sched.dependents[b].is_empty());
 		assert_eq!(sched.initial_ready(), vec![a]);
+	}
+	#[test]
+	fn a_dump_lists_nodes_in_topological_order() {
+		let workspaces = vec![ws(
+			"api",
+			&[],
+			&[("build", "make api"), ("codegen", "make codegen")],
+		)];
+		let build = PipelineTask {
+			depends_on: Some(vec!["codegen".to_string()]),
+			..Default::default()
+		};
+		let codegen = PipelineTask::default();
+		let cfg = config(&[("build", build), ("codegen", codegen)]);
+		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+
+		let dump = dump_graph(&graph);
+		let order: Vec<&str> = dump.nodes.iter().map(|n| n.id.as_str()).collect();
+		assert_eq!(order, vec!["api:codegen", "api:build"]);
+	}
+
+	#[test]
+	fn a_dump_keeps_every_edge_and_points_it_at_the_dependent() {
+		let workspaces = vec![
+			ws("core", &[], &[("build", "make core")]),
+			ws("web", &["core"], &[("build", "make web")]),
+		];
+		let build = PipelineTask {
+			depends_on: Some(vec!["^build".to_string()]),
+			..Default::default()
+		};
+		let cfg = config(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+
+		let dump = dump_graph(&graph);
+		assert_eq!(
+			dump.edges.len(),
+			graph.graph.edge_count(),
+			"every edge in the graph has to survive the dump"
+		);
+		let edge = &dump.edges[0];
+		assert_eq!(edge.from, "core:build");
+		assert_eq!(edge.to, "web:build");
+		assert!(edge.cross_workspace);
+	}
+
+	#[test]
+	fn a_same_workspace_edge_is_not_marked_cross_workspace() {
+		let workspaces = vec![ws("api", &[], &[("build", "b"), ("codegen", "c")])];
+		let build = PipelineTask {
+			depends_on: Some(vec!["codegen".to_string()]),
+			..Default::default()
+		};
+		let cfg = config(&[("build", build), ("codegen", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+
+		let dump = dump_graph(&graph);
+		assert_eq!(dump.edges.len(), 1);
+		assert!(!dump.edges[0].cross_workspace);
+	}
+
+	#[test]
+	fn a_diamond_dumps_all_four_of_its_edges_in_a_stable_order() {
+		let workspaces = vec![
+			ws("base", &[], &[("build", "b")]),
+			ws("left", &["base"], &[("build", "b")]),
+			ws("right", &["base"], &[("build", "b")]),
+			ws("top", &["left", "right"], &[("build", "b")]),
+		];
+		let build = PipelineTask {
+			depends_on: Some(vec!["^build".to_string()]),
+			..Default::default()
+		};
+		let cfg = config(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+
+		let dump = dump_graph(&graph);
+		let pairs: Vec<(&str, &str)> = dump
+			.edges
+			.iter()
+			.map(|e| (e.from.as_str(), e.to.as_str()))
+			.collect();
+		assert_eq!(
+			pairs,
+			vec![
+				("base:build", "left:build"),
+				("base:build", "right:build"),
+				("left:build", "top:build"),
+				("right:build", "top:build"),
+			]
+		);
+	}
+
+	#[test]
+	fn a_node_dump_uses_camel_case_on_the_wire() {
+		let workspaces = vec![ws("web", &[], &[("dev", "vite")])];
+		let dev = PipelineTask {
+			persistent: Some(true),
+			..Default::default()
+		};
+		let cfg = config(&[("dev", dev)]);
+		let graph = build_execution_graph(&workspaces, "dev", &cfg).unwrap();
+
+		let value = serde_json::to_value(dump_graph(&graph)).unwrap();
+		assert_eq!(
+			value["nodes"][0],
+			serde_json::json!({
+				"id": "web:dev",
+				"workspace": "web",
+				"task": "dev",
+				"command": "vite",
+				"persistent": true,
+				"pulledIn": false
+			})
+		);
 	}
 }

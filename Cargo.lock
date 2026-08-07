@@ -358,6 +358,8 @@ dependencies = [
  "lattice-config",
  "lattice-workspace",
  "petgraph",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
