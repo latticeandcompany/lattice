@@ -10,6 +10,15 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### A declared env name reaches the key even when it is unset — 2026-08-07
+
+Only resolved `(name, value)` pairs were hashed, so a name in `env` or `globalEnv`
+that the environment did not answer contributed nothing at all. Adding one
+therefore hit the entry computed before it was declared, and went on hitting once
+the variable was set, because the value had never been part of the key to begin
+with. The name is now hashed whether or not it resolves, with a set value and an
+unset marker as distinct cases.
+
 ### A task command with a quote in it works on Windows — 2026-08-07
 
 A task's command was handed to `cmd` as an ordinary argument. Rust quotes

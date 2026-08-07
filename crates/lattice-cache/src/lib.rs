@@ -618,8 +618,9 @@ pub struct HashInputs<'a> {
 	/// Repo root, so lockfiles hoisted above the workspace are hashed too.
 	pub repo_root: &'a Path,
 	pub pipeline_task: &'a PipelineTask,
-	/// Resolved `(name, value)` environment pairs. Sorted by name here.
-	pub env_values: &'a [(String, String)],
+	/// Every name the task declares in `env`, each with its resolved value when it
+	/// is set. Sorted by name here.
+	pub env_values: &'a [(String, Option<String>)],
 	/// Identity string of the resolved toolchains (empty if none).
 	pub toolchain_identity: &'a str,
 	pub lattice_version: &'a str,
@@ -630,8 +631,9 @@ pub struct HashInputs<'a> {
 	/// [`global_dependencies_digest`]. The same for every task in a run, so it is
 	/// computed once rather than per task.
 	pub global_digest: &'a str,
-	/// Resolved `(name, value)` pairs for the repo's `globalEnv`. Sorted here.
-	pub global_env_values: &'a [(String, String)],
+	/// Every name the repo declares in `globalEnv`, each with its resolved value
+	/// when it is set. Sorted here.
+	pub global_env_values: &'a [(String, Option<String>)],
 }
 
 /// The names of the parts a cache key is composed from, in hashing order.
@@ -875,14 +877,23 @@ fn try_digest_of(f: impl FnOnce(&mut Sha256) -> Result<()>) -> Result<String> {
 	Ok(hex::encode(hasher.finalize()))
 }
 
-/// Digest of `(name, value)` env pairs, sorted by name for determinism.
-fn digest_of_env(values: &[(String, String)]) -> String {
-	let mut sorted: Vec<&(String, String)> = values.iter().collect();
+/// Digest of the declared env names and their resolved values, sorted by name.
+///
+/// The name is hashed whether or not the variable is set, so declaring one is
+/// itself a change: a name that resolves to nothing today is still a statement
+/// about what the task depends on, and "declared but unset" has to be a
+/// different key from "never declared" — otherwise adding a name to the list
+/// quietly hits an entry computed without it.
+fn digest_of_env(values: &[(String, Option<String>)]) -> String {
+	let mut sorted: Vec<&(String, Option<String>)> = values.iter().collect();
 	sorted.sort_by(|a, b| a.0.cmp(&b.0));
 	digest_of(|h| {
 		for (name, value) in sorted {
 			hash_field(h, "env.name", name.as_bytes());
-			hash_field(h, "env.value", value.as_bytes());
+			match value {
+				Some(v) => hash_field(h, "env.value", v.as_bytes()),
+				None => hash_field(h, "env.unset", b""),
+			}
 		}
 	})
 }
@@ -1286,7 +1297,7 @@ mod tests {
 	fn base_inputs<'a>(
 		ws: &'a Path,
 		task: &'a PipelineTask,
-		env: &'a [(String, String)],
+		env: &'a [(String, Option<String>)],
 	) -> HashInputs<'a> {
 		HashInputs {
 			task: "build",
@@ -1593,8 +1604,8 @@ mod tests {
 	fn a_global_env_change_moves_the_key() {
 		let dir = TempDir::new().unwrap();
 		let task = PipelineTask::default();
-		let one = [("NODE_ENV".to_string(), "development".to_string())];
-		let two = [("NODE_ENV".to_string(), "production".to_string())];
+		let one = [("NODE_ENV".to_string(), Some("development".to_string()))];
+		let two = [("NODE_ENV".to_string(), Some("production".to_string()))];
 
 		let mut a = base_inputs(dir.path(), &task, &[]);
 		a.global_env_values = &one;
@@ -1909,7 +1920,7 @@ mod tests {
 			inputs: Some(vec!["src/*.rs".to_string()]),
 			..Default::default()
 		};
-		let env = vec![("A".to_string(), "1".to_string())];
+		let env = vec![("A".to_string(), Some("1".to_string()))];
 		let k1 = compute_key(&base_inputs(dir.path(), &task, &env)).unwrap();
 		let k2 = compute_key(&base_inputs(dir.path(), &task, &env)).unwrap();
 		assert_eq!(k1, k2);
@@ -1944,11 +1955,35 @@ mod tests {
 	fn hash_changes_with_env_value() {
 		let dir = TempDir::new().unwrap();
 		let task = PipelineTask::default();
-		let a = vec![("KEY".to_string(), "one".to_string())];
-		let b = vec![("KEY".to_string(), "two".to_string())];
+		let a = vec![("KEY".to_string(), Some("one".to_string()))];
+		let b = vec![("KEY".to_string(), Some("two".to_string()))];
 		let ka = compute_key(&base_inputs(dir.path(), &task, &a)).unwrap();
 		let kb = compute_key(&base_inputs(dir.path(), &task, &b)).unwrap();
 		assert_ne!(ka, kb);
+	}
+
+	/// Declaring a name that resolves to nothing is still a statement about what
+	/// the task depends on. If it did not move the key, adding it would hit an
+	/// entry computed without it — and go on hitting once the variable was set.
+	#[test]
+	fn hash_changes_when_an_unset_name_is_declared() {
+		let dir = TempDir::new().unwrap();
+		let task = PipelineTask::default();
+		let declared = vec![("NEVER_SET_ANYWHERE".to_string(), None)];
+
+		let undeclared = compute_key(&base_inputs(dir.path(), &task, &[])).unwrap();
+		let unset = compute_key(&base_inputs(dir.path(), &task, &declared)).unwrap();
+		assert_ne!(
+			undeclared, unset,
+			"declared-but-unset must not share a key with never-declared"
+		);
+
+		// And once it is set, that is a third key again.
+		let set = vec![("NEVER_SET_ANYWHERE".to_string(), Some("1".to_string()))];
+		assert_ne!(
+			unset,
+			compute_key(&base_inputs(dir.path(), &task, &set)).unwrap()
+		);
 	}
 
 	#[test]

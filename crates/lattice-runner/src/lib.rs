@@ -343,7 +343,7 @@ struct TaskRunContext {
 	/// Digest of the repo's `globalDependencies`, computed once for the run.
 	global_digest: Arc<str>,
 	/// Resolved values of the repo's `globalEnv` names.
-	global_env: Arc<[(String, String)]>,
+	global_env: Arc<[(String, Option<String>)]>,
 	/// Live child process groups, so an interrupt can reach every one of them.
 	children: ChildRegistry,
 }
@@ -351,36 +351,33 @@ struct TaskRunContext {
 /// A persistent child process, owned by the reaper task that waits on it.
 struct PersistentChild {
 	child: tokio::process::Child,
-	#[cfg(unix)]
-	pgid: Option<i32>,
+	/// The child's pid: the process group to signal on unix, the root of the tree
+	/// to take down elsewhere. Needed on every platform — without it, killing the
+	/// shell leaves whatever it started holding this task's output pipes, and the
+	/// run cannot finish draining them.
+	pid: Option<u32>,
 }
 
 impl PersistentChild {
-	/// On unix, signal the child's whole process group so a server launched
-	/// through a shell dies along with the shell. Elsewhere, nothing: only the
-	/// direct child can be killed.
-	fn kill_group(&self) {
+	/// Take down anything the child left behind after it exited on its own.
+	///
+	/// The shell is gone but what it backgrounded is not, and it still holds the
+	/// pipes. There is nothing to be graceful with at this point.
+	async fn stop_leftovers(&self) {
+		let Some(pid) = self.pid else { return };
 		#[cfg(unix)]
-		if let Some(pgid) = self.pgid {
-			signal_group(pgid as u32, Stop::Kill);
-		}
+		signal_group(pid, Stop::Kill);
+		#[cfg(not(unix))]
+		kill_tree(pid).await;
 	}
 
-	/// Stop the child and its group, then reap it.
+	/// Stop the child and everything it started, then reap it.
 	///
-	/// A dev server gets the same `SIGTERM`-then-kill treatment as any other
-	/// task: it may hold a port or a socket file it needs a moment to release.
-	///
-	/// Waiting on the child is what ends the grace period, rather than probing
-	/// the group for liveness: a signalled process stays a zombie until someone
-	/// reaps it, and nothing here would be doing the reaping, so the probe would
-	/// report it alive until the deadline every single time.
+	/// A dev server gets the same treatment as any other task: on unix a
+	/// `SIGTERM`, a grace period, then a kill, since it may hold a port or a
+	/// socket file it needs a moment to release.
 	async fn terminate(mut self) {
-		#[cfg(unix)]
-		let pid = self.pgid.map(|p| p as u32);
-		#[cfg(not(unix))]
-		let pid = None;
-
+		let pid = self.pid;
 		stop_child(&mut self.child, pid).await;
 		let _ = self.child.wait().await;
 	}
@@ -658,13 +655,13 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	// reading it once per task.
 	let global_digest: Arc<str> =
 		Arc::from(global_dependencies_digest(root, &config.global_dependencies)?.as_str());
-	let mut global_env_values: Vec<(String, String)> = config
+	let mut global_env_values: Vec<(String, Option<String>)> = config
 		.global_env
 		.iter()
-		.filter_map(|name| std::env::var(name).ok().map(|val| (name.clone(), val)))
+		.map(|name| (name.clone(), std::env::var(name).ok()))
 		.collect();
 	global_env_values.sort_by(|a, b| a.0.cmp(&b.0));
-	let global_env: Arc<[(String, String)]> = Arc::from(global_env_values);
+	let global_env: Arc<[(String, Option<String>)]> = Arc::from(global_env_values);
 
 	// Ctrl-C and SIGTERM. Each child sits in its own process group, so the
 	// terminal's signal never reaches it and the run has to pass it on itself;
@@ -942,13 +939,15 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	let task = spec.task_name.clone();
 	let pt = &spec.pipeline_task;
 
-	// Resolved env values for this task's declared `env` names, sorted by name.
-	let mut env_values: Vec<(String, String)> = pt
+	// Every name the task declares, with its value where it is set. The unset ones
+	// are kept: declaring a name is part of what the task depends on, so it has to
+	// reach the key whether or not the environment happens to answer.
+	let mut env_values: Vec<(String, Option<String>)> = pt
 		.env
 		.as_deref()
 		.unwrap_or(&[])
 		.iter()
-		.filter_map(|name| std::env::var(name).ok().map(|val| (name.clone(), val)))
+		.map(|name| (name.clone(), std::env::var(name).ok()))
 		.collect();
 	env_values.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -1036,8 +1035,10 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	let mut cmd = build_shell_command(&spec.command);
 	cmd.current_dir(&spec.ws_path);
 	apply_path_prepend(&mut cmd, &spec.path_prepend);
-	for (k, v) in &env_values {
-		cmd.env(k, v);
+	for (name, value) in &env_values {
+		if let Some(value) = value {
+			cmd.env(name, value);
+		}
 	}
 	cmd.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::piped());
@@ -1076,13 +1077,10 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			);
 		});
 
-		#[cfg(unix)]
 		let pc = PersistentChild {
-			pgid: child.id().map(|id| id as i32),
+			pid: child.id(),
 			child,
 		};
-		#[cfg(not(unix))]
-		let pc = PersistentChild { child };
 
 		let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
 		let reaper = tokio::spawn(reap_persistent(ReapContext {
@@ -1181,7 +1179,10 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 				workspace: ws.clone(),
 				duration_ms,
 				last_used: chrono::Utc::now(),
-				env: env_values.iter().cloned().collect(),
+				env: env_values
+					.iter()
+					.filter_map(|(n, v)| v.clone().map(|v| (n.clone(), v)))
+					.collect(),
 				output_digest: String::new(),
 				outputs: Vec::new(),
 				artifact_size: 0,
@@ -1258,10 +1259,10 @@ async fn reap_persistent(ctx: ReapContext) {
 		}
 	};
 
-	// The shell is gone, but anything it backgrounded is not. Kill the rest of
-	// the group so a half-dead dev server does not keep a port (or this task's
-	// output pipes) held open for the remainder of the run.
-	child.kill_group();
+	// The shell is gone, but anything it backgrounded is not. Take the rest down
+	// so a half-dead dev server does not keep a port — or this task's output
+	// pipes — held open for the remainder of the run.
+	child.stop_leftovers().await;
 
 	if shutting_down.load(Ordering::SeqCst) {
 		return;

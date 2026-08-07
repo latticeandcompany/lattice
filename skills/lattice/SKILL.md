@@ -208,8 +208,8 @@ That makes six fields yours to get right:
   declares `outputs` and produces none of them is not cached at all, and warns.
   `test` and `lint` usually need none.
 - `env` — variable *names*, not `NAME=value` pairs. The resolved value is
-  hashed and exported to the task. An unset name contributes nothing. Lattice
-  does not read `.env` files.
+  hashed and exported to the task. An unset name is still hashed as declared, so
+  adding one moves the key. Lattice does not read `.env` files.
 - `globalDependencies` (root level) — repo-root-relative globs hashed into every
   task's key. The only way to cover a file above the workspace: a base
   `tsconfig.json`, a shared schema directory, a root `.env`. Editing anything it

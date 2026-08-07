@@ -42,8 +42,10 @@ task last resolved to names which. That comparison is what
    declared, or the literal `<unset>` when a field is absent. Widening `outputs`
    therefore produces a different key, rather than hitting an entry that captured
    the narrower set and restoring less than the run made.
-6. `env` — one `name`/`value` pair per name listed in the task's `env`, resolved
-   from the process environment, sorted by name.
+6. `env` — one entry per name listed in the task's `env`, sorted by name. The
+   name is hashed whether or not the variable is set; a set one contributes its
+   resolved value and an unset one a distinct marker, so declaring a name is
+   itself a change to the key.
 7. `globalEnv` — the same, for the names listed in the repo-level `globalEnv`.
 8. `inputs` — one `path`/`content` pair per input file, sorted by path relative
    to the workspace, with the file's full contents hashed in. The set is the

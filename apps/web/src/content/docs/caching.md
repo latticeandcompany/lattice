@@ -157,8 +157,9 @@ files — an API base URL, a target platform, a feature flag:
 
 Each name is resolved from your current environment when the key is computed,
 and the resolved value — not just the name — is hashed in. The same names are
-exported into the task's process when it runs. A variable that is not set
-contributes nothing to the key, exactly as if it were not listed.
+exported into the task's process when it runs. A name that resolves to nothing is
+still hashed as declared-and-unset, so adding one to the list moves the key even
+before the variable exists, and setting it later moves the key again.
 
 The failure modes match `inputs`: an omitted variable that changes behavior
 gives you a stale hit, and a listed variable the command never reads forces

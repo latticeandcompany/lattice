@@ -91,7 +91,9 @@ provisioning](/lattice/docs/engines) for what gets installed into
 Lattice reads each name from its own process environment — whatever was
 exported into the shell you ran `lattice` from. It does not load `.env` files;
 a variable defined only in one is unset as far as Lattice is concerned. A name
-with no value contributes nothing, the same as if it weren't listed.
+with no value is still hashed as declared-and-unset, which is a different key
+from not listing it at all — otherwise adding a name would hit an entry computed
+without it, and keep hitting after the variable was set.
 
 The resolved `(name, value)` pairs are sorted by name and hashed into the
 task's cache key alongside its command, its input files, and its resolved
