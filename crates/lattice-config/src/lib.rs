@@ -671,18 +671,27 @@ impl LatticeConfig {
 /// input walk, the output globs, the clear-before-restore a cache hit does —
 /// treats it as the boundary of what a task may touch.
 fn check_contained_path(name: &str, path: &str) -> Result<()> {
-	let p = Path::new(path);
-	if p.is_absolute() {
+	// Judged as text rather than through `Path`, because `Path` answers for the
+	// platform it is running on and a `lattice.json` is committed and shared. On
+	// unix `C:\Windows` is one ordinary filename and `\etc` is a relative one; on
+	// Windows both resolve to a drive root and leave the repo. A path that escapes
+	// anywhere has to be rejected everywhere, or the same config means two things.
+	let bytes = path.as_bytes();
+	let rooted = path.starts_with('/') || path.starts_with('\\');
+	let drive_prefixed = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+	if rooted || drive_prefixed {
 		bail!(
-			"workspace '{name}' has an absolute path '{path}'; workspace paths are \
-			 relative to the repo root"
+			"workspace '{name}' has a path '{path}' that is not relative to the repo \
+			 root; workspace paths are relative to it"
 		);
 	}
+
+	// Both separators, for the same reason.
 	let mut depth: i32 = 0;
-	for comp in p.components() {
-		match comp {
-			std::path::Component::ParentDir => depth -= 1,
-			std::path::Component::CurDir => {}
+	for part in path.split(['/', '\\']) {
+		match part {
+			"" | "." => {}
+			".." => depth -= 1,
 			_ => depth += 1,
 		}
 		if depth < 0 {
@@ -1300,9 +1309,20 @@ mod tests {
 		assert!(message.contains("'compile'"), "{message}");
 	}
 
+	/// `/etc` is not "absolute" on Windows — it names no drive — but `join`
+	/// resolves it to the drive root all the same, so it leaves the repo just as
+	/// an absolute path does. Every spelling that does that has to be rejected on
+	/// every platform, or the guard holds only where it was written.
 	#[test]
 	fn validate_rejects_a_workspace_path_outside_the_repo() {
-		for path in ["../outside", "apps/../../outside", "/etc"] {
+		for path in [
+			"../outside",
+			"apps/../../outside",
+			"/etc",
+			"\\etc",
+			"C:\\Windows",
+			"C:etc",
+		] {
 			let config: LatticeConfig =
 				serde_json::from_value(json!({ "workspaces": [{ "name": "esc", "path": path }] }))
 					.unwrap();
