@@ -9,7 +9,7 @@ use dagger::{
 };
 use lattice_config::find_root;
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, OutputMode};
-use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure};
+use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure, RunInterrupted};
 use lattice_workspace::discover_workspaces;
 
 use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag, BIN_VERSION};
@@ -208,6 +208,11 @@ impl RunArgs {
 					shutdown: make_shutdown(),
 				};
 				if let Err(err) = execute_tasks(opts).await {
+					// An interrupt ends the whole run, not just this phase: the
+					// person who pressed Ctrl-C did not mean "skip to the next one".
+					if err.downcast_ref::<RunInterrupted>().is_some() {
+						std::process::exit(INTERRUPTED_EXIT);
+					}
 					if self.keep_going {
 						// A phase failed; carry on through the remaining phases.
 						failed_any = true;
@@ -246,6 +251,9 @@ impl RunArgs {
 		match execute_tasks(opts).await {
 			Ok(_) => Ok(()),
 			Err(err) => {
+				if err.downcast_ref::<RunInterrupted>().is_some() {
+					std::process::exit(INTERRUPTED_EXIT);
+				}
 				// The runner already printed the run summary (including for a
 				// keep-going RunFailure); just propagate a non-zero exit.
 				if err.downcast_ref::<RunFailure>().is_some() {
@@ -256,6 +264,11 @@ impl RunArgs {
 		}
 	}
 }
+
+/// Exit status for a run stopped by Ctrl-C or `SIGTERM`. The shell convention is
+/// 128 + the signal number, and 2 is `SIGINT`; a CI runner that cancelled the job
+/// can tell that apart from a build that genuinely failed.
+const INTERRUPTED_EXIT: i32 = 130;
 
 /// Print a task graph's topological order under a banner (used by `--dry-run`).
 fn print_dry_run(banner: &str, graph: &ExecutionGraph) {

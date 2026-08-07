@@ -14,6 +14,7 @@
   "engines": {
     "cargo": ">=1.86.0"
   },
+  "globalDependencies": ["Cargo.toml"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

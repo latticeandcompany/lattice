@@ -22,7 +22,10 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use dagger::{build_schedule, ExecutionGraph, Schedule};
-use lattice_cache::{compute_key, CacheMeta, CacheStore, HashInputs, LocalStore};
+use lattice_cache::{
+	compute_key_detailed, global_dependencies_digest, CacheMeta, CacheStore, HashInputs,
+	KeyBreakdown, LocalStore,
+};
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
 use lattice_output::{Reporter, TaskEvent};
 use lattice_workspace::toolchain;
@@ -32,6 +35,11 @@ use lattice_workspace::Workspace;
 /// expand-on-failure surface. Beyond this, lines are still streamed live but not
 /// buffered, bounding memory for pathological tasks.
 const MAX_CAPTURED_LINES: usize = 5000;
+
+/// How long a child gets to exit on its own after being asked to stop, before it
+/// is killed outright. Long enough for a compiler to finish the file it is
+/// writing and drop its lock; short enough that Ctrl-C still feels immediate.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunResult {
@@ -72,6 +80,150 @@ impl std::fmt::Display for RunFailure {
 }
 
 impl std::error::Error for RunFailure {}
+
+/// Returned when the run was cut short by Ctrl-C or a `SIGTERM`. The tasks that
+/// were still running were killed on the way out, which is not the same thing as
+/// their having failed, and the summary should not read as though it were.
+#[derive(Debug)]
+pub struct RunInterrupted {
+	pub result: RunResult,
+}
+
+impl std::fmt::Display for RunInterrupted {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "interrupted — running tasks were stopped")
+	}
+}
+
+impl std::error::Error for RunInterrupted {}
+
+/// The process groups of the children currently running, so a signal can reach
+/// all of them at once.
+///
+/// Every child is spawned into its own process group, which is what lets a task
+/// that shells out have its whole tree cleaned up. The same call detaches it
+/// from the terminal's foreground group, so Ctrl-C never reaches it on its own
+/// and the run has to pass the signal on deliberately.
+#[derive(Clone, Default)]
+struct ChildRegistry {
+	pids: Arc<Mutex<Vec<u32>>>,
+}
+
+impl ChildRegistry {
+	fn add(&self, pid: u32) {
+		self.pids.lock().unwrap().push(pid);
+	}
+
+	fn remove(&self, pid: u32) {
+		self.pids.lock().unwrap().retain(|p| *p != pid);
+	}
+
+	fn snapshot(&self) -> Vec<u32> {
+		self.pids.lock().unwrap().clone()
+	}
+
+	/// Ask every live child's group to stop, then kill whatever is still there.
+	async fn terminate_all(&self) {
+		terminate_groups(&self.snapshot()).await;
+	}
+}
+
+/// Ask each process group to stop, wait for them to go, and kill whatever is
+/// still standing when [`SHUTDOWN_GRACE`] runs out.
+///
+/// The wait ends as soon as the groups are gone rather than always running to
+/// the deadline: almost everything exits on the first signal, and making Ctrl-C
+/// pause for the full grace period every time would teach people to hit it twice.
+async fn terminate_groups(pids: &[u32]) {
+	if pids.is_empty() {
+		return;
+	}
+	for pid in pids {
+		signal_group(*pid, Stop::Terminate);
+	}
+
+	let deadline = Instant::now() + SHUTDOWN_GRACE;
+	while Instant::now() < deadline {
+		if !pids.iter().copied().any(group_alive) {
+			return;
+		}
+		tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+	}
+
+	for pid in pids {
+		signal_group(*pid, Stop::Kill);
+	}
+}
+
+/// Whether any process remains in `pid`'s group.
+fn group_alive(pid: u32) -> bool {
+	#[cfg(unix)]
+	{
+		// SAFETY: signal 0 performs the existence and permission check without
+		// delivering anything.
+		unsafe { libc::kill(-(pid as i32), 0) == 0 }
+	}
+	#[cfg(not(unix))]
+	{
+		let _ = pid;
+		false
+	}
+}
+
+#[derive(Clone, Copy)]
+enum Stop {
+	Terminate,
+	Kill,
+}
+
+/// Signal a child's whole process group, so a task that launched a server or a
+/// build daemon through a shell takes it down too.
+///
+/// On platforms without process groups only the direct child can be reached, and
+/// [`tokio::process::Child`] owns the handle needed to do it — there, a child
+/// outliving the run is left to the console's own Ctrl-C handling.
+fn signal_group(pid: u32, stop: Stop) {
+	#[cfg(unix)]
+	{
+		let signal = match stop {
+			Stop::Terminate => libc::SIGTERM,
+			Stop::Kill => libc::SIGKILL,
+		};
+		// SAFETY: `kill(2)` with a negative pid signals the process group; an
+		// invalid or already-dead group is a harmless ESRCH.
+		unsafe {
+			libc::kill(-(pid as i32), signal);
+		}
+	}
+	#[cfg(not(unix))]
+	{
+		let _ = (pid, stop);
+	}
+}
+
+/// Resolve to the first interrupt the run receives: Ctrl-C, or a `SIGTERM` from
+/// a CI runner cancelling the job.
+async fn interrupt_signal() {
+	#[cfg(unix)]
+	{
+		use tokio::signal::unix::{signal, SignalKind};
+		let mut term = match signal(SignalKind::terminate()) {
+			Ok(s) => s,
+			Err(_) => {
+				let _ = tokio::signal::ctrl_c().await;
+				return;
+			}
+		};
+		tokio::select! {
+			_ = tokio::signal::ctrl_c() => {}
+			_ = term.recv() => {}
+		}
+	}
+	#[cfg(not(unix))]
+	{
+		let _ = tokio::signal::ctrl_c().await;
+	}
+}
 
 /// Arguments for [`execute_tasks`].
 pub struct ExecuteOptions<'a> {
@@ -132,6 +284,12 @@ struct TaskRunContext {
 	tx: UnboundedSender<RunnerMsg>,
 	persistent_watches: Arc<Mutex<Vec<PersistentWatch>>>,
 	shutting_down: Arc<AtomicBool>,
+	/// Digest of the repo's `globalDependencies`, computed once for the run.
+	global_digest: Arc<str>,
+	/// Resolved values of the repo's `globalEnv` names.
+	global_env: Arc<[(String, String)]>,
+	/// Live child process groups, so an interrupt can reach every one of them.
+	children: ChildRegistry,
 }
 
 /// A persistent child process, owned by the reaper task that waits on it.
@@ -148,17 +306,19 @@ impl PersistentChild {
 	fn kill_group(&self) {
 		#[cfg(unix)]
 		if let Some(pgid) = self.pgid {
-			// SAFETY: `kill(2)` with a negative pid signals the process group;
-			// an invalid/already-dead group is a harmless ESRCH.
-			unsafe {
-				libc::kill(-pgid, libc::SIGKILL);
-			}
+			signal_group(pgid as u32, Stop::Kill);
 		}
 	}
 
-	/// Kill the child and its group, then reap it.
+	/// Stop the child and its group, then reap it.
+	///
+	/// A dev server gets the same `SIGTERM`-then-kill treatment as any other
+	/// task: it may hold a port or a socket file it needs a moment to release.
 	async fn terminate(mut self) {
-		self.kill_group();
+		#[cfg(unix)]
+		if let Some(pgid) = self.pgid {
+			terminate_groups(&[pgid as u32]).await;
+		}
 		let _ = self.child.start_kill();
 		let _ = self.child.wait().await;
 	}
@@ -431,6 +591,38 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let persistent_watches: Arc<Mutex<Vec<PersistentWatch>>> = Arc::new(Mutex::new(Vec::new()));
 	let shutting_down = Arc::new(AtomicBool::new(false));
 
+	// The repo's shared files and env, resolved once: they are the same for every
+	// task in the run, and hashing a shared schema directory per task would mean
+	// reading it once per task.
+	let global_digest: Arc<str> =
+		Arc::from(global_dependencies_digest(root, &config.global_dependencies)?.as_str());
+	let mut global_env_values: Vec<(String, String)> = config
+		.global_env
+		.iter()
+		.filter_map(|name| std::env::var(name).ok().map(|val| (name.clone(), val)))
+		.collect();
+	global_env_values.sort_by(|a, b| a.0.cmp(&b.0));
+	let global_env: Arc<[(String, String)]> = Arc::from(global_env_values);
+
+	// Ctrl-C and SIGTERM. Each child sits in its own process group, so the
+	// terminal's signal never reaches it and the run has to pass it on itself;
+	// without this, an interrupted build leaves its compilers running.
+	let children = ChildRegistry::default();
+	let interrupted = Arc::new(AtomicBool::new(false));
+	let signal_watch = {
+		let abort = abort.clone();
+		let shutting_down = shutting_down.clone();
+		let interrupted = interrupted.clone();
+		let children = children.clone();
+		tokio::spawn(async move {
+			interrupt_signal().await;
+			interrupted.store(true, Ordering::SeqCst);
+			abort.store(true, Ordering::SeqCst);
+			shutting_down.store(true, Ordering::SeqCst);
+			children.terminate_all().await;
+		})
+	};
+
 	let (tx, mut rx) = mpsc::unbounded_channel::<RunnerMsg>();
 
 	let mut remaining_indegree = schedule.indegree.clone();
@@ -491,6 +683,9 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 							tx: tx.clone(),
 							persistent_watches: persistent_watches.clone(),
 							shutting_down: shutting_down.clone(),
+							global_digest: global_digest.clone(),
+							global_env: global_env.clone(),
+							children: children.clone(),
 						};
 						join_set.spawn(async move {
 							let (outcome, key) = run_one(ctx).await;
@@ -546,6 +741,12 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 					}
 					TaskOutcome::Failed { workspace, task } => {
 						total += 1;
+						// A task we killed on the way out did not fail, and a
+						// summary that says it did would contradict the error the
+						// run ends with.
+						if shutting_down.load(Ordering::SeqCst) {
+							continue;
+						}
 						failed += 1;
 						if keep_going {
 							skipped += skip_dependents(
@@ -602,6 +803,29 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		forward(reporter, msg, &mut live_persistent, &mut failed);
 	}
 
+	signal_watch.abort();
+
+	// Keep the local cache inside its declared budget. `maxCacheSize` reads as a
+	// budget, so it has to be one: leaving it to `lattice prune` alone meant a
+	// repo that set it still grew without limit.
+	if !no_store {
+		if let Some(max) = config.settings.max_cache_size {
+			match store.prune(max.as_bytes()) {
+				Ok(report) if report.removed > 0 => reporter.note(&format!(
+					"pruned {} cache {} to stay under {max}",
+					report.removed,
+					if report.removed == 1 {
+						"entry"
+					} else {
+						"entries"
+					}
+				)),
+				Ok(_) => {}
+				Err(e) => reporter.warn(&format!("failed to prune the cache: {e}")),
+			}
+		}
+	}
+
 	let elapsed_ms = global_start.elapsed().as_millis() as u64;
 	reporter.run_summary(total, cached, failed, elapsed_ms);
 	reporter.finish();
@@ -612,6 +836,12 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		failed,
 		elapsed_ms,
 	};
+
+	// An interrupt killed whatever was still running, so those tasks show up as
+	// failures. They did not fail; the run was stopped. Say that instead.
+	if interrupted.load(Ordering::SeqCst) {
+		return Err(RunInterrupted { result }.into());
+	}
 
 	// Fail-fast: return the first failure verbatim (also covers a runner panic).
 	if let Some(msg) = first_failure {
@@ -660,7 +890,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		.collect();
 	env_values.sort_by(|a, b| a.0.cmp(&b.0));
 
-	let key = match compute_key(&HashInputs {
+	let breakdown = match compute_key_detailed(&HashInputs {
 		task: &task,
 		command: &spec.command,
 		workspace_name: &ws,
@@ -671,6 +901,8 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		toolchain_identity: &spec.toolchain_identity,
 		lattice_version: ctx.lattice_version.as_ref(),
 		dep_keys: &ctx.dep_keys,
+		global_digest: ctx.global_digest.as_ref(),
+		global_env_values: &ctx.global_env,
 	}) {
 		Ok(k) => k,
 		Err(e) => {
@@ -682,6 +914,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			};
 		}
 	};
+	let key = breakdown.key.clone();
 
 	*key_slot = Some(key.clone());
 
@@ -719,7 +952,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 				let _ = ctx.tx.send(RunnerMsg::TaskNote {
 					workspace: ws.clone(),
 					task: task.clone(),
-					msg: "cache miss".to_string(),
+					msg: miss_reason(ctx.store.as_ref(), &ws, &task, &breakdown),
 				});
 			}
 			Err(e) => {
@@ -812,25 +1045,72 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 
 	let stdout = child.stdout.take();
 	let stderr = child.stderr.take();
-	let (out_lines, err_lines, status) = tokio::join!(
-		drain_pipe(stdout, false, &ctx.tx, &ws, &task, true, false),
-		drain_pipe(stderr, true, &ctx.tx, &ws, &task, true, false),
-		child.wait(),
-	);
+	let child_pid = child.id();
+	if let Some(pid) = child_pid {
+		ctx.children.add(pid);
+	}
 
-	let mut captured = out_lines;
+	// Draining the pipes has to run alongside the wait: a child that fills its
+	// output buffer blocks until something reads it, and would never exit.
+	// Scoped so the future stops borrowing the labels before they are moved.
+	let (timed_out, out_lines, err_lines, status) = {
+		let run = async {
+			tokio::join!(
+				drain_pipe(stdout, false, &ctx.tx, &ws, &task, true, false),
+				drain_pipe(stderr, true, &ctx.tx, &ws, &task, true, false),
+				child.wait(),
+			)
+		};
+		tokio::pin!(run);
+
+		match pt.effective_timeout() {
+			Some(limit) => match tokio::time::timeout(limit, &mut run).await {
+				Ok((o, e, s)) => (false, o, e, s),
+				Err(_) => {
+					// Stop the whole group, then finish collecting: the pipes close
+					// as the children die, so this resolves rather than hanging.
+					terminate_groups(child_pid.as_slice()).await;
+					let (o, e, s) = run.await;
+					(true, o, e, s)
+				}
+			},
+			None => {
+				let (o, e, s) = run.await;
+				(false, o, e, s)
+			}
+		}
+	};
+
+	if let Some(pid) = child_pid {
+		ctx.children.remove(pid);
+	}
+
+	let mut captured: Vec<(bool, String)> = out_lines;
 	captured.extend(err_lines);
 	let duration_ms = start.elapsed().as_millis() as u64;
 
-	let success = match status {
-		Ok(s) => s.success(),
-		Err(e) => {
-			captured.push((true, format!("failed to wait for task: {e}")));
-			false
+	let success = if timed_out {
+		let limit = pt
+			.timeout
+			.map(|t| t.to_string())
+			.unwrap_or_else(|| "its timeout".to_string());
+		captured.push((true, format!("timed out after {limit} and was stopped")));
+		false
+	} else {
+		match status {
+			Ok(s) => s.success(),
+			Err(e) => {
+				captured.push((true, format!("failed to wait for task: {e}")));
+				false
+			}
 		}
 	};
 
 	if success {
+		// What this task's key was made of, so the next miss can name the part
+		// that moved instead of reporting an opaque hash change.
+		let _ = ctx.store.record_fingerprint(&ws, &task, &breakdown);
+
 		// Store cache artifacts on success (never for persistent / cache:false).
 		if pt.is_cacheable() && !ctx.no_store {
 			let meta = CacheMeta {
@@ -870,6 +1150,24 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			task,
 		}
 	}
+}
+
+/// Why this task did not hit the cache, in the terms the config uses.
+///
+/// A key is one hash: on its own it can say a task missed, never what moved. The
+/// components behind it can, measured against what this task resolved to the
+/// last time it ran.
+fn miss_reason(store: &dyn CacheStore, workspace: &str, task: &str, now: &KeyBreakdown) -> String {
+	let Some(previous) = store.last_fingerprint(workspace, task) else {
+		return "cache miss (nothing cached for this task yet)".to_string();
+	};
+	let changed = now.changed_from(&previous);
+	if changed.is_empty() {
+		// The key matches what last ran, so the entry itself is gone: evicted by a
+		// prune, or dropped as corrupt on the way in.
+		return "cache miss (the entry for this key is no longer in the cache)".to_string();
+	}
+	format!("cache miss: {} changed", changed.join(", "))
 }
 
 /// Wait on one persistent child until either it ends on its own — reported back
@@ -1735,5 +2033,257 @@ mod tests {
 
 	fn root_ws_name() -> &'static str {
 		"app"
+	}
+
+	/// A task's `inputs` are workspace-relative, so a file shared above the
+	/// workspace could never be named there. Nothing covered it: editing the
+	/// shared file left every task hitting cache and restoring a stale artifact.
+	#[tokio::test]
+	async fn a_global_dependency_change_reruns_a_cached_task() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let shared = root.join("shared.json");
+		std::fs::write(&shared, r#"{"mode":"one"}"#).unwrap();
+
+		let workspaces = vec![ws(
+			"app",
+			root,
+			&[("build", "cat ../shared.json > out.txt")],
+		)];
+		let build = PipelineTask {
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+		let mut config = config_with(&[("build", build)]);
+		config.global_dependencies = vec!["shared.json".to_string()];
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let warm = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &warm);
+		o.no_cache = false;
+		o.no_store = false;
+		execute_tasks(o).await.unwrap();
+
+		// Untouched: a hit, as it should be.
+		let again = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &again);
+		o.no_cache = false;
+		o.no_store = false;
+		assert_eq!(execute_tasks(o).await.unwrap().cached, 1);
+
+		std::fs::write(&shared, r#"{"mode":"two"}"#).unwrap();
+
+		let changed = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &changed);
+		o.no_cache = false;
+		o.no_store = false;
+		assert_eq!(
+			execute_tasks(o).await.unwrap().cached,
+			0,
+			"a globalDependencies file must reach the key of every task"
+		);
+		assert_eq!(
+			std::fs::read_to_string(root.join("app/out.txt")).unwrap(),
+			r#"{"mode":"two"}"#,
+			"the restored output must not be the one built from the old file"
+		);
+	}
+
+	#[tokio::test]
+	async fn a_global_env_change_reruns_a_cached_task() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", "echo hi > out.txt")])];
+		let build = PipelineTask {
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+		let mut config = config_with(&[("build", build)]);
+		// PATH is always set, so the value is read from the real environment
+		// without the test having to mutate it.
+		config.global_env = vec!["PATH".to_string()];
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let r1 = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &r1);
+		o.no_cache = false;
+		o.no_store = false;
+		execute_tasks(o).await.unwrap();
+
+		// Declaring a different global env name is a different rule, so the entry
+		// computed under the old one must not answer for it.
+		let mut other = config.clone();
+		other.global_env = vec!["PATH".to_string(), "HOME".to_string()];
+		let graph2 = build_execution_graph(&workspaces, "build", &other).unwrap();
+		let r2 = RecordingReporter::new();
+		let mut o = opts(&graph2, &workspaces, &other, root, &r2);
+		o.no_cache = false;
+		o.no_store = false;
+		assert_eq!(execute_tasks(o).await.unwrap().cached, 0);
+	}
+
+	/// A task with no limit that never exits hangs the whole run, in CI too.
+	#[tokio::test]
+	async fn a_task_that_overruns_its_timeout_is_stopped_and_fails() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let marker = root.join("finished.txt");
+		let cmd = format!("sleep 30; touch {}", marker.display());
+		let workspaces = vec![ws("app", root, &[("build", &cmd)])];
+		let build = PipelineTask {
+			timeout: Some(lattice_config::Duration(1)),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let err = tokio::time::timeout(
+			Duration::from_secs(20),
+			execute_tasks(opts(&graph, &workspaces, &config, root, &r)),
+		)
+		.await
+		.expect("the timeout must end the task well before this one")
+		.unwrap_err();
+
+		// Fail-fast, so the run stops at the first failure and reports it verbatim.
+		assert!(
+			err.to_string().contains("app:build"),
+			"unexpected error: {err}"
+		);
+		assert!(r.has("failed:app:build"));
+		assert!(!marker.exists(), "the task must not have run to completion");
+		assert_eq!(r.summaries.lock().unwrap()[0].2, 1, "the summary counts it");
+	}
+
+	#[tokio::test]
+	async fn a_task_inside_its_timeout_is_untouched() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", "true")])];
+		let build = PipelineTask {
+			timeout: Some(lattice_config::Duration(60)),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let result = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
+			.await
+			.unwrap();
+		assert_eq!(result.failed, 0);
+		assert!(r.has("finished:app:build"));
+	}
+
+	/// Every child runs in its own process group, which is what detaches it from
+	/// the terminal's Ctrl-C. The run has to pass the signal on itself, or an
+	/// interrupted build leaves its compilers running.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn terminating_the_registry_takes_the_whole_child_tree() {
+		let mut cmd = build_shell_command("sleep 121; echo unreachable");
+		cmd.stdout(std::process::Stdio::piped());
+		cmd.process_group(0);
+		let mut child = cmd.spawn().unwrap();
+		let pid = child.id().expect("a freshly spawned child has a pid");
+
+		let registry = ChildRegistry::default();
+		registry.add(pid);
+		assert!(group_alive(pid), "the group is up before we signal it");
+
+		registry.terminate_all().await;
+		// Reap, so the group is genuinely gone rather than a zombie.
+		let _ = child.wait().await;
+		assert!(
+			!group_alive(pid),
+			"no process may survive the run that started it"
+		);
+	}
+
+	/// `maxCacheSize` reads as a budget, so it has to be one. Leaving enforcement
+	/// to `lattice prune` alone meant a repo that set it still grew without limit.
+	#[tokio::test]
+	async fn max_cache_size_is_enforced_after_a_run() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws(
+			"app",
+			root,
+			&[("build", "head -c 200000 /dev/zero | tr '\\0' 'x' > big.bin")],
+		)];
+		let build = PipelineTask {
+			outputs: Some(vec!["big.bin".to_string()]),
+			..Default::default()
+		};
+		let mut config = config_with(&[("build", build)]);
+		config.settings.max_cache_size = Some(lattice_config::CacheSize::parse("1KB").unwrap());
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		for seed in 0..3 {
+			std::fs::write(root.join("app/seed.txt"), format!("seed{seed}")).unwrap();
+			let r = RecordingReporter::new();
+			let mut o = opts(&graph, &workspaces, &config, root, &r);
+			o.no_cache = false;
+			o.no_store = false;
+			execute_tasks(o).await.unwrap();
+		}
+
+		let cache_dir = root
+			.join(config.settings.cache_dir())
+			.join(lattice_cache::CACHE_FORMAT);
+		let total: u64 = std::fs::read_dir(&cache_dir)
+			.unwrap()
+			.flatten()
+			.filter_map(|e| e.metadata().ok())
+			.filter(|m| m.is_file())
+			.map(|m| m.len())
+			.sum();
+		assert!(
+			total <= 1024,
+			"the cache must be held to its declared budget, found {total} bytes"
+		);
+	}
+
+	/// A key is one hash: on its own it can say a task missed, never what moved.
+	#[tokio::test]
+	async fn a_miss_names_the_part_of_the_key_that_moved() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", "echo hi > out.txt")])];
+		std::fs::write(root.join("app/src.txt"), "v1").unwrap();
+		let build = PipelineTask {
+			inputs: Some(vec!["src.txt".to_string()]),
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
+		o.no_cache = false;
+		o.no_store = false;
+		execute_tasks(o).await.unwrap();
+
+		std::fs::write(root.join("app/src.txt"), "v2").unwrap();
+
+		let store = LocalStore::new(root.join(config.settings.cache_dir()));
+		let previous = store
+			.last_fingerprint("app", "build")
+			.expect("the first run records what its key was made of");
+		let mut now = previous.clone();
+		now.components
+			.insert("inputs".to_string(), "moved".to_string());
+
+		let reason = miss_reason(&store, "app", "build", &now);
+		assert!(
+			reason.contains("inputs changed"),
+			"a miss should name the part that moved: {reason}"
+		);
+
+		// A task that has never run has nothing to be measured against.
+		let unseen = miss_reason(&store, "app", "lint", &now);
+		assert!(unseen.contains("nothing cached"), "{unseen}");
 	}
 }

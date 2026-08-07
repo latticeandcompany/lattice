@@ -19,7 +19,7 @@ use lattice_config::{PipelineTask, LOCKFILES, MANIFESTS};
 /// On-disk cache layout and key-composition version. Entries live under a
 /// subdirectory named for it, so changing what goes into a key retires the old
 /// entries wholesale instead of risking a stale hit against a new key.
-pub const CACHE_FORMAT: &str = "v2";
+pub const CACHE_FORMAT: &str = "v3";
 
 /// Whether `name` is one of our own cache-format directories.
 ///
@@ -118,6 +118,20 @@ pub trait CacheStore: Send + Sync {
 	fn prune(&self, max_bytes: u64) -> Result<PruneReport>;
 	/// Touch `last_used` on a hit so LRU ordering reflects reads.
 	fn touch(&self, key: &str) -> Result<()>;
+
+	/// Record what a task's key was composed of this run.
+	///
+	/// A miss is a key that is not there, so the entry that would explain it does
+	/// not exist by definition. What does exist is the last key this task
+	/// resolved to, kept here per `(workspace, task)` rather than per key.
+	fn record_fingerprint(&self, _workspace: &str, _task: &str, _of: &KeyBreakdown) -> Result<()> {
+		Ok(())
+	}
+
+	/// The breakdown this task last resolved to, if one was recorded.
+	fn last_fingerprint(&self, _workspace: &str, _task: &str) -> Option<KeyBreakdown> {
+		None
+	}
 }
 
 /// The on-disk, content-addressed cache. Artifacts live at
@@ -145,6 +159,15 @@ impl LocalStore {
 
 	fn meta_path(&self, key: &str) -> PathBuf {
 		self.cache_dir.join(format!("{key}.meta.json"))
+	}
+
+	/// Where a `(workspace, task)` pair's last key breakdown is kept. Inside the
+	/// format directory, so an upgrade retires these along with the entries they
+	/// describe, and a prune of the format directory takes them with it.
+	fn fingerprint_path(&self, workspace: &str, task: &str) -> PathBuf {
+		self.cache_dir
+			.join("fingerprints")
+			.join(format!("{}.json", fingerprint_id(workspace, task)))
 	}
 
 	/// A staging path unique to this process and moment, so two concurrent stores
@@ -350,6 +373,30 @@ impl CacheStore for LocalStore {
 		Ok(())
 	}
 
+	fn record_fingerprint(&self, workspace: &str, task: &str, of: &KeyBreakdown) -> Result<()> {
+		let path = self.fingerprint_path(workspace, task);
+		let Some(dir) = path.parent() else {
+			return Ok(());
+		};
+		std::fs::create_dir_all(dir)?;
+		// Staged and renamed like the metadata, so a reader never sees half a file.
+		let tmp = dir.join(format!(
+			"{}.{}.tmp",
+			fingerprint_id(workspace, task),
+			std::process::id()
+		));
+		std::fs::write(&tmp, serde_json::to_string(of)?)?;
+		if std::fs::rename(&tmp, &path).is_err() {
+			let _ = std::fs::remove_file(&tmp);
+		}
+		Ok(())
+	}
+
+	fn last_fingerprint(&self, workspace: &str, task: &str) -> Option<KeyBreakdown> {
+		let raw = std::fs::read_to_string(self.fingerprint_path(workspace, task)).ok()?;
+		serde_json::from_str(&raw).ok()
+	}
+
 	fn prune(&self, max_bytes: u64) -> Result<PruneReport> {
 		// Enumerate every cache entry (keyed by its .meta.json), recording the
 		// combined on-disk size of its tarball + meta and its last_used time.
@@ -535,6 +582,15 @@ impl LocalStore {
 	}
 }
 
+/// A filename-safe id for a `(workspace, task)` pair. Hashed rather than
+/// concatenated: either half can contain a path separator.
+fn fingerprint_id(workspace: &str, task: &str) -> String {
+	let mut hasher = Sha256::new();
+	hash_field(&mut hasher, "workspace", workspace.as_bytes());
+	hash_field(&mut hasher, "task", task.as_bytes());
+	hex::encode(hasher.finalize())[..32].to_string()
+}
+
 /// Total size of the regular files directly beneath `dir`, recursively.
 fn dir_size(dir: &Path) -> u64 {
 	let mut total = 0;
@@ -570,6 +626,50 @@ pub struct HashInputs<'a> {
 	/// Resolved cache keys of this task's prerequisites. Sorted here. This is what
 	/// makes a change anywhere upstream reach every task downstream of it.
 	pub dep_keys: &'a [String],
+	/// Digest of the repo's `globalDependencies`, from
+	/// [`global_dependencies_digest`]. The same for every task in a run, so it is
+	/// computed once rather than per task.
+	pub global_digest: &'a str,
+	/// Resolved `(name, value)` pairs for the repo's `globalEnv`. Sorted here.
+	pub global_env_values: &'a [(String, String)],
+}
+
+/// The names of the parts a cache key is composed from, in hashing order.
+///
+/// A key is one opaque hash, which answers "did anything change" and nothing
+/// else. Hashing each part separately and then hashing the parts together keeps
+/// the same answer while making a miss attributable to the part that moved.
+pub const KEY_COMPONENTS: &[&str] = &[
+	"environment",
+	"command",
+	"toolchain",
+	"dependencies",
+	"patterns",
+	"env",
+	"globalEnv",
+	"inputs",
+	"manifests",
+	"globalDependencies",
+];
+
+/// A cache key and the per-part digests it was composed from.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeyBreakdown {
+	pub key: String,
+	/// Component name -> digest, for every name in [`KEY_COMPONENTS`].
+	pub components: HashMap<String, String>,
+}
+
+impl KeyBreakdown {
+	/// The components whose digests differ from `previous`, in [`KEY_COMPONENTS`]
+	/// order. This is what turns "cache miss" into a sentence worth reading.
+	pub fn changed_from(&self, previous: &KeyBreakdown) -> Vec<&'static str> {
+		KEY_COMPONENTS
+			.iter()
+			.copied()
+			.filter(|name| self.components.get(*name) != previous.components.get(*name))
+			.collect()
+	}
 }
 
 /// Write one domain-separated, length-prefixed field into the hasher.
@@ -595,58 +695,86 @@ fn hash_field(hasher: &mut Sha256, tag: &str, bytes: &[u8]) {
 /// Input files, env pairs and dependency keys are sorted before hashing;
 /// lockfiles and manifests are visited in their table order.
 pub fn compute_key(inputs: &HashInputs) -> Result<String> {
-	let mut hasher = Sha256::new();
+	Ok(compute_key_detailed(inputs)?.key)
+}
 
-	hash_field(&mut hasher, "cache_format", CACHE_FORMAT.as_bytes());
-	hash_field(
-		&mut hasher,
-		"lattice_version",
-		inputs.lattice_version.as_bytes(),
+/// [`compute_key`], keeping the per-component digests it was built from.
+///
+/// The key is the hash of the components rather than of the fields directly, so
+/// the two can never disagree about what a task's identity covers.
+pub fn compute_key_detailed(inputs: &HashInputs) -> Result<KeyBreakdown> {
+	let mut components: HashMap<String, String> = HashMap::with_capacity(KEY_COMPONENTS.len());
+
+	// Where the task runs. Two workspaces running the same command must not share
+	// a key, and neither must two platforms or two shells.
+	components.insert(
+		"environment".to_string(),
+		digest_of(|h| {
+			hash_field(h, "cache_format", CACHE_FORMAT.as_bytes());
+			hash_field(h, "lattice_version", inputs.lattice_version.as_bytes());
+			hash_field(h, "platform", platform_tag().as_bytes());
+			hash_field(h, "shell", shell_tag().as_bytes());
+			hash_field(h, "workspace", inputs.workspace_name.as_bytes());
+			hash_field(h, "task", inputs.task.as_bytes());
+		}),
 	);
-	hash_field(&mut hasher, "platform", platform_tag().as_bytes());
-	hash_field(&mut hasher, "shell", shell_tag().as_bytes());
-	hash_field(&mut hasher, "workspace", inputs.workspace_name.as_bytes());
-	hash_field(&mut hasher, "task", inputs.task.as_bytes());
-	hash_field(&mut hasher, "command", inputs.command.as_bytes());
-	hash_field(
-		&mut hasher,
-		"toolchain_identity",
-		inputs.toolchain_identity.as_bytes(),
+
+	components.insert(
+		"command".to_string(),
+		digest_of(|h| hash_field(h, "command", inputs.command.as_bytes())),
+	);
+	components.insert(
+		"toolchain".to_string(),
+		digest_of(|h| {
+			hash_field(
+				h,
+				"toolchain_identity",
+				inputs.toolchain_identity.as_bytes(),
+			)
+		}),
 	);
 
 	// Prerequisite keys: sorted, so scheduling order can't move the key.
-	let mut dep_keys: Vec<&String> = inputs.dep_keys.iter().collect();
-	dep_keys.sort();
-	dep_keys.dedup();
-	for dep in dep_keys {
-		hash_field(&mut hasher, "dep.key", dep.as_bytes());
-	}
+	components.insert(
+		"dependencies".to_string(),
+		digest_of(|h| {
+			let mut dep_keys: Vec<&String> = inputs.dep_keys.iter().collect();
+			dep_keys.sort();
+			dep_keys.dedup();
+			for dep in dep_keys {
+				hash_field(h, "dep.key", dep.as_bytes());
+			}
+		}),
+	);
 
 	// The raw pattern lists, so widening `outputs` (or narrowing `ignore`) is a
 	// different key rather than a hit that restores the older, smaller file set.
 	let ignore_pats = inputs.pipeline_task.ignore.as_deref().unwrap_or(&[]);
-	for (tag, pats) in [
-		("pattern.inputs", inputs.pipeline_task.inputs.as_deref()),
-		("pattern.outputs", inputs.pipeline_task.outputs.as_deref()),
-		("pattern.ignore", Some(ignore_pats)),
-	] {
-		match pats {
-			None => hash_field(&mut hasher, tag, b"<unset>"),
-			Some(list) => {
-				for pat in list {
-					hash_field(&mut hasher, tag, pat.as_bytes());
+	components.insert(
+		"patterns".to_string(),
+		digest_of(|h| {
+			for (tag, pats) in [
+				("pattern.inputs", inputs.pipeline_task.inputs.as_deref()),
+				("pattern.outputs", inputs.pipeline_task.outputs.as_deref()),
+				("pattern.ignore", Some(ignore_pats)),
+			] {
+				match pats {
+					None => hash_field(h, tag, b"<unset>"),
+					Some(list) => {
+						for pat in list {
+							hash_field(h, tag, pat.as_bytes());
+						}
+					}
 				}
 			}
-		}
-	}
+		}),
+	);
 
-	// Env values: sort by name for determinism.
-	let mut env: Vec<&(String, String)> = inputs.env_values.iter().collect();
-	env.sort_by(|a, b| a.0.cmp(&b.0));
-	for (name, value) in env {
-		hash_field(&mut hasher, "env.name", name.as_bytes());
-		hash_field(&mut hasher, "env.value", value.as_bytes());
-	}
+	components.insert("env".to_string(), digest_of_env(inputs.env_values));
+	components.insert(
+		"globalEnv".to_string(),
+		digest_of_env(inputs.global_env_values),
+	);
 
 	// A task's own outputs are never its inputs. If they were, hashing them would
 	// move the key that the previous run just wrote under, and the task could never
@@ -665,43 +793,130 @@ pub fn compute_key(inputs: &HashInputs) -> Result<String> {
 	};
 	files.sort();
 	files.dedup();
-	for file_path in &files {
-		let rel = file_path
-			.strip_prefix(inputs.workspace_path)
-			.unwrap_or(file_path)
-			.to_string_lossy()
-			.into_owned();
-		hash_field(&mut hasher, "input.path", rel.as_bytes());
-		hash_file_into(&mut hasher, "input.content", file_path)?;
-	}
+	components.insert(
+		"inputs".to_string(),
+		try_digest_of(|h| {
+			for file_path in &files {
+				let rel = file_path
+					.strip_prefix(inputs.workspace_path)
+					.unwrap_or(file_path)
+					.to_string_lossy()
+					.into_owned();
+				hash_field(h, "input.path", rel.as_bytes());
+				hash_file_into(h, "input.content", file_path)?;
+			}
+			Ok(())
+		})?,
+	);
 
 	// Manifests and lockfiles in the workspace, then lockfiles at the repo root
 	// (hoisted layouts keep the only lockfile there), in fixed order.
-	for manifest in MANIFESTS {
-		let path = inputs.workspace_path.join(manifest);
-		if path.is_file() {
-			hash_field(&mut hasher, "manifest.name", manifest.as_bytes());
-			hash_file_into(&mut hasher, "manifest.content", &path)?;
-		}
-	}
-	for lockfile in LOCKFILES {
-		let lf = inputs.workspace_path.join(lockfile);
-		if lf.is_file() {
-			hash_field(&mut hasher, "lockfile.name", lockfile.as_bytes());
-			hash_file_into(&mut hasher, "lockfile.content", &lf)?;
-		}
-	}
-	if inputs.repo_root != inputs.workspace_path {
-		for lockfile in LOCKFILES {
-			let lf = inputs.repo_root.join(lockfile);
-			if lf.is_file() {
-				hash_field(&mut hasher, "root.lockfile.name", lockfile.as_bytes());
-				hash_file_into(&mut hasher, "root.lockfile.content", &lf)?;
+	components.insert(
+		"manifests".to_string(),
+		try_digest_of(|h| {
+			for manifest in MANIFESTS {
+				let path = inputs.workspace_path.join(manifest);
+				if path.is_file() {
+					hash_field(h, "manifest.name", manifest.as_bytes());
+					hash_file_into(h, "manifest.content", &path)?;
+				}
 			}
-		}
+			for lockfile in LOCKFILES {
+				let lf = inputs.workspace_path.join(lockfile);
+				if lf.is_file() {
+					hash_field(h, "lockfile.name", lockfile.as_bytes());
+					hash_file_into(h, "lockfile.content", &lf)?;
+				}
+			}
+			if inputs.repo_root != inputs.workspace_path {
+				for lockfile in LOCKFILES {
+					let lf = inputs.repo_root.join(lockfile);
+					if lf.is_file() {
+						hash_field(h, "root.lockfile.name", lockfile.as_bytes());
+						hash_file_into(h, "root.lockfile.content", &lf)?;
+					}
+				}
+			}
+			Ok(())
+		})?,
+	);
+
+	components.insert(
+		"globalDependencies".to_string(),
+		digest_of(|h| hash_field(h, "global.digest", inputs.global_digest.as_bytes())),
+	);
+
+	// The key is the hash of the components, in a fixed order.
+	let mut hasher = Sha256::new();
+	for name in KEY_COMPONENTS {
+		let digest = components
+			.get(*name)
+			.expect("every component in KEY_COMPONENTS is computed above");
+		hash_field(&mut hasher, name, digest.as_bytes());
 	}
 
+	Ok(KeyBreakdown {
+		key: hex::encode(hasher.finalize()),
+		components,
+	})
+}
+
+/// The digest of whatever `f` writes into a fresh hasher.
+fn digest_of(f: impl FnOnce(&mut Sha256)) -> String {
+	let mut hasher = Sha256::new();
+	f(&mut hasher);
+	hex::encode(hasher.finalize())
+}
+
+/// [`digest_of`] for a body that reads files and can fail.
+fn try_digest_of(f: impl FnOnce(&mut Sha256) -> Result<()>) -> Result<String> {
+	let mut hasher = Sha256::new();
+	f(&mut hasher)?;
 	Ok(hex::encode(hasher.finalize()))
+}
+
+/// Digest of `(name, value)` env pairs, sorted by name for determinism.
+fn digest_of_env(values: &[(String, String)]) -> String {
+	let mut sorted: Vec<&(String, String)> = values.iter().collect();
+	sorted.sort_by(|a, b| a.0.cmp(&b.0));
+	digest_of(|h| {
+		for (name, value) in sorted {
+			hash_field(h, "env.name", name.as_bytes());
+			hash_field(h, "env.value", value.as_bytes());
+		}
+	})
+}
+
+/// Digest of the repo's `globalDependencies`: the pattern list, plus the path
+/// and contents of every repo-root-relative file it matches.
+///
+/// A task's `inputs` are workspace-relative, so a file above the workspace
+/// cannot be named there in a way that means the same thing for every
+/// workspace. This is the same value for every task in a run, so the runner
+/// computes it once and hands it to each of them.
+pub fn global_dependencies_digest(repo_root: &Path, patterns: &[String]) -> Result<String> {
+	if patterns.is_empty() {
+		return Ok(String::new());
+	}
+	let expanded = expand_dir_patterns(repo_root, patterns);
+	let mut files = collect_matching_files(repo_root, &expanded, &[])?;
+	files.sort();
+	files.dedup();
+	try_digest_of(|h| {
+		for pat in patterns {
+			hash_field(h, "global.pattern", pat.as_bytes());
+		}
+		for file_path in &files {
+			let rel = file_path
+				.strip_prefix(repo_root)
+				.unwrap_or(file_path)
+				.to_string_lossy()
+				.into_owned();
+			hash_field(h, "global.path", rel.as_bytes());
+			hash_file_into(h, "global.content", file_path)?;
+		}
+		Ok(())
+	})
 }
 
 /// `<os>-<arch>`. A cache directory shared between runners (or between a host and
@@ -1084,6 +1299,8 @@ mod tests {
 			toolchain_identity: "rust-1.80",
 			lattice_version: "0.1.0",
 			dep_keys: &[],
+			global_digest: "",
+			global_env_values: &[],
 		}
 	}
 
@@ -1300,6 +1517,195 @@ mod tests {
 		assert_ne!(before, after, "a root lockfile change must move the key");
 	}
 
+	/// A task's `inputs` are workspace-relative, so a shared file above the
+	/// workspace could not be named in a way that meant the same thing for every
+	/// workspace. Nothing covered it, and editing one served a stale artifact.
+	#[test]
+	fn a_global_dependency_change_moves_the_key() {
+		let root = TempDir::new().unwrap();
+		let ws = root.path().join("apps/web");
+		std::fs::create_dir_all(&ws).unwrap();
+		let shared = root.path().join("tsconfig.base.json");
+		write(&shared, r#"{"strict":true}"#);
+
+		let patterns = vec!["tsconfig.base.json".to_string()];
+		let task = PipelineTask::default();
+
+		let digest_before = global_dependencies_digest(root.path(), &patterns).unwrap();
+		let mut before = base_inputs(&ws, &task, &[]);
+		before.repo_root = root.path();
+		before.global_digest = &digest_before;
+		let key_before = compute_key(&before).unwrap();
+
+		write(&shared, r#"{"strict":false}"#);
+
+		let digest_after = global_dependencies_digest(root.path(), &patterns).unwrap();
+		let mut after = base_inputs(&ws, &task, &[]);
+		after.repo_root = root.path();
+		after.global_digest = &digest_after;
+		assert_ne!(
+			key_before,
+			compute_key(&after).unwrap(),
+			"a repo-root file every workspace shares must reach every workspace's key"
+		);
+	}
+
+	/// A directory named without metacharacters covers its whole subtree, the same
+	/// way a bare `outputs` directory does.
+	#[test]
+	fn a_bare_global_dependency_directory_covers_its_subtree() {
+		let root = TempDir::new().unwrap();
+		write(&root.path().join("proto/user.proto"), "message User {}");
+		let patterns = vec!["proto".to_string()];
+
+		let before = global_dependencies_digest(root.path(), &patterns).unwrap();
+		write(
+			&root.path().join("proto/user.proto"),
+			"message User { int id = 1; }",
+		);
+		let after = global_dependencies_digest(root.path(), &patterns).unwrap();
+		assert_ne!(before, after);
+
+		// A file the patterns do not name stays out of it.
+		write(&root.path().join("README.md"), "unrelated");
+		assert_eq!(
+			global_dependencies_digest(root.path(), &patterns).unwrap(),
+			after
+		);
+	}
+
+	/// Declaring the list at all has to move the key, or adding a pattern that
+	/// currently matches nothing would hit entries computed without it.
+	#[test]
+	fn the_global_dependency_pattern_list_is_part_of_the_digest() {
+		let root = TempDir::new().unwrap();
+		assert_eq!(global_dependencies_digest(root.path(), &[]).unwrap(), "");
+		let a = global_dependencies_digest(root.path(), &["a.json".to_string()]).unwrap();
+		let b = global_dependencies_digest(root.path(), &["b.json".to_string()]).unwrap();
+		assert_ne!(
+			a, b,
+			"neither pattern matches, but they are not the same rule"
+		);
+		assert_ne!(a, "");
+	}
+
+	#[test]
+	fn a_global_env_change_moves_the_key() {
+		let dir = TempDir::new().unwrap();
+		let task = PipelineTask::default();
+		let one = [("NODE_ENV".to_string(), "development".to_string())];
+		let two = [("NODE_ENV".to_string(), "production".to_string())];
+
+		let mut a = base_inputs(dir.path(), &task, &[]);
+		a.global_env_values = &one;
+		let mut b = base_inputs(dir.path(), &task, &[]);
+		b.global_env_values = &two;
+		assert_ne!(compute_key(&a).unwrap(), compute_key(&b).unwrap());
+	}
+
+	/// The key is the hash of the components, so the two can never disagree about
+	/// what a task's identity covers.
+	#[test]
+	fn every_declared_component_is_computed() {
+		let dir = TempDir::new().unwrap();
+		let task = PipelineTask::default();
+		let breakdown = compute_key_detailed(&base_inputs(dir.path(), &task, &[])).unwrap();
+		for name in KEY_COMPONENTS {
+			assert!(
+				breakdown.components.contains_key(*name),
+				"component '{name}' is declared but never computed"
+			);
+		}
+		assert_eq!(breakdown.components.len(), KEY_COMPONENTS.len());
+		assert_eq!(
+			breakdown.key,
+			compute_key(&base_inputs(dir.path(), &task, &[])).unwrap()
+		);
+	}
+
+	/// A miss is a key that is not there, so the only thing that can explain it is
+	/// what the task resolved to last time.
+	#[test]
+	fn a_breakdown_names_the_component_that_moved() {
+		let dir = TempDir::new().unwrap();
+		write(&dir.path().join("src/main.rs"), "fn main() {}");
+		let task = PipelineTask {
+			inputs: Some(vec!["src/**/*".to_string()]),
+			..Default::default()
+		};
+
+		let before = compute_key_detailed(&base_inputs(dir.path(), &task, &[])).unwrap();
+		write(&dir.path().join("src/main.rs"), "fn main() { println!(); }");
+		let after = compute_key_detailed(&base_inputs(dir.path(), &task, &[])).unwrap();
+
+		assert_eq!(after.changed_from(&before), vec!["inputs"]);
+		assert!(before.changed_from(&before).is_empty());
+	}
+
+	#[test]
+	fn a_fingerprint_round_trips_through_the_store() {
+		let cache = TempDir::new().unwrap();
+		let dir = TempDir::new().unwrap();
+		let store = LocalStore::new(cache.path().to_path_buf());
+		let task = PipelineTask::default();
+		let breakdown = compute_key_detailed(&base_inputs(dir.path(), &task, &[])).unwrap();
+
+		assert!(store.last_fingerprint("web", "build").is_none());
+		store
+			.record_fingerprint("web", "build", &breakdown)
+			.unwrap();
+		assert_eq!(store.last_fingerprint("web", "build"), Some(breakdown));
+		// Recorded per (workspace, task): another task has its own slot.
+		assert!(store.last_fingerprint("web", "test").is_none());
+	}
+
+	/// `cacheDir` can legitimately point at a directory Lattice does not own
+	/// outright. Prune used to `remove_dir_all` every neighbour that was not the
+	/// current format, which took the toolchains and the installed binary with it.
+	#[test]
+	fn prune_leaves_directories_that_are_not_cache_formats() {
+		let base = TempDir::new().unwrap();
+		let store = LocalStore::new(base.path().to_path_buf());
+		std::fs::create_dir_all(&store.cache_dir).unwrap();
+
+		let toolchain = base.path().join("toolchains/faketool/1.0.0-abcd/bin");
+		write(&toolchain.join("faketool"), "#!/bin/sh\n");
+		let installed = base.path().join("bin");
+		write(&installed.join("lattice"), "the binary in use");
+		// A directory from a genuinely older cache format, which should go.
+		let old_format = base.path().join("v1");
+		write(&old_format.join("dead.meta.json"), "{}");
+
+		store.prune(u64::MAX).unwrap();
+
+		assert!(
+			toolchain.join("faketool").exists(),
+			"prune must not take the provisioned toolchains"
+		);
+		assert!(
+			installed.join("lattice").exists(),
+			"prune must not take the installed binary"
+		);
+		assert!(
+			!old_format.exists(),
+			"an earlier cache format is still reclaimed"
+		);
+	}
+
+	#[test]
+	fn cache_format_dirs_are_recognized_by_shape() {
+		assert!(is_cache_format_dir("v1"));
+		assert!(is_cache_format_dir("v3"));
+		assert!(is_cache_format_dir("v42"));
+		for name in ["toolchains", "bin", "v", "vN", "v2x", "schema.json", ""] {
+			assert!(!is_cache_format_dir(name), "'{name}' is not a cache format");
+		}
+		assert!(
+			is_cache_format_dir(CACHE_FORMAT),
+			"the current format must match the shape prune tests against"
+		);
+	}
+
 	/// Widening `outputs` must not hit an entry that captured the narrower set —
 	/// the restore would silently be missing the newly-declared files.
 	#[test]
@@ -1466,54 +1872,6 @@ mod tests {
 
 	/// Entries from an earlier key composition live in their own directory, so they
 	/// retire wholesale instead of risking a stale hit against a new key.
-	#[test]
-	/// `cacheDir` can legitimately point at a directory Lattice does not own
-	/// outright. Prune used to `remove_dir_all` every neighbour that was not the
-	/// current format, which took the toolchains and the installed binary with it.
-	#[test]
-	fn prune_leaves_directories_that_are_not_cache_formats() {
-		let base = TempDir::new().unwrap();
-		let store = LocalStore::new(base.path().to_path_buf());
-		std::fs::create_dir_all(&store.cache_dir).unwrap();
-
-		let toolchain = base.path().join("toolchains/faketool/1.0.0-abcd/bin");
-		write(&toolchain.join("faketool"), "#!/bin/sh\n");
-		let installed = base.path().join("bin");
-		write(&installed.join("lattice"), "the binary in use");
-		// A directory from a genuinely older cache format, which should go.
-		let old_format = base.path().join("v1");
-		write(&old_format.join("dead.meta.json"), "{}");
-
-		store.prune(u64::MAX).unwrap();
-
-		assert!(
-			toolchain.join("faketool").exists(),
-			"prune must not take the provisioned toolchains"
-		);
-		assert!(
-			installed.join("lattice").exists(),
-			"prune must not take the installed binary"
-		);
-		assert!(
-			!old_format.exists(),
-			"an earlier cache format is still reclaimed"
-		);
-	}
-
-	#[test]
-	fn cache_format_dirs_are_recognized_by_shape() {
-		assert!(is_cache_format_dir("v1"));
-		assert!(is_cache_format_dir("v3"));
-		assert!(is_cache_format_dir("v42"));
-		for name in ["toolchains", "bin", "v", "vN", "v2x", "schema.json", ""] {
-			assert!(!is_cache_format_dir(name), "'{name}' is not a cache format");
-		}
-		assert!(
-			is_cache_format_dir(CACHE_FORMAT),
-			"the current format must match the shape prune tests against"
-		);
-	}
-
 	#[test]
 	fn prune_retires_other_cache_formats() {
 		let cache = TempDir::new().unwrap();

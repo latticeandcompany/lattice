@@ -282,6 +282,8 @@ pub struct PipelineTask {
 	pub env: Option<Vec<String>>,
 	pub persistent: Option<bool>,
 	pub cache: Option<bool>,
+	/// How long the task may run before it is killed. Absent means no limit.
+	pub timeout: Option<Duration>,
 }
 
 impl PipelineTask {
@@ -293,6 +295,134 @@ impl PipelineTask {
 	/// A task is cacheable unless it is persistent or has explicitly disabled caching.
 	pub fn is_cacheable(&self) -> bool {
 		!self.is_persistent() && self.cache != Some(false)
+	}
+
+	/// The timeout to enforce, if any. A persistent task runs until the run ends,
+	/// so a timeout on one would only ever cut short the thing it was asked to
+	/// keep alive.
+	pub fn effective_timeout(&self) -> Option<std::time::Duration> {
+		if self.is_persistent() {
+			return None;
+		}
+		self.timeout.map(|d| d.as_std())
+	}
+}
+
+/// A human duration such as `"90s"`, `"5m"`, `"1h"`, or a bare integer of seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Duration(pub u64);
+
+impl Duration {
+	pub fn as_secs(&self) -> u64 {
+		self.0
+	}
+
+	pub fn as_std(&self) -> std::time::Duration {
+		std::time::Duration::from_secs(self.0)
+	}
+
+	/// Parse a human duration. Supports `ms`/`s`/`m`/`h` (case-insensitive) and a
+	/// bare integer, interpreted as seconds. Sub-second values round up to one
+	/// second: a timeout that rounds to zero would kill the task instantly.
+	pub fn parse(s: &str) -> Result<Duration> {
+		let trimmed = s.trim();
+		if trimmed.is_empty() {
+			bail!("duration is empty");
+		}
+
+		let split = trimmed
+			.find(|c: char| !(c.is_ascii_digit() || c == '.'))
+			.unwrap_or(trimmed.len());
+		let (num_part, unit_part) = trimmed.split_at(split);
+		let num_part = num_part.trim();
+		let unit_part = unit_part.trim();
+
+		if num_part.is_empty() {
+			bail!("duration '{s}' has no numeric component");
+		}
+
+		let value: f64 = num_part
+			.parse()
+			.with_context(|| format!("invalid numeric component in duration '{s}'"))?;
+
+		let seconds = match unit_part.to_ascii_lowercase().as_str() {
+			"" | "s" | "sec" | "secs" => value,
+			"ms" => value / 1000.0,
+			"m" | "min" | "mins" => value * 60.0,
+			"h" | "hr" | "hrs" => value * 3600.0,
+			other => bail!("unknown duration unit '{other}' in '{s}'"),
+		};
+
+		if seconds <= 0.0 {
+			bail!("duration '{s}' must be greater than zero");
+		}
+		Ok(Duration(seconds.ceil() as u64))
+	}
+}
+
+impl FromStr for Duration {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> Result<Self> {
+		Duration::parse(s)
+	}
+}
+
+impl fmt::Display for Duration {
+	/// Render to a canonical human string using the largest exact unit.
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let secs = self.0;
+		for (unit, name) in [(3600u64, "h"), (60, "m")] {
+			if secs % unit == 0 && secs >= unit {
+				return write!(f, "{}{}", secs / unit, name);
+			}
+		}
+		write!(f, "{}s", secs)
+	}
+}
+
+impl Serialize for Duration {
+	fn serialize<S: serde::Serializer>(
+		&self,
+		serializer: S,
+	) -> std::result::Result<S::Ok, S::Error> {
+		serializer.serialize_str(&self.to_string())
+	}
+}
+
+impl<'de> Deserialize<'de> for Duration {
+	/// Accepts both `"90s"` and a bare number of seconds, since a timeout reads
+	/// naturally either way.
+	fn deserialize<D: serde::Deserializer<'de>>(
+		deserializer: D,
+	) -> std::result::Result<Self, D::Error> {
+		struct DurationVisitor;
+
+		impl serde::de::Visitor<'_> for DurationVisitor {
+			type Value = Duration;
+
+			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+				f.write_str("a duration string such as \"90s\" or a number of seconds")
+			}
+
+			fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<Duration, E> {
+				Duration::parse(v).map_err(serde::de::Error::custom)
+			}
+
+			fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<Duration, E> {
+				if v == 0 {
+					return Err(serde::de::Error::custom(
+						"duration must be greater than zero",
+					));
+				}
+				Ok(Duration(v))
+			}
+
+			fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<Duration, E> {
+				Duration::parse(&v.to_string()).map_err(serde::de::Error::custom)
+			}
+		}
+
+		deserializer.deserialize_any(DurationVisitor)
 	}
 }
 
@@ -430,6 +560,17 @@ pub struct LatticeConfig {
 	pub workspaces: Vec<WorkspaceConfig>,
 	#[serde(default)]
 	pub engines: EngineMap,
+	/// Repo-root-relative globs whose contents feed every task's cache key.
+	///
+	/// A task's `inputs` are relative to its own workspace, so a file above the
+	/// workspace — a shared `tsconfig.base.json`, a schema directory, a root
+	/// `.env` — cannot be named there in a way that means the same thing for
+	/// every workspace. Anything listed here is hashed into all of them.
+	#[serde(default)]
+	pub global_dependencies: Vec<String>,
+	/// Environment variable names whose values feed every task's cache key.
+	#[serde(default)]
+	pub global_env: Vec<String>,
 	#[serde(default)]
 	pub tasks: IndexMap<String, PipelineTask>,
 	#[serde(default)]
@@ -1183,6 +1324,77 @@ mod tests {
 	}
 
 	#[test]
+	fn global_dependencies_and_env_parse() {
+		let config = parse_config(
+			r#"{ "globalDependencies": ["tsconfig.base.json", "proto/**"], "globalEnv": ["CI"] }"#,
+		)
+		.expect("both root keys must parse");
+		assert_eq!(
+			config.global_dependencies,
+			["tsconfig.base.json", "proto/**"]
+		);
+		assert_eq!(config.global_env, ["CI"]);
+	}
+
+	#[test]
+	fn global_keys_default_to_empty() {
+		let config = parse_config("{}").unwrap();
+		assert!(config.global_dependencies.is_empty());
+		assert!(config.global_env.is_empty());
+	}
+
+	#[test]
+	fn duration_parses_units() {
+		assert_eq!(Duration::parse("90s").unwrap().as_secs(), 90);
+		assert_eq!(Duration::parse("5m").unwrap().as_secs(), 300);
+		assert_eq!(Duration::parse("1h").unwrap().as_secs(), 3600);
+		assert_eq!(Duration::parse("30").unwrap().as_secs(), 30);
+		// Anything under a second rounds up rather than to zero, which would kill
+		// the task the instant it started.
+		assert_eq!(Duration::parse("1ms").unwrap().as_secs(), 1);
+		assert!(Duration::parse("0s").is_err());
+		assert!(Duration::parse("later").is_err());
+		assert!(Duration::parse("10 parsecs").is_err());
+	}
+
+	#[test]
+	fn duration_round_trips_through_serde() {
+		for (text, canonical) in [("90s", "90s"), ("5m", "5m"), ("3600", "1h")] {
+			let d = Duration::parse(text).unwrap();
+			assert_eq!(
+				serde_json::to_string(&d).unwrap(),
+				format!("\"{canonical}\"")
+			);
+			let back: Duration = serde_json::from_str(&format!("\"{canonical}\"")).unwrap();
+			assert_eq!(back, d);
+		}
+		// A bare number of seconds reads naturally too.
+		let n: Duration = serde_json::from_str("45").unwrap();
+		assert_eq!(n.as_secs(), 45);
+	}
+
+	/// A persistent task is asked to keep running, so a timeout on one would only
+	/// ever cut short the thing it exists to hold open.
+	#[test]
+	fn a_persistent_task_has_no_effective_timeout() {
+		let dev = PipelineTask {
+			persistent: Some(true),
+			timeout: Some(Duration(30)),
+			..Default::default()
+		};
+		assert_eq!(dev.effective_timeout(), None);
+
+		let build = PipelineTask {
+			timeout: Some(Duration(30)),
+			..Default::default()
+		};
+		assert_eq!(
+			build.effective_timeout(),
+			Some(std::time::Duration::from_secs(30))
+		);
+	}
+
+	#[test]
 	fn resolve_engines_workspace_overrides_root() {
 		let root: EngineMap =
 			serde_json::from_value(json!({ "node": ">=18", "rust": ">=1.75" })).unwrap();
@@ -1289,7 +1501,8 @@ mod tests {
 		);
 		assert!(
 			message.contains(
-				"Fields accepted here: $schema, latticeVersion, workspaces, engines, tasks, settings"
+				"Fields accepted here: $schema, latticeVersion, workspaces, engines, \
+				 globalDependencies, globalEnv, tasks, settings"
 			),
 			"must list what belongs there: {message}"
 		);
@@ -1459,6 +1672,8 @@ mod tests {
 					"latticeVersion": "1.0.0",
 					"workspaces": [],
 					"engines": {},
+					"globalDependencies": [],
+					"globalEnv": [],
 					"tasks": {},
 					"settings": {}
 				})),
@@ -1485,7 +1700,8 @@ mod tests {
 					"ignore": [],
 					"env": [],
 					"persistent": false,
-					"cache": true
+					"cache": true,
+					"timeout": "10m"
 				})),
 			),
 			(
@@ -1543,6 +1759,8 @@ mod tests {
 					"bin": "bin"
 				}
 			},
+			"globalDependencies": ["tsconfig.base.json", "proto/**"],
+			"globalEnv": ["NODE_ENV"],
 			"tasks": {
 				"build": {
 					"dependsOn": ["^build"],
@@ -1551,7 +1769,8 @@ mod tests {
 					"ignore": ["**/*.test.*"],
 					"env": ["DATABASE_URL"],
 					"persistent": false,
-					"cache": true
+					"cache": true,
+					"timeout": "10m"
 				}
 			},
 			"settings": {
