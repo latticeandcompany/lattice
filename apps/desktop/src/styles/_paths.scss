@@ -1,0 +1,3 @@
+// Public-asset prefix for stylesheets. The desktop app is served from the
+// webview root, so there is no base path to prepend.
+$base: '';

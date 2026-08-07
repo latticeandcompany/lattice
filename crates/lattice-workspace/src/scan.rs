@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use ignore::WalkBuilder;
 use indexmap::IndexMap;
 use lattice_config::{is_well_known_engine, EngineMap};
@@ -39,7 +41,8 @@ const DOTNET_EXTS: &[&str] = &["sln", "csproj", "fsproj", "vbproj"];
 
 /// A directory that looks like a workspace because it holds a manifest Lattice
 /// recognizes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceCandidate {
 	/// Proposed workspace name, unique across the returned set.
 	pub name: String,
@@ -56,7 +59,8 @@ pub struct WorkspaceCandidate {
 }
 
 /// A tool version the repo already pins in one of its own files.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EnginePin {
 	/// A well-known engine name.
 	pub engine: String,

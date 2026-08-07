@@ -1,0 +1,11 @@
+{
+	"$schema": "../gen/schemas/desktop-schema.json",
+	"identifier": "default",
+	"description": "Reading a project directory the user picks. Every filesystem access happens in Rust, so no fs permission is granted to the webview.",
+	"windows": ["main"],
+	"permissions": [
+		"core:default",
+		"core:window:allow-set-theme",
+		"dialog:allow-open"
+	]
+}

@@ -28,6 +28,7 @@ use lattice_workspace::{discover_workspaces, Workspace};
 
 /// A repo Lattice has read: where it is, what it declares, and what that resolves
 /// to on this machine.
+#[derive(Debug)]
 pub struct Project {
 	pub root: PathBuf,
 	pub config: LatticeConfig,
@@ -235,7 +236,11 @@ impl RunOutcome {
 /// A factory rather than one future because a sequential run executes several
 /// graphs, and each needs its own: a future is consumed by the phase that awaits
 /// it, so phase two would otherwise have nothing to wait on.
-pub type SignalFactory<'a> = Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + 'a>;
+///
+/// `Send + Sync` because a caller may be driving the run from a task that itself
+/// has to be `Send` — a GUI's IPC handler, for instance.
+pub type SignalFactory<'a> =
+	Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'a>;
 
 /// Everything a run needs that is not part of the request.
 pub struct RunOptions<'a> {

@@ -27,14 +27,24 @@ jobs:
       - name: Formatting
         run: cargo fmt --all --check
 
+      # The desktop crate needs system webview libraries and a built frontend, so it
+      # gets its own job below rather than making every Rust-only PR pay for both.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --exclude lattice-desktop --all-targets --all-features -- -D warnings
 
       - name: Build
-        run: cargo build --workspace --all-targets
+        run: cargo build --workspace --exclude lattice-desktop --all-targets
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude lattice-desktop
+
+      # The MSRV floor comes from the dependency tree, not from the code, so it moves
+      # on its own when a transitive dep raises its own. Checking it here is cheaper
+      # than discovering it in a release.
+      - name: MSRV
+        run: |
+          rustup toolchain install 1.86 --profile minimal
+          cargo +1.86 check --workspace --exclude lattice-desktop --all-targets
 
       # The installer is the first thing a new user runs, and it runs under
       # whatever /bin/sh they have.
@@ -61,7 +71,64 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace --all-targets
+        run: cargo build --workspace --exclude lattice-desktop --all-targets
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude lattice-desktop
+
+  # The desktop app. Split out because it needs a webview toolchain, and because
+  # `generate_context!` embeds the frontend at compile time -- so the bundle has to
+  # exist before cargo runs, even for a check.
+  desktop:
+    name: desktop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop
+
+      - name: Install webview and bundler dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: apps/desktop
+
+      - name: Type-check and test the frontend
+        run: |
+          npm run check
+          npm run test
+        working-directory: apps/desktop
+
+      # generate_context! reads frontendDist, so this has to come before cargo.
+      - name: Build the frontend
+        run: npm run build
+        working-directory: apps/desktop
+
+      - name: Clippy
+        run: cargo clippy -p lattice-desktop --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test -p lattice-desktop
+
+      # The brand tokens are copied rather than shared, because there is no npm
+      # workspace root to share them through. This is what keeps the copies honest.
+      - name: The brand tokens have not drifted
+        run: node scripts/checkBrandTokens.mjs

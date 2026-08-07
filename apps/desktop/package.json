@@ -1,0 +1,37 @@
+{
+	"name": "@lattice/desktop",
+	"version": "1.0.0-beta-2",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+		"test": "node --test \"tests/**/*.test.ts\"",
+		"app": "tauri dev",
+		"bundle": "tauri build",
+		"tauri": "tauri"
+	},
+	"dependencies": {
+		"@tailwindcss/vite": "^4.3.3",
+		"@tauri-apps/api": "^2.11.1",
+		"@tauri-apps/plugin-dialog": "^2.7.2",
+		"bootstrap": "^5.3.8",
+		"bootstrap-icons": "^1.13.1",
+		"echarts": "^6.1.0",
+		"jsonc-parser": "^3.3.1",
+		"react": "^19.2.8",
+		"react-dom": "^19.2.8",
+		"sass": "^1.102.0",
+		"tailwindcss": "^4.3.3"
+	},
+	"devDependencies": {
+		"@tauri-apps/cli": "^2.11.4",
+		"@types/react": "^19.2.18",
+		"@types/react-dom": "^19.2.4",
+		"@vitejs/plugin-react": "^6.0.5",
+		"typescript": "^7.0.2",
+		"vite": "^8.2.1"
+	}
+}

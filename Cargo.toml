@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/desktop/src-tauri",
     "crates/lattice",
     "crates/lattice-cache",
     "crates/lattice-config",

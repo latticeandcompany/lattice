@@ -1,0 +1,203 @@
+// Global stylesheet. Load order matters: tokens define the CSS custom properties,
+// fonts register the local typefaces, Bootstrap Icons ships its own @font-face +
+// glyph classes through SASS.
+//
+// Everything down to `.btn-contrast` is the same vocabulary the website uses, so
+// the two surfaces read as one product. What is not here is the marketing layer:
+// no pattern band, no hero threads, no language-logo field.
+
+@use './styles/paths' as paths;
+@use './styles/tokens';
+@use './styles/fonts';
+@use './styles/status';
+// The package's default src uses a cache-buster query Vite won't bundle, so point
+// it at the self-hosted copies in public/fonts.
+@use '../node_modules/bootstrap-icons/font/bootstrap-icons.scss' with (
+	$bootstrap-icons-font-src: (
+		url('#{paths.$base}/fonts/bootstrap-icons.woff2') format('woff2'),
+		url('#{paths.$base}/fonts/bootstrap-icons.woff') format('woff')
+	)
+);
+
+:root {
+	color-scheme: light dark;
+
+	// Tracking that reproduces the lockup wordmark. Only for the `lattice`
+	// wordmark set in DM Sans Medium beside the mark.
+	--wordmark-tracking: -0.056em;
+}
+
+html,
+body {
+	height: 100%;
+	// A window does not scroll; its panes do.
+	overflow: hidden;
+}
+
+body {
+	font-family: 'DM Sans', system-ui, sans-serif;
+	background-color: var(--surface);
+	color: var(--text);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+	// Native drag-select of chrome text is a browser affordance, not a desktop one.
+	user-select: none;
+}
+
+// Anything a reader might legitimately want to copy opts back in.
+input,
+textarea,
+pre,
+code,
+.selectable {
+	user-select: text;
+}
+
+::selection {
+	background-color: var(--ink);
+	color: var(--paper);
+}
+
+[data-bs-theme='dark'] ::selection {
+	background-color: var(--paper);
+	color: var(--ink);
+}
+
+code,
+kbd,
+pre,
+samp {
+	font-family: 'DM Mono', ui-monospace, monospace;
+}
+
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+
+.lattice-accent {
+	color: var(--focus);
+}
+
+.nav-link--quiet {
+	color: var(--text-muted);
+	font-weight: 500;
+	transition: color 0.15s ease;
+
+	&:hover,
+	&:focus {
+		color: var(--text);
+	}
+
+	&.active {
+		color: var(--text);
+	}
+}
+
+.command-tabs {
+	display: inline-flex;
+	gap: 0.25rem;
+	padding: 0.15rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 6px;
+	background: var(--surface-2);
+}
+
+.command-tab {
+	padding: 0.2rem 0.7rem;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-muted);
+	font-size: 0.75rem;
+	font-weight: 500;
+	transition:
+		color 0.15s ease,
+		background 0.15s ease;
+
+	&:hover {
+		color: var(--text);
+	}
+
+	&--active {
+		background: var(--surface);
+		color: var(--text);
+	}
+
+	&:disabled {
+		opacity: 0.45;
+	}
+}
+
+.command-tab__hint {
+	color: var(--text-muted);
+	font-size: 0.75rem;
+	text-align: center;
+}
+
+.dropdown-item.active,
+.dropdown-item:active {
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.dropdown-item.active .bi {
+	color: var(--focus);
+}
+
+// Primary CTA that always contrasts the surface: ink button on light, paper on dark.
+.btn-contrast {
+	background: var(--text);
+	color: var(--surface);
+	border: 1px solid var(--text);
+
+	&:hover,
+	&:focus {
+		background: var(--text-subtle);
+		border-color: var(--text-subtle);
+		color: var(--surface);
+	}
+
+	&:disabled {
+		background: var(--text);
+		border-color: var(--text);
+		color: var(--surface);
+	}
+}
+
+// The mark is 8 stroked ellipses, each normalized to pathLength 1 with its dash
+// offset animating 1 → 0, so the rosette draws itself stroke by stroke.
+@keyframes drawStroke {
+	from {
+		stroke-dashoffset: 1;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+.rosette-stroke {
+	fill: none;
+	stroke: var(--mark);
+	stroke-linecap: round;
+	pathlength: 1;
+	stroke-dasharray: 1;
+	stroke-dashoffset: 1;
+	animation: drawStroke 0.9s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.rosette-stroke {
+		stroke-dashoffset: 0;
+		animation: none;
+	}
+
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

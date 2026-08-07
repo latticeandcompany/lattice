@@ -1,0 +1,28 @@
+// Bootstrap, customized entirely through variable overrides (per .agents/CODESTYLE.md
+// styling priority: Bootstrap first, customize via variables). Monochrome brand:
+// primary is ink, secondary is the mid gray from the ramp. Type is DM Sans / DM Mono.
+
+@use '../../node_modules/bootstrap/scss/bootstrap' as bs with (
+	$prefix: 'bs-',
+	$primary: #020d0c,
+	$secondary: #6e7776,
+	$dark: #020d0c,
+	$light: #fbf8ff,
+	$body-bg: #fbf8ff,
+	$body-color: #020d0c,
+	$body-bg-dark: #020d0c,
+	$body-color-dark: #fbf8ff,
+	$border-color: #b6bcbb,
+	$border-radius: 0.5rem,
+	$border-radius-sm: 0.375rem,
+	$border-radius-lg: 0.625rem,
+	$font-family-sans-serif: ('DM Sans', system-ui, -apple-system, sans-serif),
+	$font-family-monospace: ('DM Mono', ui-monospace, monospace),
+	$headings-font-weight: 700,
+	$enable-gradients: false,
+	$enable-shadows: false,
+	$btn-font-weight: 500,
+	$btn-padding-y: 0.6rem,
+	$btn-padding-x: 1.35rem,
+	$link-decoration: none
+);

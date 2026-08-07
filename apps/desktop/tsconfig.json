@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ESNext", "DOM", "DOM.Iterable"],
+		"strict": true,
+		"jsx": "react-jsx",
+		"jsxImportSource": "react",
+		"resolveJsonModule": true,
+		"verbatimModuleSyntax": true,
+		"isolatedModules": true,
+		"noEmit": true,
+		"forceConsistentCasingInFileNames": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"types": ["vite/client"],
+		"baseUrl": ".",
+		"paths": { "@/*": ["src/*"] }
+	},
+	"include": ["src/**/*", "tests/**/*"],
+	"exclude": ["dist", "src-tauri"]
+}
