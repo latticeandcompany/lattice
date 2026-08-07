@@ -115,17 +115,30 @@ every run (a timestamp, a `.DS_Store`), or an `env` entry whose value differs
 across shells and machines (an absolute path, a session id).
 
 Fix: narrow `inputs`, add the file to `ignore`, or drop the `env` entry unless the
-command's output genuinely depends on it. Run with `-l`/`--loquacious` to see the
-truncated key and hit/miss per task:
+command's output genuinely depends on it. Run with `-l`/`--loquacious`, which
+names the part of the key that moved:
 
 ```text
 web:build: hash a1b2c3d4e5f6a7b8
-web:build: cache miss
+web:build: cache miss: inputs changed
 ```
 
-A different hash prefix on back-to-back runs with no source change points at one
-of those causes. Loquacious mode shows the outcome, not which field changed the
-hash, so narrow it by elimination.
+The names map onto the config: `inputs`, `env`, `globalEnv`,
+`globalDependencies`, `manifests` (a manifest or lockfile in the workspace, or a
+lockfile at the repo root), `dependencies` (a prerequisite task's key moved),
+`toolchain`, `command`, `patterns` (the glob lists themselves), and
+`environment` (platform, shell, or Lattice version). Start with whichever it
+names.
+
+`inputs changed` every run with no source edit means a glob is matching
+something that rewrites itself. `environment changed` on an otherwise-identical
+run usually means the Lattice version moved. `dependencies changed` is not a
+problem on its own — an upstream change is supposed to reach downstream.
+
+Two misses name no part. `nothing cached for this task yet` means the task has
+never completed here. `the entry for this key is no longer in the cache` means
+the key is unchanged but the entry went: evicted under
+`settings.maxCacheSize`, swept by `lattice prune`, or rejected as corrupt.
 
 ### A task hits the cache when it shouldn't
 
@@ -138,6 +151,18 @@ Fix: widen the `inputs` glob or add the missing name to `env`. See
 [Caching](/lattice/docs/caching) for what belongs in each. Use
 `lattice run <task> --force` or `--no-cache` to force a fresh run while you
 investigate.
+
+If the file lives *above* the workspace — a base `tsconfig.json`, a shared
+schema directory, a root `.env` — no `inputs` glob can name it, because `inputs`
+is relative to the workspace. Add it to the root-level `globalDependencies`
+instead, and put repo-wide variables in `globalEnv`:
+
+```json
+{
+  "globalDependencies": ["tsconfig.base.json", "proto/**"],
+  "globalEnv": ["NODE_ENV"]
+}
+```
 
 ### `--force`/`--no-cache` doesn't help, or the output looks wrong after a hit
 

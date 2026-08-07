@@ -129,16 +129,9 @@ whatever the cache picked up before the failure.
 
 ## Keeping the saved cache bounded
 
-The directory only grows — nothing evicts an entry on its own — and every run
-re-uploads the whole thing to the CI cache action's storage. Run `lattice prune`
-before the save step to evict the least-recently-used entries down to a size
-limit:
-
-```sh
-lattice prune --max-size 2GB
-```
-
-Without `--max-size`, `prune` falls back to `settings.maxCacheSize`:
+Every run re-uploads the whole cache directory to the CI cache action's storage,
+so an unbounded cache costs upload time on every job. Set a budget and each run
+holds itself to it:
 
 ```json
 {
@@ -148,10 +141,44 @@ Without `--max-size`, `prune` falls back to `settings.maxCacheSize`:
 }
 ```
 
-If neither is set, `prune` fails rather than guess at a limit. Eviction is
-least-recently-used, so pruning in CI removes whichever entries haven't been hit
-in the longest stretch of runs. See [Caching](/lattice/docs/caching) for the rest
-of the pruning model.
+Eviction is least-recently-used, so what goes is whichever entries haven't been
+hit in the longest stretch of runs. To use a different limit in CI than locally,
+run `lattice prune` before the save step:
+
+```sh
+lattice prune --max-size 2GB
+```
+
+With neither the setting nor the flag, `prune` fails rather than guess at a
+limit, and the cache grows without bound. See
+[Caching](/lattice/docs/caching#keeping-the-cache-to-a-size) for the rest of the
+model.
+
+## Bounding how long a task can run
+
+A task that hangs holds the job until the runner's own timeout kills it, which
+costs the whole remaining budget and leaves no cache saved. Give the tasks that
+can hang a `timeout`:
+
+```json
+{
+  "tasks": {
+    "test": { "timeout": "10m" },
+    "build": { "timeout": "20m" }
+  }
+}
+```
+
+An overrun stops the task's whole process group and counts it as a failure, so
+the run ends the way any other failure ends and the steps after it still get to
+save the cache.
+
+## Cancelled jobs
+
+Cancelling a job sends `SIGTERM`. Lattice passes it on to every running task's
+process group, gives them five seconds, then kills what's left, and exits `130`
+rather than `1` — a cancellation is not a build that broke. Without this, tasks
+spawned into their own process groups would outlive the runner's shutdown.
 
 ## `lattice setup` as its own step
 

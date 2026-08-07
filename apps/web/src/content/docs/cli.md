@@ -211,6 +211,11 @@ a bare integer of bytes. If neither `--max-size` nor
 See [Cache internals](/lattice/docs/cache-internals) for eviction order and
 on-disk layout.
 
+With `settings.maxCacheSize` set, every run already holds the cache to it, so
+`prune` is for sweeping by hand or for enforcing a different limit than the one
+in the config. It also reclaims what nothing can read: entries from an earlier
+cache format, and artifacts left behind without metadata by an interrupted run.
+
 ## `lattice upgrade`
 
 ```text
@@ -348,9 +353,21 @@ Lattice reads.
 | `0` | Success — including a `run` whose filter matched no workspace, and a `run` against an empty `workspaces` array |
 | `1` | Any error Lattice itself raises: a missing `lattice.json`, an unrecognized task name, a failed task, an unset cache limit on `prune`, or any other failure |
 | `2` | The command line itself was rejected before Lattice ran anything: an unknown subcommand, an unrecognized flag, or a missing required argument |
+| `130` | The run was interrupted by Ctrl-C or `SIGTERM`. Running tasks were stopped on the way out; they did not fail |
 
 A failing task exits `1` whether the run stopped at the first failure or kept
 going with `--continue`.
+
+`130` is the shell convention for a process ended by `SIGINT` (128 + 2), and it
+is distinct from `1` on purpose: a CI runner cancelling a job should not read as
+a build that broke.
+
+On unix, every running task's process group is sent `SIGTERM` on the way out,
+given five seconds, and then killed, so a task that shelled out to a compiler or
+a server takes the whole tree with it. Each task is spawned into its own process
+group, which is what makes that possible and is also why the terminal's own
+Ctrl-C never reaches it. On Windows tasks stay attached to the console, which
+delivers the event to them directly.
 
 Without `--continue`, the first failing task is printed as the error (`task
 '<workspace>:<task>' failed, stopping pipeline`) and no further tasks start,

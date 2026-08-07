@@ -15,60 +15,92 @@ Lattice caches and how to control it, see [Caching](/lattice/docs/caching).
 ## Cache key composition
 
 A task's cache key is a 64-character lowercase hex SHA-256 digest, computed by
-`compute_key`. The hasher consumes fields in this fixed order:
+`compute_key_detailed`. It is built in two stages: each *component* below is
+hashed on its own, then the component digests are hashed together in this fixed
+order to produce the key.
 
-1. `cache_format` — the on-disk cache format. Also names the subdirectory entries
-   are written under, so a release that changes this list cannot read entries
-   whose keys were built from the old one.
-2. `lattice_version` — the running Lattice version.
-3. `platform` — `<os>-<arch>`, e.g. `macos-aarch64`.
-4. `shell` — `sh -c` or `cmd /C`, whichever will run the command.
-5. `workspace` — the workspace's declared name. Without it, two workspaces
-   running the same command with nothing else to tell them apart would share one
-   entry and restore each other's artifacts.
-6. `task` — the task name (e.g. `build`).
-7. `command` — the fully resolved shell command for this task in this workspace.
-8. `toolchain_identity` — the identity string of the workspace's resolved
-   toolchains (empty if the workspace declares none).
-9. `dep.key` — one per task this task depends on, each that task's own resolved
-   cache key, sorted. This is what carries a change upstream to everything
-   downstream of it.
-10. `pattern.inputs` / `pattern.outputs` / `pattern.ignore` — the raw glob
-    strings as declared, or the literal `<unset>` when the field is absent.
-    Widening `outputs` therefore produces a different key, rather than hitting an
-    entry that captured the narrower set and restoring less than the run made.
-11. `env.name` / `env.value` — one pair per name listed in the task's `env`,
-    resolved from the process environment, sorted by name.
-12. `input.path` / `input.content` — one pair per input file, sorted by path
-    relative to the workspace, with the file's full contents hashed in. The set
-    is the files matched by `inputs`, or — when `inputs` is absent — every file
-    in the workspace that the applicable `.gitignore` files do not exclude. In
-    both cases anything matched by `ignore` or by the task's own `outputs` is
-    removed first, and `.lattice`, `.git`, `.hg`, `.svn` and `.jj` are never
-    walked. Symlinks are not followed.
-13. `manifest.name` / `manifest.content` — one pair for each manifest present in
-    the workspace. A resolved command is usually an indirection: `npm run build`
-    names a script in `package.json` and `make test` names a target in a
-    `Makefile`, so the command string alone does not pin the work.
-14. `lockfile.name` / `lockfile.content` — one pair for each dependency-state
-    file that exists in the workspace, checked in this fixed order:
-    `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `bun.lock`,
-    `Cargo.lock`, `go.sum`, `poetry.lock`, `uv.lock`, `Gemfile.lock`,
-    `npm-shrinkwrap.json`, `deno.lock`, `pdm.lock`, `Pipfile.lock`,
-    `requirements.txt`, `Podfile.lock`, `packages.lock.json`, `composer.lock`,
-    `mix.lock`, `pubspec.lock`, `Package.resolved`, `stack.yaml.lock`,
-    `cabal.project.freeze`. The same list decides whether `lattice setup`
-    reinstalls dependencies, so the two never disagree.
-15. `root.lockfile.name` / `root.lockfile.content` — the same list again, checked
-    at the repo root when the workspace is not itself the root. A layout that
-    hoists one lockfile to the top — pnpm, yarn and npm workspaces, a Cargo
-    virtual workspace, a Go workspace — keeps no lockfile beside the workspace,
-    so without this a dependency bump would invalidate nothing.
+The two stages exist so a miss can be attributed. A key on its own can say that
+something changed and nothing more; comparing components against the ones the
+task last resolved to names which. That comparison is what
+`cache miss: inputs changed` reports.
+
+1. `environment` — the on-disk cache format, the running Lattice version, the
+   platform as `<os>-<arch>`, the shell (`sh -c` or `cmd /C`), the workspace's
+   declared name, and the task name. The workspace name matters on its own:
+   without it, two workspaces running the same command with nothing else to tell
+   them apart would share one entry and restore each other's artifacts. The cache
+   format also names the subdirectory entries are written under, so a release
+   that changes this list cannot read entries whose keys were built from the old
+   one.
+2. `command` — the fully resolved shell command for this task in this workspace.
+3. `toolchain` — the identity string of the workspace's resolved toolchains
+   (empty if the workspace declares none).
+4. `dependencies` — one entry per task this task depends on, each that task's own
+   resolved cache key, sorted. This is what carries a change upstream to
+   everything downstream of it.
+5. `patterns` — the raw `inputs`, `outputs` and `ignore` glob strings as
+   declared, or the literal `<unset>` when a field is absent. Widening `outputs`
+   therefore produces a different key, rather than hitting an entry that captured
+   the narrower set and restoring less than the run made.
+6. `env` — one `name`/`value` pair per name listed in the task's `env`, resolved
+   from the process environment, sorted by name.
+7. `globalEnv` — the same, for the names listed in the repo-level `globalEnv`.
+8. `inputs` — one `path`/`content` pair per input file, sorted by path relative
+   to the workspace, with the file's full contents hashed in. The set is the
+   files matched by `inputs`, or — when `inputs` is absent — every file in the
+   workspace that the applicable `.gitignore` files do not exclude. In both cases
+   anything matched by `ignore` or by the task's own `outputs` is removed first,
+   and `.lattice`, `.git`, `.hg`, `.svn` and `.jj` are never walked. Symlinks are
+   not followed.
+9. `manifests` — the manifests and lockfiles that pin what the command does:
+   - one `name`/`content` pair for each manifest present in the workspace. A
+     resolved command is usually an indirection: `npm run build` names a script
+     in `package.json` and `make test` names a target in a `Makefile`, so the
+     command string alone does not pin the work.
+   - one pair for each dependency-state file that exists in the workspace,
+     checked in this fixed order: `package-lock.json`, `yarn.lock`,
+     `pnpm-lock.yaml`, `bun.lockb`, `bun.lock`, `Cargo.lock`, `go.sum`,
+     `poetry.lock`, `uv.lock`, `Gemfile.lock`, `npm-shrinkwrap.json`,
+     `deno.lock`, `pdm.lock`, `Pipfile.lock`, `requirements.txt`, `Podfile.lock`,
+     `packages.lock.json`, `composer.lock`, `mix.lock`, `pubspec.lock`,
+     `Package.resolved`, `stack.yaml.lock`, `cabal.project.freeze`. The same list
+     decides whether `lattice setup` reinstalls dependencies, so the two never
+     disagree.
+   - the same list again at the repo root, when the workspace is not itself the
+     root. A layout that hoists one lockfile to the top — pnpm, yarn and npm
+     workspaces, a Cargo virtual workspace, a Go workspace — keeps no lockfile
+     beside the workspace, so without this a dependency bump would invalidate
+     nothing.
+10. `globalDependencies` — a digest over the repo-level `globalDependencies`
+    pattern list plus the path and contents of every repo-root-relative file it
+    matches. The pattern list is hashed even when it matches nothing, so adding a
+    pattern is itself a change. This digest is the same for every task in a run
+    and is computed once, before scheduling.
 
 Env pairs, input files and dependency keys are sorted before hashing, and
 manifests and lockfiles are visited in the fixed order listed above, so the key
 never depends on filesystem iteration order, on the order fields were declared in
 `lattice.json`, or on the order prerequisites happened to finish in.
+
+### Key breakdowns
+
+Alongside the entries, each format directory keeps one small JSON file per
+`(workspace, task)` pair recording the component digests that pair last resolved
+to:
+
+```text
+.lattice/cache/v3/fingerprints/<id>.json
+```
+
+`<id>` is a truncated hash of the workspace and task names, so either half can
+contain a path separator. The file is written after a task runs, staged and
+renamed like the metadata. On a miss, the current components are compared
+against it and the differing names are reported.
+
+These are a few hundred bytes each, bounded by the number of workspace-task
+pairs, and are not counted against `settings.maxCacheSize`: evicting one would
+cost the explanation and free nothing worth freeing. Deleting them loses only
+the next miss's reason.
 
 ### Domain separation and length prefixing
 
@@ -92,15 +124,20 @@ Every cache entry lives under the configured cache directory (default
 named for the cache format, as two files sharing the key as their stem:
 
 ```text
-.lattice/cache/v2/<key>.tar.gz       the artifact: gzip-compressed tar of outputs
-.lattice/cache/v2/<key>.meta.json    the metadata: everything needed to verify and restore
+.lattice/cache/v3/<key>.tar.gz       the artifact: gzip-compressed tar of outputs
+.lattice/cache/v3/<key>.meta.json    the metadata: everything needed to verify and restore
 ```
 
 Within a format directory there is no further nesting and no sharding by key
-prefix: it is a flat list of `<key>.tar.gz` / `<key>.meta.json` pairs. Sibling
-directories are entries from other formats; `lattice prune` deletes them
+prefix: it is a flat list of `<key>.tar.gz` / `<key>.meta.json` pairs, beside the
+`fingerprints/` directory described above.
+
+Sibling directories whose names have the shape of a cache format — `v1`, `v2`,
+and so on — are entries from other formats; `lattice prune` deletes them
 outright, since a key computed under one format never means the same thing under
-another.
+another. Anything else beside them is left alone: `cacheDir` can point at a
+directory Lattice does not own outright, and a prune that swept every neighbour
+would take the provisioned toolchains and the installed binary with it.
 
 Both files are written to a temporary name in the same directory and renamed into
 place. A rename is atomic, so a concurrent reader sees either the previous file
@@ -223,7 +260,7 @@ than picking an arbitrary limit.
 
 ## Not part of the key
 
-The key is computed from the fields above and nothing else. Four notable
+The key is computed from the components above and nothing else. Five notable
 exclusions:
 
 A task's own output *files* are not hashed, even when `inputs` matches them.
@@ -234,13 +271,20 @@ files they match are removed from the input set.
 Files a task reads but does not declare are not hashed. When `inputs` is declared
 it is the whole input set, so a file the command reads but no glob matches has no
 effect on the key. Omit `inputs` entirely and the whole workspace is hashed
-instead, which is slower but cannot miss a file this way.
+instead, which is slower but cannot miss a file this way. Either way the walk
+stops at the workspace directory: a file above it is covered only by
+`globalDependencies`.
 
-Environment variables not named in the task's `env` list are not hashed. Only
-declared variables are resolved and hashed; the rest of the ambient environment
-would otherwise perturb every key from every shell. The user's global gitignore is
-excluded on the same grounds — it lives outside the repo, so honoring it would
-make a key depend on whose machine computed it.
+Environment variables named in neither the task's `env` nor the repo's
+`globalEnv` are not hashed. Only declared variables are resolved and hashed; the
+rest of the ambient environment would otherwise perturb every key from every
+shell. The user's global gitignore is excluded on the same grounds — it lives
+outside the repo, so honoring it would make a key depend on whose machine
+computed it.
+
+A task's `timeout` is not hashed. It bounds how long the task may run; it does
+not change what the task produces, so an entry stored under one limit is still
+valid under another.
 
 Wall-clock time, hostname, and absolute paths are not hashed. Input paths are
 hashed relative to the workspace, so the same commit produces the same keys in a
@@ -249,4 +293,4 @@ cache directory shared between machines must not answer one operating system's
 lookup with another's artifacts.
 
 Anything not in the key can change without producing a miss, so an incomplete
-`inputs` or `env` list is the usual cause of a stale hit.
+`inputs`, `env` or `globalDependencies` list is the usual cause of a stale hit.

@@ -230,6 +230,42 @@ unknown name supplies `versionCmd`. Which fields are present selects the mode �
 host `PATH`, validate-only, or provision — as described in
 [Engines and provisioning](/lattice/docs/engines).
 
+## `globalDependencies`
+
+```json
+{
+  "globalDependencies": ["tsconfig.base.json", "proto/**", ".env"]
+}
+```
+
+| Field | Type | Required | Default |
+| --- | --- | --- | --- |
+| `globalDependencies` | array of `string` | no | `[]` |
+
+Globs relative to the **repo root**, hashed into the cache key of every task. A
+task's `inputs` are relative to its own workspace, so a file above the workspace
+cannot be named there in a way that means the same thing everywhere; this is
+where those files go. Editing anything matched here makes every task miss, so
+list only what genuinely crosses workspace boundaries. See
+[Caching](/lattice/docs/caching#files-shared-across-workspaces).
+
+## `globalEnv`
+
+```json
+{
+  "globalEnv": ["NODE_ENV", "CI"]
+}
+```
+
+| Field | Type | Required | Default |
+| --- | --- | --- | --- |
+| `globalEnv` | array of `string` | no | `[]` |
+
+Environment variable **names** whose resolved values feed the cache key of every
+task, for variables that change what any build produces. A task's own `env` list
+applies on top of this one. Unlike `env`, these names are not exported into task
+processes — they are already in the environment Lattice inherited.
+
 ## `tasks`
 
 ```json
@@ -268,6 +304,7 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
 | `env` | array of `string` | no | none | Environment variable **names** whose resolved values feed the cache key. |
 | `persistent` | `boolean` | no | `false` | Long-running task (e.g. a dev server). Never cached regardless of `cache`. See [Persistent tasks](/lattice/docs/persistent-tasks). |
 | `cache` | `boolean` | no | `true` | Set `false` to opt a non-persistent task out of caching entirely. |
+| `timeout` | `string` or `integer` | no | none | How long the task may run before it is stopped and counted as failed. `"90s"`, `"10m"`, `"1h"`, or a bare number of seconds. Ignored on a `persistent` task. |
 
 An empty task object, `{}`, is valid — a task with no declared dependencies,
 inputs, or outputs. It still caches: its key covers the whole workspace, so it
@@ -297,7 +334,7 @@ re-runs whenever anything in that directory changes.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `maxCacheSize` | `string` | no | none | Upper bound on the local cache size. Human byte size: an integer plus `B`/`KB`/`MB`/`GB`/`TB` (base 1024, case-insensitive), or a bare integer of bytes. Used by `lattice prune` when `--max-size` isn't passed. |
+| `maxCacheSize` | `string` | no | none | Upper bound on the local cache size. Human byte size: an integer plus `B`/`KB`/`MB`/`GB`/`TB` (base 1024, case-insensitive), or a bare integer of bytes. Enforced after every run, and used by `lattice prune` when `--max-size` isn't passed. Unset, the cache grows without limit. |
 | `cacheDir` | `string` | no | `".lattice/cache"` | Directory for the local cache, relative to the repo root. |
 | `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-l`/`--loquacious`: forces raw, unbuffered output. |
 | `versionCheck` | `boolean` | no | `true` | When true, compare the running binary against `latticeVersion` and nag on drift. `false` disables the check entirely — see [Upgrading](/lattice/docs/upgrading). |
@@ -329,7 +366,10 @@ Error: no max cache size set (pass --max-size or set settings.maxCacheSize in la
 | A key Lattice doesn't recognize, at any level | parsing | `unknown field \`<key>\` in <path>` (with position, the nearest valid field, and the fields accepted there) |
 | An engine value that is neither a string nor a valid object | parsing | `invalid type: <what was written>, expected a version constraint string or an engine object` |
 | A workspace `path` that is empty or whitespace-only | validation | `workspace '<name>' has an empty path` |
+| A workspace `path` that is absolute or escapes the repo root | validation | `workspace '<name>' has a path '<path>' that points outside the repo root` |
 | Two workspaces with the same `name` | validation | `duplicate workspace name '<name>': workspace names must be unique` |
+| A workspace `dependsOn` naming a workspace that isn't declared | validation | `workspace '<name>' depends on '<dep>', which is not a declared workspace` (with the nearest name and the full list) |
+| A task `dependsOn` naming a task that isn't in `tasks` | validation | `task '<name>' depends on '<dep>', but '<dep>' is not defined in \`tasks\`` (with the nearest name and the full list) |
 | A string-form engine whose name isn't well-known | validation | names the engine and suggests the object form with `versionCmd` |
 | A task name passed to `lattice run` not present in `tasks` | after config loads | `task '<name>' is not defined in lattice.json; available tasks: ...` |
 | `lattice prune` with no size limit anywhere | after config loads | `no max cache size set (pass --max-size or set settings.maxCacheSize in lattice.json)` |
@@ -372,6 +412,8 @@ A repo with a Node app, a Rust service, and a Python library:
       "bin": "bin"
     }
   },
+  "globalDependencies": ["tsconfig.base.json", "proto/**"],
+  "globalEnv": ["NODE_ENV"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -382,7 +424,8 @@ A repo with a Node app, a Rust service, and a Python library:
     "test": {
       "dependsOn": ["build"],
       "inputs": ["src/**/*", "tests/**/*"],
-      "env": ["DATABASE_URL"]
+      "env": ["DATABASE_URL"],
+      "timeout": "10m"
     },
     "lint": {
       "inputs": ["src/**/*"]

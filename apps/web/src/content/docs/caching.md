@@ -28,7 +28,9 @@ A task's cache key is a hash over:
 - the contents of the manifest the command resolves through — `npm run build`
   names a script in `package.json`, `make test` names a target in a `Makefile`,
   and changing that script changes the work
-- the resolved value of every environment variable named in `env`
+- the resolved value of every environment variable named in `env`, and in the
+  repo-wide `globalEnv`
+- the contents of every file matched by the repo-wide `globalDependencies`
 - the identity of the resolved toolchain (see
   [Engines and provisioning](/lattice/docs/engines))
 - the operating system, architecture, and shell
@@ -162,6 +164,67 @@ The failure modes match `inputs`: an omitted variable that changes behavior
 gives you a stale hit, and a listed variable the command never reads forces
 misses on otherwise-identical work.
 
+## Files shared across workspaces
+
+`inputs` patterns are relative to the workspace the task runs in, which means
+they cannot name a file that lives above it. A base `tsconfig.json` at the repo
+root, a shared schema directory, a root `.env` — each of these is read by tasks
+in several workspaces, and none of them can be written as an `inputs` pattern
+that means the same thing in every one.
+
+`globalDependencies` is the repo-root-relative list that covers them. Every file
+it matches is hashed into the key of every task:
+
+```json
+{
+  "globalDependencies": ["tsconfig.base.json", "proto/**", ".env"],
+  "tasks": {
+    "build": { "inputs": ["src/**/*"], "outputs": ["dist/**"] }
+  }
+}
+```
+
+Patterns work the way `inputs` patterns do: `proto/**` covers the subtree, and a
+bare `proto` naming a directory covers it too. Editing anything they match makes
+every task miss, so keep the list to files that genuinely cross workspace
+boundaries. Without one, a change to a shared root file is invisible to the
+cache and every task hits with an artifact built before the edit.
+
+## Repo-wide environment variables
+
+`globalEnv` is `env` at the repo level: names whose resolved values are hashed
+into every task's key, for variables that change what any build produces.
+
+```json
+{
+  "globalEnv": ["NODE_ENV", "CI"]
+}
+```
+
+A task's own `env` list still applies on top, and is the better place for
+anything only that task reads. Unlike `env`, `globalEnv` names are not exported
+into task processes — they are already in the environment Lattice inherited.
+
+## Why a task missed
+
+`lattice run build -l` reports each miss with the part of the key that moved:
+
+```text
+app:build: cache miss: inputs changed
+web:build: cache miss: globalDependencies changed
+api:test: cache miss: dependencies, env changed
+```
+
+The names match the parts listed under
+[what feeds the key](#what-feeds-the-key): `inputs`, `env`, `globalEnv`,
+`globalDependencies`, `dependencies` (a prerequisite's key moved), `manifests`,
+`toolchain`, `command`, `patterns` (the glob lists themselves changed), and
+`environment` (platform, shell, or Lattice version).
+
+Two misses have no part to name. A task that has never completed reports
+`nothing cached for this task yet`. A task whose key is unchanged but whose entry
+is gone — evicted by a prune, or rejected as corrupt — says so directly.
+
 ## Opting out of caching
 
 Set `cache: false` on a task to skip caching entirely — always run, never store,
@@ -230,16 +293,9 @@ rebuild rather than a risk of reading entries whose keys meant something else.
 That directory is safe to delete at any time. The next run has nothing to
 restore and starts from a clean cache.
 
-## Pruning the cache
+## Keeping the cache to a size
 
-The cache only grows; nothing evicts an entry on its own. Run `lattice prune` to
-evict the oldest-used entries until the store is back under a size limit:
-
-```sh
-lattice prune --max-size 10GB
-```
-
-Without `--max-size`, `prune` uses `settings.maxCacheSize`:
+Set `settings.maxCacheSize` and every run holds the cache to it:
 
 ```json
 {
@@ -249,7 +305,23 @@ Without `--max-size`, `prune` uses `settings.maxCacheSize`:
 }
 ```
 
-If neither is set, `prune` fails rather than guessing at a limit. Eviction is
-least-recently-used: every hit refreshes an entry's last-used time, so `prune`
-removes whichever entries have gone longest unused, stopping as soon as the
-total is under budget.
+Eviction is least-recently-used: every hit refreshes an entry's last-used time,
+so the entries that go are whichever have gone longest unused, stopping as soon
+as the total is under budget. The budget covers stored artifacts and their
+metadata.
+
+Set no budget and the cache grows without limit — which is fine on a laptop with
+room to spare, and is why there is no default. Run `lattice prune` to sweep it
+by hand, either against the configured budget or against one given on the spot:
+
+```sh
+lattice prune --max-size 10GB
+```
+
+With no `--max-size` and no `settings.maxCacheSize`, `prune` fails rather than
+guessing at a limit.
+
+`prune` also reclaims what nothing can read: entries from an earlier cache
+format, and artifacts left without metadata by an interrupted run. It touches
+only the cache's own directories, so a `cacheDir` pointing somewhere shared
+keeps whatever else is in there.

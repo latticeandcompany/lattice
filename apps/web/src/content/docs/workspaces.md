@@ -50,6 +50,19 @@ are literal directories, not globs
 Two workspaces cannot share a name or resolve to the same directory; either is a
 duplicate error, not a merge. List one entry per project directory.
 
+A `path` also has to stay inside the repo. An absolute path, or one that climbs
+out with `..`, is rejected:
+
+```text
+workspace 'esc' has a path '../outside' that points outside the repo root;
+workspace paths must stay inside the repo
+```
+
+The workspace directory is the boundary for everything downstream — which files
+are hashed, which the `outputs` globs match, and which a cache hit clears before
+unpacking — so a path that leaves the repo would put all three somewhere Lattice
+has no business writing.
+
 ## `auto`: inferred or explicit
 
 `auto` defaults to `true`. An auto workspace has its task driver — the tool that
@@ -129,6 +142,16 @@ resolves through `api`'s `dependsOn: ["core"]` to `core`'s `build`, so `core`
 builds before `api`. With no task naming `^build`, the workspace `dependsOn` has
 no scheduling effect at all. Bare versus `^`-prefixed task names are covered in
 [Task graph](/lattice/docs/task-graph).
+
+Every name has to match a declared workspace. A name that matches nothing builds
+no edge, which would leave the two workspaces building in whatever order the
+scheduler picked — so it is rejected instead:
+
+```text
+Error: workspace 'api' depends on 'cor', which is not a declared workspace
+Did you mean `core`?
+Declared workspaces: core, api
+```
 
 ## `scripts`: declaring commands directly
 

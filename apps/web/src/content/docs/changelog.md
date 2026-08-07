@@ -18,6 +18,70 @@ miss, because the running version is one of the inputs hashed into every task's
 cache key, so the first run after an upgrade re-runs everything. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Shared files reach the cache key, and a run cleans up after itself — 2026-08-06
+
+The first run after this upgrade re-runs everything: the key covers more than it
+did, so it is a new cache format. The previous group is retired by the next
+prune.
+
+A task's `inputs` are relative to its own workspace, and `tasks` is shared by
+every workspace, so a base `tsconfig.json`, a shared schema directory or a root
+`.env` had no `inputs` spelling that meant the same thing everywhere. Nothing
+covered them, and editing one served every task an artifact built before the
+change. Two root-level keys cover them now, both hashed into every task's key:
+
+```json
+{
+  "globalDependencies": ["tsconfig.base.json", "proto/**"],
+  "globalEnv": ["NODE_ENV"]
+}
+```
+
+See [Caching](/lattice/docs/caching#files-shared-across-workspaces).
+
+A miss now says what moved. The key is built from named components, each recorded
+per workspace and task, so `-l` reports the one that changed instead of only that
+something did:
+
+```text
+web:build: cache miss: globalDependencies changed
+```
+
+Ctrl-C used to leave every running task's children alive. Each task runs in its
+own process group, which is what lets a task that shells out be cleaned up as a
+unit, and the same call detaches it from the terminal's Ctrl-C. The signal
+reached Lattice, Lattice exited, and the compilers kept going. An interrupt now
+sends `SIGTERM` to every running group, waits five seconds, then kills what is
+left, and exits `130` rather than `1`, so a cancelled CI job does not read as a
+build that broke.
+
+`lattice prune` removed every directory beside the cache that was not the current
+cache format. With `cacheDir` pointing at `.lattice`, that took `toolchains/` and
+`bin/` with it, including the installed binary. Only directories shaped like a
+cache format are reclaimed now.
+
+A `dependsOn` that named nothing was a silent no-op. A workspace depending on a
+misspelled workspace, or a task depending on a task the `tasks` map never
+defines, built no edge at all, so the ordering the config was written for simply
+did not happen. Both are rejected at load, with the nearest name offered. A
+workspace `path` that is absolute or climbs out of the repo with `..` is rejected
+too, since that path bounds everything a task is allowed to read and write.
+
+`settings.maxCacheSize` read as a budget but only `lattice prune` consulted it,
+so a repo that set one still grew without limit. Every run now holds the cache to
+it.
+
+Tasks accept a `timeout` — `"90s"`, `"10m"`, `"1h"`, or a number of seconds. An
+overrun stops the task's whole process group and counts as a failure, so a hung
+task fails the run instead of holding a CI job until the runner's own limit kills
+it. It is ignored on a `persistent` task and is not part of the cache key. See
+[Task graph](/lattice/docs/task-graph#bounding-how-long-a-task-runs).
+
+Toolchains work on Windows. Engine version checks and `installCmd` both ran
+through `sh -c` and joined `PATH` with `:`, so every engine failed to resolve on
+a platform the release matrix ships a binary for. Both use the platform shell and
+separator now, and CI builds and tests there so it stays that way.
+
 ## A persistent task that exits is reported — 2026-07-30
 
 Lattice used to spawn a dev server and never look at it again. A

@@ -110,6 +110,13 @@ A size is an integer plus `B`, `KB`, `MB`, `GB`, or `TB` (case-insensitive, base
 1024), or a bare integer of bytes. With neither `--max-size` nor
 `settings.maxCacheSize` set, `prune` errors rather than guess a limit.
 
+With `settings.maxCacheSize` set, every run already holds the cache to it, so
+this command is for sweeping by hand or enforcing a different limit than the
+config's. It also reclaims what nothing can read: entries from an earlier cache
+format, and artifacts left without metadata by an interrupted run. Directories
+beside the cache that are not themselves cache formats are left alone, so a
+`cacheDir` pointing somewhere shared keeps its other contents.
+
 ## `lattice upgrade <VERSION>`
 
 Installs another Lattice version under `.lattice/bin`, repoints
@@ -168,6 +175,12 @@ subcommand, before or after the subcommand name.
 | `0` | Success, including a filter that matched nothing and an empty `workspaces` array |
 | `1` | Any error Lattice raises: missing `lattice.json`, unknown task name, failed task, unset cache limit on `prune`, and so on |
 | `2` | clap rejected the command line before Lattice ran anything |
+| `130` | Ctrl-C or `SIGTERM`. Running tasks were stopped on the way out; they did not fail |
+
+On an interrupt every running task's process group gets `SIGTERM`, five seconds,
+then `SIGKILL` — so a task that shelled out to a compiler or a server takes the
+whole tree with it. `130` is distinct from `1` on purpose: a cancelled CI job is
+not a build that broke.
 
 A failing task always exits `1`, with or without `--continue`. Without
 `--continue`, the first failing task is printed as

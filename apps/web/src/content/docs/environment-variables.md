@@ -107,3 +107,19 @@ and a command whose output depends on an undeclared variable can be served a
 stale hit from a run made under a different value. Declare what the command's
 result depends on, nothing more: a variable that is noisy but irrelevant (a
 timestamp, a machine-specific temp path) costs cache hits.
+
+## Repo-wide `globalEnv`
+
+A variable that changes what *every* task produces belongs in the root-level
+`globalEnv` rather than repeated in each task's `env`:
+
+```json
+{
+  "globalEnv": ["NODE_ENV", "CI"]
+}
+```
+
+The names resolve the same way and are hashed into every task's key. The one
+difference is that `globalEnv` names are not set on the task's process the way
+`env` names are — they are already in the environment Lattice inherited, so
+there is nothing to re-apply. A task's own `env` list still applies on top.

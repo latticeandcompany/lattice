@@ -31,8 +31,17 @@ way to park an extra key in the file.
 | `latticeVersion` | `string` | no | none |
 | `workspaces` | array of workspace objects | no | `[]` |
 | `engines` | engine map | no | `{}` |
+| `globalDependencies` | array of `string` | no | `[]` |
+| `globalEnv` | array of `string` | no | `[]` |
 | `tasks` | object of `string` → task object | no | `{}` |
 | `settings` | settings object | no | `{}` |
+
+`globalDependencies` holds globs relative to the **repo root**, hashed into
+every task's cache key. A task's `inputs` are relative to its own workspace and
+`tasks` is shared across workspaces, so a file above the workspace has no
+`inputs` spelling that means the same thing everywhere; this is where it goes.
+`globalEnv` is the same idea for variable names. Both default to empty, and a
+shared root file listed in neither is invisible to the cache.
 
 `$schema` is conventionally `".lattice/schema.json"` — a copy of the bundled
 schema written next to the config so editors validate and autocomplete it.
@@ -132,6 +141,7 @@ tool lands.
 | `env` | array of `string` | no | none | Variable *names* whose resolved values feed the cache key. |
 | `persistent` | `boolean` | no | `false` | Never cached, forces raw output for the whole run, must be a graph leaf. Its exit is reported and a non-zero one fails the run. |
 | `cache` | `boolean` | no | `true` | `false` opts a non-persistent task out of caching. |
+| `timeout` | `string` or integer | no | none | `"90s"`, `"10m"`, `"1h"`, or seconds. On overrun the task's process group gets `SIGTERM`, five seconds, then `SIGKILL`, and the task counts as failed. Ignored on a `persistent` task. Not part of the cache key. |
 
 Keys are task names you choose. Declaration order is preserved and means
 nothing — the dependency graph decides execution order. `^task` and bare `task`
@@ -148,7 +158,7 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `maxCacheSize` | `string` or integer | no | none | Cache size bound: an integer plus `B`/`KB`/`MB`/`GB`/`TB` (base 1024, case-insensitive), or a bare integer of bytes. Used by `lattice prune` when `--max-size` isn't passed. |
+| `maxCacheSize` | `string` or integer | no | none | Cache size bound: an integer plus `B`/`KB`/`MB`/`GB`/`TB` (base 1024, case-insensitive), or a bare integer of bytes. Enforced after every run, and used by `lattice prune` when `--max-size` isn't passed. Unset, the cache grows without limit. |
 | `cacheDir` | `string` | no | `".lattice/cache"` | Local cache directory, relative to the repo root. |
 | `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-l`. |
 | `versionCheck` | `boolean` | no | `true` | `false` disables the `latticeVersion` drift check and handover entirely. |
@@ -163,7 +173,10 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
 | A key that is not part of the config, at any level | parsing | `unknown field \`<key>\` in <path>`, with position, the nearest valid field, and the fields accepted there |
 | Engine value neither a string nor a valid object | parsing | `invalid type: <what was written>, expected a version constraint string or an engine object` |
 | Workspace `path` empty or whitespace-only | validation | `workspace '<name>' has an empty path` |
+| Workspace `path` absolute, or escaping the repo root with `..` | validation | `workspace '<name>' has a path '<path>' that points outside the repo root` |
 | Two workspaces with the same `name` | validation | `duplicate workspace name '<name>': workspace names must be unique` |
+| Workspace `dependsOn` naming an undeclared workspace | validation | `workspace '<name>' depends on '<dep>', which is not a declared workspace`, with the nearest name and the full list |
+| Task `dependsOn` naming a task not in `tasks` (`^` stripped first) | validation | `task '<name>' depends on '<dep>', but '<dep>' is not defined in \`tasks\``, with the nearest name and the full list |
 | String-form engine that isn't well-known | validation | names the engine and shows the object form with `versionCmd` |
 | Task name not present in `tasks` | after config loads | `task '<name>' is not defined in lattice.json; available tasks: ...` |
 | `lattice prune` with no size limit anywhere | after config loads | `no max cache size set (pass --max-size or set settings.maxCacheSize in lattice.json)` |
@@ -191,6 +204,8 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
     }
   ],
   "engines": { "rust": ">=1.75.0" },
+  "globalDependencies": ["tsconfig.base.json", "proto/**"],
+  "globalEnv": ["NODE_ENV"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -201,7 +216,8 @@ Error: task 'build' is not defined in lattice.json; available tasks: test
     "test": {
       "dependsOn": ["build"],
       "inputs": ["src/**/*", "tests/**/*"],
-      "env": ["DATABASE_URL"]
+      "env": ["DATABASE_URL"],
+      "timeout": "10m"
     },
     "lint": { "inputs": ["src/**/*"] },
     "dev": { "persistent": true },

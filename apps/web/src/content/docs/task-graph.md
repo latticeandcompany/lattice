@@ -163,6 +163,36 @@ work (see [Caching](/lattice/docs/caching)). A failing phase stops the run
 before the next phase starts, unless you pass `--continue`, which records the
 failure, moves on to the next phase, and exits non-zero at the end.
 
+## Bounding how long a task runs
+
+A task with no limit runs until it exits. Set `timeout` on the ones that can
+hang:
+
+```json
+{
+  "tasks": {
+    "test": { "timeout": "10m" }
+  }
+}
+```
+
+Accepts `"90s"`, `"10m"`, `"1h"`, or a bare number of seconds. On overrun the
+task's whole process group is sent `SIGTERM`, given five seconds, then killed,
+and the task counts as failed — so the run behaves the way it does for any other
+failure, stopping the pipeline or carrying on under `--continue`.
+
+The output the task produced before the overrun is kept and surfaced with the
+failure, followed by the reason:
+
+```text
+timed out after 10m and was stopped
+```
+
+A `timeout` on a [persistent](/lattice/docs/persistent-tasks) task is ignored: a
+dev server is asked to keep running, so a limit would only cut short the thing
+it exists to hold open. Timeouts are not part of the cache key — how long a task
+may run does not change what it produces.
+
 ## Parallel execution and its bound
 
 `build_schedule` flattens the graph into an in-degree count per node plus each
@@ -197,6 +227,20 @@ tasks that do exist:
 ```text
 Error: task 'nope' is not defined in lattice.json; available tasks: a, b
 ```
+
+So does a `dependsOn` entry that names a task the `tasks` map never defines. A
+dependency Lattice cannot resolve builds no edge, so the prerequisite would
+simply not run and the ordering the config was written to guarantee would be
+missing with nothing to show for it:
+
+```text
+Error: task 'build' depends on 'codegen', but 'codegen' is not defined in `tasks`
+Did you mean `codegin`?
+Defined tasks: build, test, codegin
+```
+
+The `^` form is checked the same way, against the same map: `^build` resolves to
+the `build` task in dependency workspaces, so `build` still has to be defined.
 
 And a [persistent](/lattice/docs/persistent-tasks) task can never be a
 prerequisite, since it streams until stopped and never reaches "done" for a

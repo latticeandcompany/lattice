@@ -77,8 +77,21 @@ Something feeding the hash changes every run. Usually one of:
   path, a session id) — drop it unless the command's result genuinely depends
   on it
 
-`-l` shows the truncated hash and the hit/miss outcome per task, but not which
-field moved the hash. Narrow it by elimination.
+`-l` names the part of the key that moved, so start there rather than bisecting:
+
+```text
+web:build: hash a1b2c3d4e5f6a7b8
+web:build: cache miss: inputs changed
+```
+
+The names are `inputs`, `env`, `globalEnv`, `globalDependencies`, `manifests`
+(a manifest or lockfile in the workspace, or a lockfile at the repo root),
+`dependencies` (a prerequisite's key moved — expected, not a problem),
+`toolchain`, `command`, `patterns` (the glob lists themselves), and
+`environment` (platform, shell, or Lattice version). Two misses name nothing:
+`nothing cached for this task yet`, and `the entry for this key is no longer in
+the cache` (evicted under `settings.maxCacheSize`, swept by `prune`, or found
+corrupt).
 
 ## A task hits the cache when it shouldn't
 
@@ -86,6 +99,17 @@ The inverse: the command reads a file or a variable that isn't declared. `inputs
 only matches what its globs say, and only names listed in `env` are hashed.
 Neither case warns. A wider `inputs` glob — or dropping `inputs` entirely, which
 hashes the whole workspace — or a fuller `env` list is the fix.
+
+If the file is *above* the workspace, no `inputs` glob can reach it: patterns are
+workspace-relative and `tasks` is shared across workspaces. Put it in the
+root-level `globalDependencies`, and repo-wide variables in `globalEnv`:
+
+```json
+{
+  "globalDependencies": ["tsconfig.base.json", "proto/**"],
+  "globalEnv": ["NODE_ENV"]
+}
+```
 
 While investigating, `--no-cache` runs without reading or writing. Once you've
 found it, `--force` re-runs and overwrites the stored entry, which is what clears
@@ -152,6 +176,14 @@ Anything but a clean `0` counts as a failed task and exits non-zero; `exited
 (code 0)` is reported on stdout and counts as nothing. When the last persistent
 task exits, the run prints its summary without needing a Ctrl-C. A child Lattice
 kills at shutdown is not reported and never counts as a failure.
+
+A *non-persistent* task that never finishes is a hang, not a design. Give the
+tasks that can hang a `timeout` (`"10m"`, `"90s"`, or seconds) so a stuck run
+fails instead of holding a CI job until the runner's own limit kills it.
+
+Ctrl-C ends any run: every running task's process group gets `SIGTERM`, five
+seconds, then `SIGKILL`, and the process exits `130`. Nothing a task spawned
+survives it.
 
 ## `--filter` ran more or fewer workspaces than expected
 

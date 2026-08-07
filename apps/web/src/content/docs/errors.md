@@ -94,6 +94,45 @@ workspace 'web' has an empty path
 
 The `path` field of a workspace is present but blank or whitespace-only. Fatal.
 
+### Workspace path points outside the repo
+
+```text
+workspace 'esc' has a path '../outside' that points outside the repo root;
+workspace paths must stay inside the repo
+```
+
+The `path` is absolute, or climbs above the repo root with `..`. Fatal. The
+workspace directory bounds which files are hashed, which the `outputs` globs
+match, and which a cache hit clears before unpacking, so it has to be somewhere
+inside the repo.
+
+### Workspace `dependsOn` names an undeclared workspace
+
+```text
+workspace 'api' depends on 'cor', which is not a declared workspace
+Did you mean `core`?
+Declared workspaces: core, api
+```
+
+A name in a workspace's `dependsOn` matches no entry in `workspaces`. Fatal. An
+unresolvable name builds no edge, so `^task` would expand to nothing and the
+ordering the config was written to guarantee would silently not happen. The
+nearest declared name is offered when one is close enough to be a typo. A
+workspace listing itself is rejected the same way.
+
+### Task `dependsOn` names an undefined task
+
+```text
+task 'build' depends on 'codegen', but 'codegen' is not defined in `tasks`
+Did you mean `codegin`?
+Defined tasks: build, test, codegin
+```
+
+A name in a task's `dependsOn` has no entry in the `tasks` map. Fatal, for the
+same reason as above: the prerequisite would resolve to no node and simply not
+run. The `^` prefix is stripped before the check, so `^build` is checked against
+`build`.
+
 ### Duplicate workspace name (config-level)
 
 ```text
@@ -448,6 +487,28 @@ not this message. Any other spawn error (not "not found") uses a shorter form:
 ```text
 failed to spawn task: <os error>
 ```
+
+### A task overran its `timeout`
+
+```text
+timed out after 10m and was stopped
+```
+
+Surfaced with the task's captured output, the way any other task failure is. The
+task's whole process group was sent `SIGTERM`, given five seconds, then killed.
+The task counts as a failure, so the run then behaves as it does for any
+failure: it stops the pipeline, or carries on under `--continue`.
+
+### The run was interrupted
+
+```text
+interrupted — running tasks were stopped
+```
+
+Ctrl-C or a `SIGTERM` reached Lattice. Every running task's process group is sent
+`SIGTERM`, given five seconds, then killed, and the process exits `130` rather
+than `1`. The tasks that were running did not fail; the run was stopped, and the
+message says so rather than reporting them as failures.
 
 ### Runner panic (fatal even with `--continue`)
 

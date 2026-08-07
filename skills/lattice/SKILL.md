@@ -72,6 +72,18 @@ authoritative if anything here disagrees with the installed binary.
   own `outputs`. It is correct but slower than it needs to be, and it re-runs on
   changes the command never reads. Declare `inputs` to narrow it — under-declare
   and you get a stale hit, so start broad and tighten.
+- **`inputs` cannot name a file above the workspace.** Patterns are relative to
+  the workspace directory, and `tasks` is shared by every workspace, so a shared
+  root file has no `inputs` spelling that means the same thing everywhere. Put
+  it in the root-level `globalDependencies` (repo-root-relative globs, hashed
+  into every task's key) and repo-wide variables in `globalEnv`. Leave a shared
+  root file out of both and every task hits cache with an artifact built before
+  it changed.
+- **A `dependsOn` that names nothing is an error, not a no-op.** A workspace
+  `dependsOn` must name a declared workspace and a task `dependsOn` must name a
+  defined task; either miss is rejected at load with the nearest name offered.
+  Don't "fix" one by deleting the reference — the ordering it was written for is
+  usually real.
 - **A workspace `path` is a literal directory.** `packages/*` is treated as a
   directory named `*` and fails. One entry per project directory.
 - **An unknown key in `lattice.json` fails the load.** Every command that reads
@@ -112,7 +124,7 @@ failed task; `2` the command line itself was rejected.
 
 ## Editing `lattice.json`
 
-Five top-level keys, all optional — `{}` is a valid config.
+Seven top-level keys, all optional — `{}` is a valid config.
 
 ```json
 {
@@ -129,13 +141,19 @@ Five top-level keys, all optional — `{}` is a valid config.
     }
   ],
   "engines": { "node": ">=20.0.0" },
+  "globalDependencies": ["tsconfig.base.json", "proto/**"],
+  "globalEnv": ["NODE_ENV"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["src/**/*", "package.json"],
       "outputs": ["dist/**"]
     },
-    "test": { "dependsOn": ["build"], "inputs": ["src/**/*", "tests/**/*"] },
+    "test": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*", "tests/**/*"],
+      "timeout": "10m"
+    },
     "dev": { "persistent": true }
   },
   "settings": { "maxCacheSize": "10GB" }
@@ -165,9 +183,10 @@ The cache key is a hash over the workspace name, the task name and its resolved
 command, the manifest that command resolves through (`package.json`, `Makefile`,
 …), the contents of every file matched by `inputs` minus `ignore`, the cache key
 of every task this one depends on, any tool-unique lockfile in the workspace or
-at the repo root, the resolved values of the variables named in `env`, the
-resolved toolchain identity, the OS, architecture and shell, and the Lattice
-version. Nothing else is consulted.
+at the repo root, the resolved values of the variables named in `env` and in the
+root-level `globalEnv`, the contents of every file matched by the root-level
+`globalDependencies`, the resolved toolchain identity, the OS, architecture and
+shell, and the Lattice version. Nothing else is consulted.
 
 Two consequences worth knowing before you debug a hit or a miss:
 
@@ -177,7 +196,7 @@ Two consequences worth knowing before you debug a hit or a miss:
 - A task's own outputs never affect its key, so you don't need to repeat them in
   `ignore`.
 
-That makes four fields yours to get right:
+That makes six fields yours to get right:
 
 - `inputs` — what the command reads. Omit it and the whole workspace is hashed,
   which is safe but slow. Declare it to narrow the key: under-declare and you get
@@ -191,13 +210,27 @@ That makes four fields yours to get right:
 - `env` — variable *names*, not `NAME=value` pairs. The resolved value is
   hashed and exported to the task. An unset name contributes nothing. Lattice
   does not read `.env` files.
+- `globalDependencies` (root level) — repo-root-relative globs hashed into every
+  task's key. The only way to cover a file above the workspace: a base
+  `tsconfig.json`, a shared schema directory, a root `.env`. Editing anything it
+  matches makes every task miss, so list only what genuinely crosses workspaces.
+- `globalEnv` (root level) — `env` for the whole repo. Same resolution, hashed
+  into every key, but not re-exported to the task (it's already inherited).
 
 Set `cache: false` to opt one task out entirely. `persistent: true` is never
 cached regardless. The cache lives in `.lattice/cache` (move it with
-`settings.cacheDir`) and is safe to delete at any time. It only grows until
-`lattice prune` evicts least-recently-used entries down to `--max-size` or
-`settings.maxCacheSize`; with neither set, `prune` fails rather than pick a
-limit.
+`settings.cacheDir`) and is safe to delete at any time. With
+`settings.maxCacheSize` set, every run evicts least-recently-used entries down
+to it; with no budget set, the cache grows without limit and `lattice prune
+--max-size <size>` sweeps it by hand.
+
+**Debugging a miss:** run with `-l`. Each miss names the part of the key that
+moved — `cache miss: inputs changed`, `cache miss: globalDependencies changed`,
+`cache miss: dependencies, env changed`. The names are `inputs`, `env`,
+`globalEnv`, `globalDependencies`, `manifests`, `dependencies`, `toolchain`,
+`command`, `patterns`, `environment`. Two misses name nothing: a task that has
+never completed, and a key whose entry was evicted or found corrupt. Start with
+whichever part it names rather than bisecting the config.
 
 ## Pinning tool versions
 
@@ -288,11 +321,17 @@ when you want a rebuild narrowed below the whole subtree.
 ## In CI
 
 `lattice setup` as its own step, then `lattice run`. Restore and save the cache
-directory (`.lattice/cache`, or `settings.cacheDir`) with a rolling key, and run
-`lattice prune --max-size <size>` before saving so it stays bounded. `--continue`
-is the right shape for a CI run: it reports every failure in one pass and still
-exits `1`. `CI` being set already forces plain output, so `-l` is redundant
-there.
+directory (`.lattice/cache`, or `settings.cacheDir`) with a rolling key, and set
+`settings.maxCacheSize` so every run keeps it bounded (or
+`lattice prune --max-size <size>` before saving, to use a different limit in CI
+than locally). `--continue` is the right shape for a CI run: it reports every
+failure in one pass and still exits `1`. `CI` being set already forces plain
+output, so `-l` is redundant there.
+
+Give tasks that can hang a `timeout`, so a stuck run fails instead of burning
+the job's whole budget and saving no cache. A cancelled job sends `SIGTERM`:
+Lattice stops every running task's process group and exits `130`, which is
+worth distinguishing from `1` if the pipeline branches on the exit code.
 
 ## Verify your work
 
@@ -302,8 +341,8 @@ there.
 - Run it a second time. Every task should report a cache hit, and the run should
   end with `FULL CACHE` (`lattice: full cache — nothing to run` in plain
   output) — that line only prints when nothing executed. If a task misses twice
-  in a row with nothing changed, something in its `inputs` or `env` changes
-  every run.
+  in a row with nothing changed, the miss line names the component responsible
+  (`cache miss: inputs changed`); start there.
 - `lattice version` — which binary actually ran, which matters when the repo
   pins `latticeVersion`.
 
