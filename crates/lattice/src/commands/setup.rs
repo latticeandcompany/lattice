@@ -245,11 +245,18 @@ async fn run_install(
 	path_prepend: &[PathBuf],
 	loquacious: bool,
 ) -> Result<bool> {
-	let mut cmd = if cfg!(windows) {
+	// `/S /C` with a raw argument, not `.arg(command)`: Rust escapes an embedded
+	// quote the way the MSVC runtime parses it, and `cmd` does not read `\"` as an
+	// escape, so an install command containing a quote would arrive mangled.
+	#[cfg(windows)]
+	let mut cmd = {
+		use std::os::windows::process::CommandExt;
 		let mut c = tokio::process::Command::new("cmd");
-		c.arg("/C").arg(command);
+		c.as_std_mut().raw_arg(format!("/S /C \"{command}\""));
 		c
-	} else {
+	};
+	#[cfg(not(windows))]
+	let mut cmd = {
 		let mut c = tokio::process::Command::new("sh");
 		c.arg("-c").arg(command);
 		c

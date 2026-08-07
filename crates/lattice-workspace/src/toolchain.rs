@@ -94,11 +94,20 @@ fn install_hash8(install_cmd: &str) -> String {
 /// other, and running it through a shell the platform does not have means every
 /// engine in the config fails to resolve.
 fn shell_command(command: &str) -> Command {
-	if cfg!(windows) {
+	// `/S /C` with a raw argument, not `.arg(command)`: Rust escapes an embedded
+	// quote the way the MSVC runtime parses it, and `cmd` does not read `\"` as an
+	// escape. A `versionCmd` or `installCmd` containing a quote — a quoted install
+	// path, say — would otherwise arrive mangled. With `/S`, `cmd` strips the first
+	// and last quote of the rest and takes what is between them verbatim.
+	#[cfg(windows)]
+	{
+		use std::os::windows::process::CommandExt;
 		let mut c = Command::new("cmd");
-		c.arg("/C").arg(command);
+		c.raw_arg(format!("/S /C \"{command}\""));
 		c
-	} else {
+	}
+	#[cfg(not(windows))]
+	{
 		let mut c = Command::new("sh");
 		c.arg("-c").arg(command);
 		c

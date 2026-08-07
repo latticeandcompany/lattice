@@ -1285,15 +1285,33 @@ fn shell_program() -> &'static str {
 /// Build a [`tokio::process::Command`] that runs `command` through the platform
 /// shell: `sh -c "<command>"` on unix, `cmd /C "<command>"` on windows.
 fn build_shell_command(command: &str) -> tokio::process::Command {
-	if cfg!(windows) {
+	#[cfg(windows)]
+	{
 		let mut c = tokio::process::Command::new("cmd");
-		c.arg("/C").arg(command);
+		windows_shell_arg(&mut c, command);
 		c
-	} else {
+	}
+	#[cfg(not(windows))]
+	{
 		let mut c = tokio::process::Command::new("sh");
 		c.arg("-c").arg(command);
 		c
 	}
+}
+
+/// Hand `command` to `cmd` exactly as the config wrote it.
+///
+/// Passing it as an ordinary argument does not work. Rust quotes arguments the
+/// way the MSVC runtime parses them, which escapes an embedded `"` as `\"` —
+/// and `cmd` does not read `\"` as an escape, so any command containing a quote
+/// arrives mangled. `node -e "..."`, or a path with a space in it, is enough.
+///
+/// `/S` is the documented way out: with it, `cmd` strips the first and last
+/// quote of the rest and takes everything between them verbatim.
+#[cfg(windows)]
+fn windows_shell_arg(cmd: &mut tokio::process::Command, command: &str) {
+	use std::os::windows::process::CommandExt;
+	cmd.as_std_mut().raw_arg(format!("/S /C \"{command}\""));
 }
 
 /// Prepend `prepend` dirs to the child's `PATH`, affecting that child only.

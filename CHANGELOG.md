@@ -10,6 +10,19 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### A task command with a quote in it works on Windows — 2026-08-07
+
+A task's command was handed to `cmd` as an ordinary argument. Rust quotes
+arguments the way the MSVC runtime parses them, which escapes an embedded `"` as
+`\"` — and `cmd` does not read `\"` as an escape, so any command containing a
+quote arrived mangled. `node -e "console.log(1)"` was enough, as was any path
+with a space in it. Task commands, `installCmd`, `versionCmd` and the `setup`
+installers all went through the same door.
+
+Each now passes `/S /C "<command>"` as a raw argument, which is the documented
+way to reach `cmd` verbatim: with `/S` it strips the first and last quote of the
+rest and takes what is between them as written.
+
 ### The test suites run on Windows — 2026-08-07
 
 Adding a Windows CI job showed that most of the suite could not run there, for a
