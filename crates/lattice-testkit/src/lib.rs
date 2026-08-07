@@ -141,7 +141,12 @@ pub fn mkdirs(dir: impl AsRef<Path>) -> String {
 	if CMD {
 		// `mkdir` creates intermediates on its own here, but fails on an existing
 		// directory, so the existence check is what makes this idempotent.
-		format!("if not exist {quoted} mkdir {quoted}")
+		//
+		// The parentheses are load-bearing: in `if not exist X mkdir X && Y`, the
+		// `&& Y` binds inside the `if`, so `Y` is skipped whenever the directory
+		// already exists. Grouping the `if` keeps the rest of an [`all`] chain out
+		// of the condition.
+		format!("(if not exist {quoted} mkdir {quoted})")
 	} else {
 		format!("mkdir -p {quoted}")
 	}
@@ -342,6 +347,26 @@ mod tests {
 		assert!(
 			run(&mkdirs("a/b/c"), &dir).status.success(),
 			"running it again must not fail"
+		);
+	}
+
+	/// The second run is the one that matters. Under `cmd`, `&&` after a bare `if`
+	/// binds inside the condition, so once the directory exists everything after
+	/// `mkdirs` in the chain silently stops running — which looks exactly like a
+	/// task that succeeded and did nothing.
+	#[test]
+	fn mkdirs_does_not_swallow_the_rest_of_the_chain() {
+		let dir = tmp();
+		let cmd = all([mkdirs("dist"), write("dist/after.txt", "after")]);
+
+		assert!(run(&cmd, &dir).status.success());
+		assert!(dir.join("dist/after.txt").exists(), "first run");
+
+		std::fs::remove_file(dir.join("dist/after.txt")).unwrap();
+		assert!(run(&cmd, &dir).status.success());
+		assert!(
+			dir.join("dist/after.txt").exists(),
+			"the directory already existed, and the rest of the chain still has to run"
 		);
 	}
 
