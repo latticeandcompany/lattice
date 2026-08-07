@@ -37,6 +37,31 @@ pub fn path(p: impl AsRef<Path>) -> String {
 	}
 }
 
+/// A [`std::process::Command`] that runs `command` through the platform shell,
+/// the way Lattice itself hands a task over.
+///
+/// On Windows the command goes in as a raw `/S /C "<command>"` argument rather
+/// than through `.arg()`. Rust quotes arguments the way the MSVC runtime parses
+/// them, escaping an embedded `"` as `\"`, which `cmd` does not read as an escape
+/// — so a command carrying a quote arrives mangled. Anything that spawns a shell
+/// needs this, which is why it lives here rather than being written out again at
+/// each call site.
+pub fn shell_command(command: &str) -> std::process::Command {
+	#[cfg(windows)]
+	{
+		use std::os::windows::process::CommandExt;
+		let mut c = std::process::Command::new("cmd");
+		c.raw_arg(format!("/S /C \"{command}\""));
+		c
+	}
+	#[cfg(not(windows))]
+	{
+		let mut c = std::process::Command::new("sh");
+		c.arg("-c").arg(command);
+		c
+	}
+}
+
 /// A command string escaped for embedding in JSON, quotes included.
 ///
 /// A Windows path is full of backslashes, so pasting one into a `lattice.json`
@@ -236,16 +261,11 @@ mod tests {
 
 	/// Every builder has to produce something the platform shell will actually
 	/// run, so each is executed and its effect checked rather than its text.
+	///
+	/// Through [`shell_command`], which is the same door Lattice uses — a harness
+	/// that spawned the shell its own way could pass while the real thing failed.
 	fn run(cmd: &str, dir: &Path) -> std::process::Output {
-		let mut c = if CMD {
-			let mut c = std::process::Command::new("cmd");
-			c.arg("/C").arg(cmd);
-			c
-		} else {
-			let mut c = std::process::Command::new("sh");
-			c.arg("-c").arg(cmd);
-			c
-		};
+		let mut c = shell_command(cmd);
 		c.current_dir(dir);
 		c.output().expect("spawn the platform shell")
 	}
