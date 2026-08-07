@@ -88,18 +88,41 @@ fn install_hash8(install_cmd: &str) -> String {
 	hex[..8].to_string()
 }
 
-/// Run a command string via `sh -c`, optionally prepending `extra_path` to
-/// `PATH` and setting extra env. Returns combined stdout+stderr.
+/// Build a [`Command`] that runs `command` through the platform shell, the same
+/// way the runner hands a task's command over: `sh -c` on unix, `cmd /C` on
+/// windows. A version check or an `installCmd` is a command string like any
+/// other, and running it through a shell the platform does not have means every
+/// engine in the config fails to resolve.
+fn shell_command(command: &str) -> Command {
+	if cfg!(windows) {
+		let mut c = Command::new("cmd");
+		c.arg("/C").arg(command);
+		c
+	} else {
+		let mut c = Command::new("sh");
+		c.arg("-c").arg(command);
+		c
+	}
+}
+
+/// Prepend `dir` to a `PATH` value using the platform's separator.
+fn prepend_to_path(dir: &Path) -> std::ffi::OsString {
+	let existing = std::env::var_os("PATH").unwrap_or_default();
+	let mut paths: Vec<PathBuf> = vec![dir.to_path_buf()];
+	paths.extend(std::env::split_paths(&existing));
+	std::env::join_paths(paths).unwrap_or(existing)
+}
+
+/// Run a command string through the platform shell, optionally prepending
+/// `extra_path` to `PATH` and setting extra env. Returns combined stdout+stderr.
 fn run_capture(
 	cmd: &str,
 	extra_path: Option<&Path>,
 	extra_env: &[(String, String)],
 ) -> Result<(bool, String)> {
-	let mut command = Command::new("sh");
-	command.arg("-c").arg(cmd);
+	let mut command = shell_command(cmd);
 	if let Some(p) = extra_path {
-		let existing = std::env::var("PATH").unwrap_or_default();
-		command.env("PATH", format!("{}:{}", p.display(), existing));
+		command.env("PATH", prepend_to_path(p));
 	}
 	for (k, v) in extra_env {
 		command.env(k, v);

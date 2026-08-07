@@ -43,3 +43,25 @@ jobs:
 
       - name: Versions agree everywhere they are written by hand
         run: scripts/check-versions.sh
+
+  # The release matrix publishes a Windows binary, so a Windows build has to be
+  # something CI proves rather than something the release job discovers. Shell
+  # and PATH handling differ there, and nothing else in this workflow exercises
+  # either.
+  windows:
+    name: build · test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
