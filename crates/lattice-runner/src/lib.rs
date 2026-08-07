@@ -39,6 +39,7 @@ const MAX_CAPTURED_LINES: usize = 5000;
 /// How long a child gets to exit on its own after being asked to stop, before it
 /// is killed outright. Long enough for a compiler to finish the file it is
 /// writing and drop its lock; short enough that Ctrl-C still feels immediate.
+#[cfg_attr(not(unix), allow(dead_code, reason = "the graceful step is unix-only"))]
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,21 +139,48 @@ async fn terminate_groups(pids: &[u32]) {
 	if pids.is_empty() {
 		return;
 	}
+
+	#[cfg(not(unix))]
 	for pid in pids {
-		signal_group(*pid, Stop::Terminate);
+		kill_tree(*pid).await;
 	}
 
-	let deadline = Instant::now() + SHUTDOWN_GRACE;
-	while Instant::now() < deadline {
-		if !pids.iter().copied().any(group_alive) {
-			return;
+	#[cfg(unix)]
+	{
+		for pid in pids {
+			signal_group(*pid, Stop::Terminate);
 		}
-		tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-	}
 
-	for pid in pids {
-		signal_group(*pid, Stop::Kill);
+		let deadline = Instant::now() + SHUTDOWN_GRACE;
+		while Instant::now() < deadline {
+			if !pids.iter().copied().any(group_alive) {
+				return;
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+		}
+
+		for pid in pids {
+			signal_group(*pid, Stop::Kill);
+		}
 	}
+}
+
+/// Take down the process tree rooted at `pid`, for platforms with no process
+/// group to signal.
+///
+/// `/T` is the whole point: killing only the shell leaves whatever it started
+/// running, still holding the output pipes open — so the run cannot even finish
+/// collecting, let alone exit. `/F` because `taskkill` otherwise asks a window to
+/// close, and a console process has none; there is no gentler first step to take
+/// here, which is why this is both the graceful path and the only one.
+#[cfg(not(unix))]
+async fn kill_tree(pid: u32) {
+	let _ = tokio::process::Command::new("taskkill")
+		.args(["/T", "/F", "/PID", &pid.to_string()])
+		.stdout(std::process::Stdio::null())
+		.stderr(std::process::Stdio::null())
+		.status()
+		.await;
 }
 
 /// Stop one child, gracefully where the platform can express it.
@@ -178,11 +206,18 @@ async fn stop_child(child: &mut tokio::process::Child, pid: Option<u32>) {
 		signal_group(pid, Stop::Kill);
 		return;
 	}
+	// No process group to signal: take the tree down directly, then make sure the
+	// direct child is gone even if it had no tree to speak of.
+	#[cfg(not(unix))]
+	if let Some(pid) = pid {
+		kill_tree(pid).await;
+	}
 	let _ = pid;
 	let _ = child.start_kill();
 }
 
 /// Whether any process remains in `pid`'s group.
+#[cfg(unix)]
 fn group_alive(pid: u32) -> bool {
 	#[cfg(unix)]
 	{
@@ -197,6 +232,7 @@ fn group_alive(pid: u32) -> bool {
 	}
 }
 
+#[cfg(unix)]
 #[derive(Clone, Copy)]
 enum Stop {
 	Terminate,
@@ -206,25 +242,18 @@ enum Stop {
 /// Signal a child's whole process group, so a task that launched a server or a
 /// build daemon through a shell takes it down too.
 ///
-/// On platforms without process groups only the direct child can be reached, and
-/// [`tokio::process::Child`] owns the handle needed to do it — there, a child
-/// outliving the run is left to the console's own Ctrl-C handling.
+/// Unix only, because the group is: elsewhere the tree is taken down by
+/// [`kill_tree`] instead.
+#[cfg(unix)]
 fn signal_group(pid: u32, stop: Stop) {
-	#[cfg(unix)]
-	{
-		let signal = match stop {
-			Stop::Terminate => libc::SIGTERM,
-			Stop::Kill => libc::SIGKILL,
-		};
-		// SAFETY: `kill(2)` with a negative pid signals the process group; an
-		// invalid or already-dead group is a harmless ESRCH.
-		unsafe {
-			libc::kill(-(pid as i32), signal);
-		}
-	}
-	#[cfg(not(unix))]
-	{
-		let _ = (pid, stop);
+	let signal = match stop {
+		Stop::Terminate => libc::SIGTERM,
+		Stop::Kill => libc::SIGKILL,
+	};
+	// SAFETY: `kill(2)` with a negative pid signals the process group; an invalid
+	// or already-dead group is a harmless ESRCH.
+	unsafe {
+		libc::kill(-(pid as i32), signal);
 	}
 }
 
