@@ -1,3 +1,5 @@
+pub mod schema;
+
 use anyhow::{anyhow, bail, Context, Result};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -902,18 +904,14 @@ mod tests {
 			.unwrap_or_else(|e| panic!("failed to parse {} as JSON: {e}", path.display()))
 	}
 
-	/// The schema is bundled with the `lattice` crate and written to
-	/// `.lattice/schema.json` by `lattice init`.
-	fn schema_path() -> PathBuf {
-		repo_root()
-			.join("crates")
-			.join("lattice")
-			.join("assets")
-			.join("schema.json")
+	/// The schema this crate compiles in, as JSON. Read from the constant rather
+	/// than from disk so the tests check the copy that actually ships.
+	fn schema_json() -> Value {
+		serde_json::from_str(schema::SCHEMA_JSON).expect("the bundled schema must be valid JSON")
 	}
 
 	fn compiled_schema() -> Validator {
-		let schema = read_json(&schema_path());
+		let schema = schema_json();
 		jsonschema::validator_for(&schema).expect("schema.json must be a valid JSON Schema")
 	}
 
@@ -1680,7 +1678,7 @@ mod tests {
 	/// an editor and `lattice run` disagree about whether a file is valid.
 	#[test]
 	fn schema_and_config_types_accept_the_same_keys() {
-		let schema = read_json(&schema_path());
+		let schema = schema_json();
 		let defs = &schema["$defs"];
 
 		let cases = [

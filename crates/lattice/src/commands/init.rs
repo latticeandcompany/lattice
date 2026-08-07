@@ -11,7 +11,7 @@ use lattice_output::{logo_for, teal, Theme};
 use lattice_workspace::scan::{scan_engine_pins, scan_workspaces, EnginePin, WorkspaceCandidate};
 
 use crate::cli::BIN_VERSION;
-use crate::schema::SCHEMA_JSON;
+use lattice_config::schema::SCHEMA_JSON;
 
 /// Lines that init ensures are present in `.gitignore`: the cache, provisioned
 /// toolchains, and the installed binaries are all per-machine artifacts. The

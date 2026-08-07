@@ -72,7 +72,7 @@ impl RunArgs {
 			)
 		})?;
 
-		crate::schema::ensure_schema(&root);
+		lattice_config::schema::ensure_schema(&root);
 		let config = lattice_config::load_config(&root)?;
 
 		for task in &self.tasks {
