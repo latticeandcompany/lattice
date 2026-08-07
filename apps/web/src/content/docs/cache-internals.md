@@ -24,14 +24,13 @@ something changed and nothing more; comparing components against the ones the
 task last resolved to names which. That comparison is what
 `cache miss: inputs changed` reports.
 
-1. `environment` — the on-disk cache format, the running Lattice version, the
-   platform as `<os>-<arch>`, the shell (`sh -c` or `cmd /C`), the workspace's
-   declared name, and the task name. The workspace name matters on its own:
-   without it, two workspaces running the same command with nothing else to tell
-   them apart would share one entry and restore each other's artifacts. The cache
-   format also names the subdirectory entries are written under, so a release
-   that changes this list cannot read entries whose keys were built from the old
-   one.
+1. `environment` — the running Lattice version, the platform as `<os>-<arch>`,
+   the shell (`sh -c` or `cmd /C`), the workspace's declared name, and the task
+   name. The workspace name matters on its own: without it, two workspaces
+   running the same command with nothing else to tell them apart would share one
+   entry and restore each other's artifacts. The version is what keeps a release
+   that changes this list from reading entries whose keys were built from the old
+   one: every key moves, so the old entries are simply never asked for again.
 2. `command` — the fully resolved shell command for this task in this workspace.
 3. `toolchain` — the identity string of the workspace's resolved toolchains
    (empty if the workspace declares none).
@@ -86,12 +85,12 @@ never depends on filesystem iteration order, on the order fields were declared i
 
 ### Key breakdowns
 
-Alongside the entries, each format directory keeps one small JSON file per
+Alongside the entries, the cache directory keeps one small JSON file per
 `(workspace, task)` pair recording the component digests that pair last resolved
 to:
 
 ```text
-.lattice/cache/v3/fingerprints/<id>.json
+.lattice/cache/fingerprints/<id>.json
 ```
 
 `<id>` is a truncated hash of the workspace and task names, so either half can
@@ -121,25 +120,24 @@ value hashed under one field name from being read as a value under another.
 
 ## On-disk layout
 
-Every cache entry lives under the configured cache directory (default
-`.lattice/cache`, overridable with `settings.cacheDir`), inside a subdirectory
-named for the cache format, as two files sharing the key as their stem:
+Every cache entry lives directly under the configured cache directory (default
+`.lattice/cache`, overridable with `settings.cacheDir`), as two files sharing the
+key as their stem:
 
 ```text
-.lattice/cache/v3/<key>.tar.gz       the artifact: gzip-compressed tar of outputs
-.lattice/cache/v3/<key>.meta.json    the metadata: everything needed to verify and restore
+.lattice/cache/<key>.tar.gz       the artifact: gzip-compressed tar of outputs
+.lattice/cache/<key>.meta.json    the metadata: everything needed to verify and restore
 ```
 
-Within a format directory there is no further nesting and no sharding by key
-prefix: it is a flat list of `<key>.tar.gz` / `<key>.meta.json` pairs, beside the
-`fingerprints/` directory described above.
+There is no further nesting and no sharding by key prefix: it is a flat list of
+`<key>.tar.gz` / `<key>.meta.json` pairs, beside the `fingerprints/` directory
+described above.
 
-Sibling directories whose names have the shape of a cache format — `v1`, `v2`,
-and so on — are entries from other formats; `lattice prune` deletes them
-outright, since a key computed under one format never means the same thing under
-another. Anything else beside them is left alone: `cacheDir` can point at a
-directory Lattice does not own outright, and a prune that swept every neighbour
-would take the provisioned toolchains and the installed binary with it.
+Nothing beside those is touched. `lattice prune` removes cache entries, orphaned
+artifacts and leftover staging files, and no directories at all: `cacheDir` can
+point at a directory Lattice does not own outright, and a prune that swept every
+neighbour would take the provisioned toolchains and the installed binary with
+it.
 
 Both files are written to a temporary name in the same directory and renamed into
 place. A rename is atomic, so a concurrent reader sees either the previous file
@@ -235,12 +233,11 @@ runner calls on every cache hit after a successful restore. It is the only field
 `prune(max_bytes)` enforces `settings.maxCacheSize` (or `--max-size` on
 `lattice prune`) by:
 
-1. Reclaiming what can never be read: artifacts with no metadata beside them,
-   leftover temporary files, and directories belonging to other cache formats.
-   This happens first, before the current format's directory is even opened, so a
-   repo that has just upgraded — and has no directory for the new format yet —
-   still gets the old one retired.
-2. Scanning the format directory for every `<key>.meta.json`, reading each
+1. Reclaiming what can never be read: artifacts with no metadata beside them and
+   leftover temporary files, both left by an interrupted store. This happens
+   first, since prune enumerates by metadata and would otherwise never see an
+   orphaned artifact at all.
+2. Scanning the cache directory for every `<key>.meta.json`, reading each
    entry's `lastUsed` and combined on-disk size (`.tar.gz` + `.meta.json`). An
    entry whose metadata no longer parses is evicted here rather than aborting the
    prune.

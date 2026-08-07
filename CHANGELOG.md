@@ -10,6 +10,21 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### Cache entries live directly in the cache directory — 2026-08-07
+
+Entries were written under a subdirectory named for an on-disk cache format
+(`.lattice/cache/v3/`), and that name was hashed into every key, so a release
+that changed what a key covered started a new group and left the old one for
+`lattice prune` to reclaim. The running Lattice version is already part of every
+key and already does that job — a version bump moves every key, so the old
+entries are never asked for again — and the second mechanism only bought the
+directory sweep, which is the one part of prune that ever called
+`remove_dir_all` on a path the user chose.
+
+Entries now sit flat under `settings.cacheDir`, prune removes no directories at
+all, and the first run after this upgrade re-runs everything. Anything left in a
+`v*` directory from an earlier build is unreachable and safe to delete by hand.
+
 ### A declared env name reaches the key even when it is unset — 2026-08-07
 
 Only resolved `(name, value)` pairs were hashed, so a name in `env` or `globalEnv`

@@ -157,10 +157,12 @@ fn a_miss_says_which_part_of_the_key_moved() {
 }
 
 /// `cacheDir` can legitimately point at a directory Lattice does not own
-/// outright. Prune used to remove every neighbour that was not the current cache
-/// format, which took the provisioned toolchains and the installed binary too.
+/// outright — here `.lattice`, beside `toolchains/` and `bin/`. Prune reclaims
+/// cache entries and the debris of an interrupted store, and no directories at
+/// all; it used to remove every neighbour that was not the current cache format,
+/// which took the provisioned toolchains and the installed binary too.
 #[test]
-fn prune_leaves_everything_that_is_not_a_cache_format() {
+fn prune_leaves_everything_that_is_not_a_cache_entry() {
 	let fx = Fixture::new();
 	fx.mkdir("app");
 	fx.config_from(
@@ -177,8 +179,8 @@ fn prune_leaves_everything_that_is_not_a_cache_format() {
 		"#!/bin/sh\n",
 	);
 	fx.write(".lattice/bin/lattice-1.0.0", "the binary in use");
-	// A directory from a genuinely older cache format, which should still go.
-	fx.write(".lattice/v1/dead.meta.json", "{}");
+	// Debris from an interrupted store, which should still go.
+	fx.write(".lattice/deadbeef.tar.gz", "an artifact with no metadata");
 
 	fx.lattice().args(["run", "build"]).assert().success();
 	fx.lattice().arg("prune").assert().success();
@@ -192,8 +194,8 @@ fn prune_leaves_everything_that_is_not_a_cache_format() {
 		"prune must not take the installed binary"
 	);
 	assert!(
-		!fx.exists(".lattice/v1"),
-		"an earlier cache format is still reclaimed"
+		!fx.exists(".lattice/deadbeef.tar.gz"),
+		"an orphaned artifact is still reclaimed"
 	);
 }
 

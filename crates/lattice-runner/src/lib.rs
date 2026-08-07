@@ -1922,9 +1922,7 @@ mod tests {
 		assert!(out_file.exists(), "cache hit must restore outputs");
 
 		// Corrupt the stored tarball: the digest mismatch is a miss, so it re-runs.
-		let cache_dir = root
-			.join(config.settings.cache_dir())
-			.join(lattice_cache::CACHE_FORMAT);
+		let cache_dir = root.join(config.settings.cache_dir());
 		let tarball = std::fs::read_dir(&cache_dir)
 			.unwrap()
 			.flatten()
@@ -1968,9 +1966,7 @@ mod tests {
 		o.no_store = false;
 		execute_tasks(o).await.unwrap();
 
-		let cache_dir = root
-			.join(config.settings.cache_dir())
-			.join(lattice_cache::CACHE_FORMAT);
+		let cache_dir = root.join(config.settings.cache_dir());
 		let meta_path = std::fs::read_dir(&cache_dir)
 			.unwrap()
 			.flatten()
@@ -2343,11 +2339,9 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 
-		/// Entries stored under the current cache format.
+		/// Entries stored in the cache directory.
 		fn entries(root: &Path, config: &LatticeConfig) -> usize {
-			let dir = root
-				.join(config.settings.cache_dir())
-				.join(lattice_cache::CACHE_FORMAT);
+			let dir = root.join(config.settings.cache_dir());
 			std::fs::read_dir(&dir)
 				.map(|rd| {
 					rd.flatten()

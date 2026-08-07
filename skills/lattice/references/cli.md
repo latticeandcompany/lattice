@@ -112,10 +112,9 @@ A size is an integer plus `B`, `KB`, `MB`, `GB`, or `TB` (case-insensitive, base
 
 With `settings.maxCacheSize` set, every run already holds the cache to it, so
 this command is for sweeping by hand or enforcing a different limit than the
-config's. It also reclaims what nothing can read: entries from an earlier cache
-format, and artifacts left without metadata by an interrupted run. Directories
-beside the cache that are not themselves cache formats are left alone, so a
-`cacheDir` pointing somewhere shared keeps its other contents.
+config's. It also reclaims what nothing can read: artifacts left without metadata
+by an interrupted run, and the staging files beside them. It removes no
+directories, so a `cacheDir` pointing somewhere shared keeps its other contents.
 
 ## `lattice upgrade <VERSION>`
 

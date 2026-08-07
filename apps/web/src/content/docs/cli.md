@@ -213,8 +213,8 @@ on-disk layout.
 
 With `settings.maxCacheSize` set, every run already holds the cache to it, so
 `prune` is for sweeping by hand or for enforcing a different limit than the one
-in the config. It also reclaims what nothing can read: entries from an earlier
-cache format, and artifacts left behind without metadata by an interrupted run.
+in the config. It also reclaims what nothing can read: artifacts left behind
+without metadata by an interrupted run, and the staging files beside them.
 
 ## `lattice upgrade`
 

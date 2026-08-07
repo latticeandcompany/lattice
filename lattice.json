@@ -19,8 +19,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "tsconfig.json"],
-      "outputs": ["dist/**"]
+      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "tsconfig.json"]
     },
     "dev": {
       "persistent": true,

@@ -25,6 +25,20 @@
       "$ref": "#/$defs/engines",
       "description": "Root-level toolchain defaults for all workspaces."
     },
+    "globalDependencies": {
+      "type": "array",
+      "description": "Repo-root-relative globs hashed into every task's cache key. Use for files shared across workspaces, such as a base tsconfig, a schema directory, or a root .env.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "globalEnv": {
+      "type": "array",
+      "description": "Environment variable names whose values are hashed into every task's cache key.",
+      "items": {
+        "type": "string"
+      }
+    },
     "tasks": {
       "type": "object",
       "description": "Named tasks and how they relate across the workspace graph.",
@@ -153,6 +167,13 @@
         "cache": {
           "type": "boolean",
           "description": "Whether outputs of this task are cached."
+        },
+        "timeout": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "integer", "minimum": 1 }
+          ],
+          "description": "How long the task may run before it is killed, e.g. \"90s\", \"10m\", \"1h\", or a number of seconds. Ignored for persistent tasks."
         }
       }
     },

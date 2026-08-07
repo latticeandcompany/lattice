@@ -16,24 +16,6 @@ use std::path::{Path, PathBuf};
 // their contents change what a build produces.
 use lattice_config::{PipelineTask, LOCKFILES, MANIFESTS};
 
-/// On-disk cache layout and key-composition version. Entries live under a
-/// subdirectory named for it, so changing what goes into a key retires the old
-/// entries wholesale instead of risking a stale hit against a new key.
-pub const CACHE_FORMAT: &str = "v3";
-
-/// Whether `name` is one of our own cache-format directories.
-///
-/// [`LocalStore::sweep_unreadable`] reclaims the directories belonging to
-/// formats this binary no longer speaks, and it does so with `remove_dir_all`.
-/// It has to be able to tell them apart from anything else that happens to sit
-/// beside them: a `cacheDir` pointing at a directory Lattice does not own
-/// outright — `.lattice`, say, next to `toolchains/` and `bin/` — must not lose
-/// its neighbours to a prune.
-pub fn is_cache_format_dir(name: &str) -> bool {
-	name.strip_prefix('v')
-		.is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
-}
-
 /// Read buffer for hashing and digesting. Large enough that the syscall cost
 /// disappears against the hash itself.
 const READ_BUF: usize = 256 * 1024;
@@ -136,21 +118,19 @@ pub trait CacheStore: Send + Sync {
 
 /// The on-disk, content-addressed cache. Artifacts live at
 /// `<cache_dir>/<key>.tar.gz` with metadata at `<cache_dir>/<key>.meta.json`,
-/// where `cache_dir` is `<configured dir>/<CACHE_FORMAT>`.
+/// where `cache_dir` is what `settings.cacheDir` points at.
+///
+/// Nothing here is versioned by layout: a key covers the running Lattice
+/// version, so a release that changes what a key means retires the old entries
+/// by never asking for them again, and prune reclaims them by age.
 pub struct LocalStore {
-	/// What `settings.cacheDir` points at. Holds one subdirectory per cache format.
-	pub base_dir: PathBuf,
-	/// Where entries for the format this binary speaks live.
+	/// What `settings.cacheDir` points at.
 	pub cache_dir: PathBuf,
 }
 
 impl LocalStore {
-	pub fn new(base_dir: PathBuf) -> Self {
-		let cache_dir = base_dir.join(CACHE_FORMAT);
-		Self {
-			base_dir,
-			cache_dir,
-		}
+	pub fn new(cache_dir: PathBuf) -> Self {
+		Self { cache_dir }
 	}
 
 	fn tar_path(&self, key: &str) -> PathBuf {
@@ -161,9 +141,8 @@ impl LocalStore {
 		self.cache_dir.join(format!("{key}.meta.json"))
 	}
 
-	/// Where a `(workspace, task)` pair's last key breakdown is kept. Inside the
-	/// format directory, so an upgrade retires these along with the entries they
-	/// describe, and a prune of the format directory takes them with it.
+	/// Where a `(workspace, task)` pair's last key breakdown is kept. One file per
+	/// pair, overwritten each run, so these do not accumulate.
 	fn fingerprint_path(&self, workspace: &str, task: &str) -> PathBuf {
 		self.cache_dir
 			.join("fingerprints")
@@ -411,22 +390,18 @@ impl CacheStore for LocalStore {
 		let mut removed = 0usize;
 		let mut bytes_freed = 0u64;
 
-		// Retire entries written by another cache format, and any artifact left
-		// without metadata by an interrupted store. Neither can ever be read, so
-		// they are pure leaked bytes — and because prune used to enumerate by
-		// metadata alone, an orphaned artifact was invisible to it and could never
-		// be reclaimed.
-		//
-		// This runs before the current format's directory is even opened: a repo
-		// that has just upgraded has no directory for the new format yet, and the
-		// bytes worth reclaiming are precisely the ones under the old one.
+		// Retire any artifact left without metadata by an interrupted store, and
+		// any staging file left behind by one. Neither can ever be read, so they
+		// are pure leaked bytes — and because prune enumerates by metadata, an
+		// orphaned artifact would otherwise be invisible to it and could never be
+		// reclaimed.
 		let (orphan_count, orphan_bytes) = self.sweep_unreadable()?;
 		removed += orphan_count;
 		bytes_freed += orphan_bytes;
 
 		let read_dir = match std::fs::read_dir(&self.cache_dir) {
 			Ok(rd) => rd,
-			// No entries for this format yet: the sweep above was all there was to do.
+			// Nothing cached yet: the sweep above was all there was to do.
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
 				return Ok(PruneReport {
 					removed,
@@ -530,8 +505,8 @@ impl LocalStore {
 		}
 	}
 
-	/// Delete artifacts with no metadata, stale staging files, and directories
-	/// belonging to other cache formats. Returns what it reclaimed.
+	/// Delete artifacts with no metadata and stale staging files. Returns what it
+	/// reclaimed.
 	fn sweep_unreadable(&self) -> Result<(usize, u64)> {
 		let mut removed = 0usize;
 		let mut freed = 0u64;
@@ -556,28 +531,6 @@ impl LocalStore {
 			}
 		}
 
-		// Directories under the configured cache dir that belong to an earlier
-		// cache format. Only those: `cacheDir` can legitimately point somewhere
-		// Lattice does not own outright, and a prune that swept every neighbour
-		// would take the toolchains and the installed binary with it.
-		if let Ok(read_dir) = std::fs::read_dir(&self.base_dir) {
-			for entry in read_dir.flatten() {
-				let name = entry.file_name();
-				let name = name.to_string_lossy();
-				if name == CACHE_FORMAT || !is_cache_format_dir(&name) {
-					continue;
-				}
-				if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-					continue;
-				}
-				let size = dir_size(&entry.path());
-				if std::fs::remove_dir_all(entry.path()).is_ok() {
-					removed += 1;
-					freed += size;
-				}
-			}
-		}
-
 		Ok((removed, freed))
 	}
 }
@@ -589,22 +542,6 @@ fn fingerprint_id(workspace: &str, task: &str) -> String {
 	hash_field(&mut hasher, "workspace", workspace.as_bytes());
 	hash_field(&mut hasher, "task", task.as_bytes());
 	hex::encode(hasher.finalize())[..32].to_string()
-}
-
-/// Total size of the regular files directly beneath `dir`, recursively.
-fn dir_size(dir: &Path) -> u64 {
-	let mut total = 0;
-	let Ok(entries) = std::fs::read_dir(dir) else {
-		return 0;
-	};
-	for entry in entries.flatten() {
-		match entry.file_type() {
-			Ok(t) if t.is_dir() => total += dir_size(&entry.path()),
-			Ok(t) if t.is_file() => total += entry.metadata().map(|m| m.len()).unwrap_or(0),
-			_ => {}
-		}
-	}
-	total
 }
 
 /// All inputs that define a task's cache identity.
@@ -712,7 +649,6 @@ pub fn compute_key_detailed(inputs: &HashInputs) -> Result<KeyBreakdown> {
 	components.insert(
 		"environment".to_string(),
 		digest_of(|h| {
-			hash_field(h, "cache_format", CACHE_FORMAT.as_bytes());
 			hash_field(h, "lattice_version", inputs.lattice_version.as_bytes());
 			hash_field(h, "platform", platform_tag().as_bytes());
 			hash_field(h, "shell", shell_tag().as_bytes());
@@ -1671,10 +1607,11 @@ mod tests {
 	}
 
 	/// `cacheDir` can legitimately point at a directory Lattice does not own
-	/// outright. Prune used to `remove_dir_all` every neighbour that was not the
-	/// current format, which took the toolchains and the installed binary with it.
+	/// outright — `.lattice`, say, beside `toolchains/` and `bin/`. Prune reclaims
+	/// cache entries and the debris of interrupted stores; everything else that
+	/// happens to sit there is somebody else's.
 	#[test]
-	fn prune_leaves_directories_that_are_not_cache_formats() {
+	fn prune_leaves_everything_that_is_not_a_cache_entry() {
 		let base = TempDir::new().unwrap();
 		let store = LocalStore::new(base.path().to_path_buf());
 		std::fs::create_dir_all(&store.cache_dir).unwrap();
@@ -1683,9 +1620,9 @@ mod tests {
 		write(&toolchain.join("faketool"), "#!/bin/sh\n");
 		let installed = base.path().join("bin");
 		write(&installed.join("lattice"), "the binary in use");
-		// A directory from a genuinely older cache format, which should go.
-		let old_format = base.path().join("v1");
-		write(&old_format.join("dead.meta.json"), "{}");
+		// Debris from an interrupted store, which should go.
+		let orphan = base.path().join("deadbeef.tar.gz");
+		write(&orphan, "an artifact whose metadata never landed");
 
 		store.prune(u64::MAX).unwrap();
 
@@ -1697,24 +1634,7 @@ mod tests {
 			installed.join("lattice").exists(),
 			"prune must not take the installed binary"
 		);
-		assert!(
-			!old_format.exists(),
-			"an earlier cache format is still reclaimed"
-		);
-	}
-
-	#[test]
-	fn cache_format_dirs_are_recognized_by_shape() {
-		assert!(is_cache_format_dir("v1"));
-		assert!(is_cache_format_dir("v3"));
-		assert!(is_cache_format_dir("v42"));
-		for name in ["toolchains", "bin", "v", "vN", "v2x", "schema.json", ""] {
-			assert!(!is_cache_format_dir(name), "'{name}' is not a cache format");
-		}
-		assert!(
-			is_cache_format_dir(CACHE_FORMAT),
-			"the current format must match the shape prune tests against"
-		);
+		assert!(!orphan.exists(), "an orphaned artifact is still reclaimed");
 	}
 
 	/// Widening `outputs` must not hit an entry that captured the narrower set —
@@ -1884,23 +1804,10 @@ mod tests {
 	/// Entries from an earlier key composition live in their own directory, so they
 	/// retire wholesale instead of risking a stale hit against a new key.
 	#[test]
-	fn prune_retires_other_cache_formats() {
+	fn entries_live_directly_under_the_configured_dir() {
 		let cache = TempDir::new().unwrap();
 		let store = LocalStore::new(cache.path().to_path_buf());
-		let old = cache.path().join("v0");
-		std::fs::create_dir_all(&old).unwrap();
-		std::fs::write(old.join("stale.tar.gz"), vec![0u8; 128]).unwrap();
-
-		store.prune(u64::MAX).unwrap();
-		assert!(!old.exists(), "a foreign cache format must be retired");
-	}
-
-	#[test]
-	fn entries_live_under_the_format_directory() {
-		let cache = TempDir::new().unwrap();
-		let store = LocalStore::new(cache.path().to_path_buf());
-		assert_eq!(store.cache_dir, cache.path().join(CACHE_FORMAT));
-		assert_eq!(store.base_dir, cache.path());
+		assert_eq!(store.cache_dir, cache.path());
 	}
 
 	#[test]

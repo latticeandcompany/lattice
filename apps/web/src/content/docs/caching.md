@@ -286,10 +286,11 @@ root. Move it with `settings.cacheDir`:
 }
 ```
 
-Inside it, entries are grouped by the cache format they were written in. When a
-release changes what goes into a key, it writes under a new format and the old
-group is retired by the next `lattice prune` — so an upgrade means one full
-rebuild rather than a risk of reading entries whose keys meant something else.
+Inside it, entries sit flat, one `.tar.gz` and one `.meta.json` per key. The
+running Lattice version is part of every key, so a release that changes what a
+key means moves every key with it: an upgrade costs one full rebuild rather than
+risking a hit on an entry whose key meant something else, and the entries it left
+behind age out through `lattice prune`.
 
 That directory is safe to delete at any time. The next run has nothing to
 restore and starts from a clean cache.
