@@ -21,6 +21,19 @@ use lattice_config::{PipelineTask, LOCKFILES, MANIFESTS};
 /// entries wholesale instead of risking a stale hit against a new key.
 pub const CACHE_FORMAT: &str = "v2";
 
+/// Whether `name` is one of our own cache-format directories.
+///
+/// [`LocalStore::sweep_unreadable`] reclaims the directories belonging to
+/// formats this binary no longer speaks, and it does so with `remove_dir_all`.
+/// It has to be able to tell them apart from anything else that happens to sit
+/// beside them: a `cacheDir` pointing at a directory Lattice does not own
+/// outright — `.lattice`, say, next to `toolchains/` and `bin/` — must not lose
+/// its neighbours to a prune.
+pub fn is_cache_format_dir(name: &str) -> bool {
+	name.strip_prefix('v')
+		.is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Read buffer for hashing and digesting. Large enough that the syscall cost
 /// disappears against the hash itself.
 const READ_BUF: usize = 256 * 1024;
@@ -141,10 +154,8 @@ impl LocalStore {
 			.duration_since(std::time::UNIX_EPOCH)
 			.map(|d| d.as_nanos())
 			.unwrap_or(0);
-		self.cache_dir.join(format!(
-			"{key}.{suffix}.{}.{nanos}.tmp",
-			std::process::id()
-		))
+		self.cache_dir
+			.join(format!("{key}.{suffix}.{}.{nanos}.tmp", std::process::id()))
 	}
 
 	fn read_meta(&self, key: &str) -> Result<Option<CacheMeta>> {
@@ -262,7 +273,10 @@ impl CacheStore for LocalStore {
 			builder.follow_symlinks(false);
 
 			for entry in &entries {
-				let rel = entry.path.strip_prefix(workspace_path).unwrap_or(&entry.path);
+				let rel = entry
+					.path
+					.strip_prefix(workspace_path)
+					.unwrap_or(&entry.path);
 				builder
 					.append_path_with_name(&entry.path, rel)
 					.with_context(|| {
@@ -495,11 +509,15 @@ impl LocalStore {
 			}
 		}
 
-		// Sibling directories under the configured cache dir are earlier formats.
+		// Directories under the configured cache dir that belong to an earlier
+		// cache format. Only those: `cacheDir` can legitimately point somewhere
+		// Lattice does not own outright, and a prune that swept every neighbour
+		// would take the toolchains and the installed binary with it.
 		if let Ok(read_dir) = std::fs::read_dir(&self.base_dir) {
 			for entry in read_dir.flatten() {
 				let name = entry.file_name();
-				if name.to_string_lossy() == CACHE_FORMAT {
+				let name = name.to_string_lossy();
+				if name == CACHE_FORMAT || !is_cache_format_dir(&name) {
 					continue;
 				}
 				if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -1333,7 +1351,9 @@ mod tests {
 		let cache = TempDir::new().unwrap();
 		let ws = TempDir::new().unwrap();
 		let store = LocalStore::new(cache.path().to_path_buf());
-		store.store("feed", ws.path(), &[], meta_for("feed")).unwrap();
+		store
+			.store("feed", ws.path(), &[], meta_for("feed"))
+			.unwrap();
 		assert!(store.lookup("feed").unwrap().is_some());
 	}
 
@@ -1446,6 +1466,54 @@ mod tests {
 
 	/// Entries from an earlier key composition live in their own directory, so they
 	/// retire wholesale instead of risking a stale hit against a new key.
+	#[test]
+	/// `cacheDir` can legitimately point at a directory Lattice does not own
+	/// outright. Prune used to `remove_dir_all` every neighbour that was not the
+	/// current format, which took the toolchains and the installed binary with it.
+	#[test]
+	fn prune_leaves_directories_that_are_not_cache_formats() {
+		let base = TempDir::new().unwrap();
+		let store = LocalStore::new(base.path().to_path_buf());
+		std::fs::create_dir_all(&store.cache_dir).unwrap();
+
+		let toolchain = base.path().join("toolchains/faketool/1.0.0-abcd/bin");
+		write(&toolchain.join("faketool"), "#!/bin/sh\n");
+		let installed = base.path().join("bin");
+		write(&installed.join("lattice"), "the binary in use");
+		// A directory from a genuinely older cache format, which should go.
+		let old_format = base.path().join("v1");
+		write(&old_format.join("dead.meta.json"), "{}");
+
+		store.prune(u64::MAX).unwrap();
+
+		assert!(
+			toolchain.join("faketool").exists(),
+			"prune must not take the provisioned toolchains"
+		);
+		assert!(
+			installed.join("lattice").exists(),
+			"prune must not take the installed binary"
+		);
+		assert!(
+			!old_format.exists(),
+			"an earlier cache format is still reclaimed"
+		);
+	}
+
+	#[test]
+	fn cache_format_dirs_are_recognized_by_shape() {
+		assert!(is_cache_format_dir("v1"));
+		assert!(is_cache_format_dir("v3"));
+		assert!(is_cache_format_dir("v42"));
+		for name in ["toolchains", "bin", "v", "vN", "v2x", "schema.json", ""] {
+			assert!(!is_cache_format_dir(name), "'{name}' is not a cache format");
+		}
+		assert!(
+			is_cache_format_dir(CACHE_FORMAT),
+			"the current format must match the shape prune tests against"
+		);
+	}
+
 	#[test]
 	fn prune_retires_other_cache_formats() {
 		let cache = TempDir::new().unwrap();
