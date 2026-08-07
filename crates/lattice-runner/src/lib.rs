@@ -314,13 +314,24 @@ impl PersistentChild {
 	///
 	/// A dev server gets the same `SIGTERM`-then-kill treatment as any other
 	/// task: it may hold a port or a socket file it needs a moment to release.
+	///
+	/// Waiting on the child is what ends the grace period, rather than probing
+	/// the group for liveness: a signalled process stays a zombie until someone
+	/// reaps it, and nothing here would be doing the reaping, so the probe would
+	/// report it alive until the deadline every single time.
 	async fn terminate(mut self) {
 		#[cfg(unix)]
 		if let Some(pgid) = self.pgid {
-			terminate_groups(&[pgid as u32]).await;
+			signal_group(pgid as u32, Stop::Terminate);
 		}
-		let _ = self.child.start_kill();
-		let _ = self.child.wait().await;
+		if tokio::time::timeout(SHUTDOWN_GRACE, self.child.wait())
+			.await
+			.is_err()
+		{
+			self.kill_group();
+			let _ = self.child.start_kill();
+			let _ = self.child.wait().await;
+		}
 	}
 }
 
@@ -1067,10 +1078,25 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			Some(limit) => match tokio::time::timeout(limit, &mut run).await {
 				Ok((o, e, s)) => (false, o, e, s),
 				Err(_) => {
-					// Stop the whole group, then finish collecting: the pipes close
-					// as the children die, so this resolves rather than hanging.
-					terminate_groups(child_pid.as_slice()).await;
-					let (o, e, s) = run.await;
+					// Stop the whole group, then keep collecting: the pipes close as
+					// the children die, so awaiting the same future both reaps them
+					// and finishes reading what they wrote. Awaiting is also what
+					// ends the grace period — a signalled child sits as a zombie
+					// until reaped, so probing the group for liveness instead would
+					// wait out the full deadline every time.
+					for pid in child_pid.iter() {
+						signal_group(*pid, Stop::Terminate);
+					}
+					let joined = match tokio::time::timeout(SHUTDOWN_GRACE, &mut run).await {
+						Ok(joined) => joined,
+						Err(_) => {
+							for pid in child_pid.iter() {
+								signal_group(*pid, Stop::Kill);
+							}
+							run.await
+						}
+					};
+					let (o, e, s) = joined;
 					(true, o, e, s)
 				}
 			},
@@ -1899,10 +1925,23 @@ mod tests {
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
 		o.shutdown = Some(shutdown_after(200));
 
+		let started = Instant::now();
 		let result = tokio::time::timeout(Duration::from_secs(5), execute_tasks(o))
 			.await
 			.expect("execute_tasks must finish well before the 5s timeout")
 			.unwrap();
+
+		// Tearing down a child that dies on the first signal must not wait out the
+		// grace period. Asserted in wall time rather than left to the 5s budget
+		// above, because whether an unreaped child still answers a liveness probe
+		// is platform-specific — the stall this guards against was invisible on
+		// one platform and fatal on another.
+		assert!(
+			started.elapsed() < SHUTDOWN_GRACE,
+			"shutdown took {:?}, which means it waited on the grace period rather \
+			 than on the child",
+			started.elapsed()
+		);
 
 		assert!(marker.exists(), "normal task did not complete");
 		assert!(r.has("finished:app:build"));

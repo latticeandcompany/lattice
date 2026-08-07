@@ -219,11 +219,28 @@ mod tests {
 		assert_eq!(detect_indent("{}"), "  ");
 	}
 
+	/// The separators come from the platform, so the expected paths are built
+	/// rather than written out: spelling them with `/` asserted a unix
+	/// convention rather than the behavior, which is that the hint is relative
+	/// from inside the repo and absolute from outside it.
 	#[test]
 	fn run_hint_is_relative_inside_the_repo() {
 		let root = Path::new("/repo");
-		assert!(run_hint(root, root).starts_with("./.lattice/bin/lattice"));
+		let relative: std::path::PathBuf = [".lattice", "bin", "lattice"].iter().collect();
+		let relative = relative.display().to_string();
+
+		let inside = run_hint(root, root);
+		assert!(
+			inside.starts_with("./") && inside.contains(&relative),
+			"inside the repo the hint should be relative: {inside}"
+		);
+
 		// From outside the repo the absolute path is the only useful form.
-		assert!(run_hint(root, Path::new("/elsewhere")).starts_with("/repo/.lattice/bin/lattice"));
+		let outside = run_hint(root, Path::new("/elsewhere"));
+		let absolute = root.join(&relative).display().to_string();
+		assert!(
+			outside.starts_with(&absolute),
+			"outside the repo the hint should be absolute: {outside}"
+		);
 	}
 }
