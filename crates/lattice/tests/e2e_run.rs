@@ -1,5 +1,12 @@
 //! E2E tests for `lattice run`: caching, filtering, dry-run, stacked and
 //! sequential phases, keep-going, an undefined task, and unknown config keys.
+//!
+//! A task's command goes to the platform shell, so a test that writes its task
+//! body as a POSIX shell script only means what it says under `sh`. `cmd` has no
+//! `;` separator, `mkdir -p` is not its `mkdir`, and `echo x >> f` appends a
+//! trailing space. The handful that rely on any of that are marked `#[cfg(unix)]`
+//! rather than rewritten twice over; what they cover is the runner's behavior,
+//! which the rest of the suite exercises on both platforms.
 
 mod common;
 
@@ -64,6 +71,8 @@ fn cold_then_cached_then_restores_outputs() {
 	);
 }
 
+// `mkdir -p` in the task body.
+#[cfg(unix)]
 #[test]
 fn corrupt_tarball_is_a_miss_not_a_false_hit() {
 	let fx = Fixture::new();
@@ -285,6 +294,9 @@ fn stacked_dry_run_lists_all_tasks() {
 		.stdout(predicate::str::contains("app:build"));
 }
 
+// `echo x >> f` appends a trailing space under `cmd`, which the order assertion
+// would then read as a different word.
+#[cfg(unix)]
 #[test]
 fn sequentially_runs_each_task_phase_in_order() {
 	let fx = Fixture::new();
@@ -376,6 +388,8 @@ fn sequentially_dry_run_lists_each_phase() {
 		.stdout(predicate::str::contains("dry run · build (phase)"));
 }
 
+// POSIX shell in the task bodies.
+#[cfg(unix)]
 #[test]
 fn keep_going_runs_independent_and_reports_failure() {
 	let fx = Fixture::new();
@@ -405,6 +419,8 @@ fn keep_going_runs_independent_and_reports_failure() {
 
 /// The typo case: `persistent: true` on a command that exits straight away. The
 /// run has to end on its own — no signal is ever sent here — and report it.
+// `;` as a command separator, and `>&2`, in the task body.
+#[cfg(unix)]
 #[test]
 fn persistent_task_that_exits_immediately_is_reported() {
 	let fx = Fixture::new();
