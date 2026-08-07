@@ -155,6 +155,33 @@ async fn terminate_groups(pids: &[u32]) {
 	}
 }
 
+/// Stop one child, gracefully where the platform can express it.
+///
+/// Signalling a process *group* is what takes down a task that shelled out, and
+/// only unix has one here. Elsewhere the group does not exist, so there is
+/// nothing to ask politely and nothing to wait for: killing the child directly
+/// is both the graceful path and the only one. Waiting out a grace period first
+/// would just delay it, and signalling into the void and then waiting for a
+/// death that never comes would hang the run outright.
+async fn stop_child(child: &mut tokio::process::Child, pid: Option<u32>) {
+	#[cfg(unix)]
+	if let Some(pid) = pid {
+		signal_group(pid, Stop::Terminate);
+		// Waiting on the child is what ends the grace period early, since a
+		// signalled process stays a zombie until it is reaped.
+		if tokio::time::timeout(SHUTDOWN_GRACE, child.wait())
+			.await
+			.is_ok()
+		{
+			return;
+		}
+		signal_group(pid, Stop::Kill);
+		return;
+	}
+	let _ = pid;
+	let _ = child.start_kill();
+}
+
 /// Whether any process remains in `pid`'s group.
 fn group_alive(pid: u32) -> bool {
 	#[cfg(unix)]
@@ -321,17 +348,12 @@ impl PersistentChild {
 	/// report it alive until the deadline every single time.
 	async fn terminate(mut self) {
 		#[cfg(unix)]
-		if let Some(pgid) = self.pgid {
-			signal_group(pgid as u32, Stop::Terminate);
-		}
-		if tokio::time::timeout(SHUTDOWN_GRACE, self.child.wait())
-			.await
-			.is_err()
-		{
-			self.kill_group();
-			let _ = self.child.start_kill();
-			let _ = self.child.wait().await;
-		}
+		let pid = self.pgid.map(|p| p as u32);
+		#[cfg(not(unix))]
+		let pid = None;
+
+		stop_child(&mut self.child, pid).await;
+		let _ = self.child.wait().await;
 	}
 }
 
@@ -1061,51 +1083,36 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		ctx.children.add(pid);
 	}
 
-	// Draining the pipes has to run alongside the wait: a child that fills its
-	// output buffer blocks until something reads it, and would never exit.
-	// Scoped so the future stops borrowing the labels before they are moved.
-	let (timed_out, out_lines, err_lines, status) = {
-		let run = async {
-			tokio::join!(
-				drain_pipe(stdout, false, &ctx.tx, &ws, &task, true, false),
-				drain_pipe(stderr, true, &ctx.tx, &ws, &task, true, false),
-				child.wait(),
-			)
-		};
-		tokio::pin!(run);
-
-		match pt.effective_timeout() {
-			Some(limit) => match tokio::time::timeout(limit, &mut run).await {
-				Ok((o, e, s)) => (false, o, e, s),
-				Err(_) => {
-					// Stop the whole group, then keep collecting: the pipes close as
-					// the children die, so awaiting the same future both reaps them
-					// and finishes reading what they wrote. Awaiting is also what
-					// ends the grace period — a signalled child sits as a zombie
-					// until reaped, so probing the group for liveness instead would
-					// wait out the full deadline every time.
-					for pid in child_pid.iter() {
-						signal_group(*pid, Stop::Terminate);
-					}
-					let joined = match tokio::time::timeout(SHUTDOWN_GRACE, &mut run).await {
-						Ok(joined) => joined,
-						Err(_) => {
-							for pid in child_pid.iter() {
-								signal_group(*pid, Stop::Kill);
-							}
-							run.await
-						}
-					};
-					let (o, e, s) = joined;
-					(true, o, e, s)
-				}
-			},
-			None => {
-				let (o, e, s) = run.await;
-				(false, o, e, s)
-			}
-		}
+	// The pipes are drained on their own tasks rather than joined with the wait.
+	// They still have to run alongside it — a child that fills its output buffer
+	// blocks until something reads it, and would never exit — but joining them
+	// would borrow the child for as long as the draining took, and stopping a task
+	// that overran its timeout needs the handle.
+	let out_task = {
+		let (tx, ws, task) = (ctx.tx.clone(), ws.clone(), task.clone());
+		tokio::spawn(async move { drain_pipe(stdout, false, &tx, &ws, &task, true, false).await })
 	};
+	let err_task = {
+		let (tx, ws, task) = (ctx.tx.clone(), ws.clone(), task.clone());
+		tokio::spawn(async move { drain_pipe(stderr, true, &tx, &ws, &task, true, false).await })
+	};
+
+	let mut timed_out = false;
+	let status = match pt.effective_timeout() {
+		Some(limit) => match tokio::time::timeout(limit, child.wait()).await {
+			Ok(status) => status,
+			Err(_) => {
+				timed_out = true;
+				stop_child(&mut child, child_pid).await;
+				child.wait().await
+			}
+		},
+		None => child.wait().await,
+	};
+
+	// The child is gone, so the pipes are closed and these finish.
+	let out_lines = out_task.await.unwrap_or_default();
+	let err_lines = err_task.await.unwrap_or_default();
 
 	if let Some(pid) = child_pid {
 		ctx.children.remove(pid);
