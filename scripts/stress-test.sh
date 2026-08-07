@@ -67,6 +67,11 @@ say "version: $VERSION"
 # Temp environment + cleanup.
 # ---------------------------------------------------------------------------
 ENVROOT="$(mktemp -d "${TMPDIR:-/tmp}/lattice-stress.XXXXXX")"
+# Normalize it. A `TMPDIR` with a trailing slash (the macOS default) leaves a
+# `//` in the path, which `cd` collapses — so a test that compares a path it
+# built against one a subprocess derived from `$PWD` would compare two spellings
+# of the same directory and call them different.
+ENVROOT="$(cd "$ENVROOT" && pwd)"
 BG_PID=""
 
 cleanup() {
@@ -504,10 +509,13 @@ fi
 
 # Entries are grouped by cache format, so changing what goes into a key retires
 # the old group instead of risking a read against keys that meant something else.
-if [ -d "$PROD/.lattice/cache/v2" ]; then
+# Matched by shape rather than by the current version, so a format bump does not
+# have to remember to come back here.
+FORMAT_DIRS="$(find "$PROD/.lattice/cache" -mindepth 1 -maxdepth 1 -type d -name 'v[0-9]*' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$FORMAT_DIRS" -ge 1 ]; then
   pass "cache entries live under a format directory"
 else
-  fail "cache entries live under a format directory" "no .lattice/cache/v2 in $PROD"
+  fail "cache entries live under a format directory" "no v<n> directory in $PROD/.lattice/cache"
 fi
 
 # Full cache: a run where every scheduled task came back from cache is called
@@ -1080,6 +1088,246 @@ t_has "prune under limit removes nothing" "removed 0 artifacts"
 # Prune with neither flag nor setting.
 lat "$DET" prune ; t_bad "prune with no size and no setting fails"
 t_has "prune-no-size message" "no max cache size"
+
+# =========================================================================
+# 12b. Correctness guardrails: the failures that used to be silent.
+# =========================================================================
+sect "guardrails — shared files, references, signals, budgets, timeouts"
+
+# --- globalDependencies: a file above the workspace ------------------------
+# `inputs` is workspace-relative and `tasks` is shared across workspaces, so a
+# shared root file has no `inputs` spelling that means the same thing in each.
+# Without globalDependencies nothing covered it, and editing one served every
+# task an artifact built before the change.
+GDEP="$ENVROOT/globaldeps"; mkdir -p "$GDEP/app"
+w "$GDEP/shared.config.json" '{"mode":"one"}'
+cat > "$GDEP/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "cat ../shared.config.json > out.txt" } } ],
+  "globalDependencies": ["shared.config.json"],
+  "tasks": { "build": { "outputs": ["out.txt"] } } }
+JSON
+lat "$GDEP" run build ; t_ok "globalDependencies: prime run exits 0"
+lat "$GDEP" run build ; t_has "globalDependencies: untouched run still hits" "cache"
+w "$GDEP/shared.config.json" '{"mode":"TWO"}'
+lat "$GDEP" run build ; t_ok "globalDependencies: run after edit exits 0"
+t_hasnt "editing a shared root file busts every key" "cache hit"
+t_grepfile "$GDEP/app/out.txt" '"mode":"TWO"' "the restored output is not the pre-edit one"
+
+# The miss names the component that moved, rather than reporting a bare miss.
+w "$GDEP/shared.config.json" '{"mode":"three"}'
+lat "$GDEP" -l run build ; t_has "a miss names globalDependencies as the cause" "globalDependencies changed"
+
+# --- globalEnv -------------------------------------------------------------
+GENV="$ENVROOT/globalenv"; mkdir -p "$GENV/app"
+cat > "$GENV/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "echo built > out.txt" } } ],
+  "globalEnv": ["STRESS_GLOBAL"],
+  "tasks": { "build": { "outputs": ["out.txt"] } } }
+JSON
+late "STRESS_GLOBAL=one" "$GENV" run build ; t_ok "globalEnv: prime run exits 0"
+late "STRESS_GLOBAL=one" "$GENV" run build ; t_has "globalEnv: same value hits"  "cache hit"
+late "STRESS_GLOBAL=two" "$GENV" run build ; t_hasnt "globalEnv: changed value misses" "cache hit"
+late "STRESS_GLOBAL=two" "$GENV" -l run build --force ; t_ok "globalEnv: --force run exits 0"
+
+# --- a miss with nothing to compare against --------------------------------
+NEVER="$ENVROOT/neverrun"; mkdir -p "$NEVER/app"
+cat > "$NEVER/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "echo hi > out.txt" } } ],
+  "tasks": { "build": { "outputs": ["out.txt"] } } }
+JSON
+lat "$NEVER" -l run build ; t_has "a task that never ran says so instead of naming a component" "nothing cached"
+
+# --- dependsOn that names nothing ------------------------------------------
+# Both used to build no edge at all, so the ordering the config was written to
+# guarantee simply did not happen, with nothing printed.
+BADREF="$ENVROOT/badref"; mkdir -p "$BADREF/lib" "$BADREF/app"
+cat > "$BADREF/lattice.json" <<'JSON'
+{ "workspaces": [
+    { "name": "lib", "path": "lib", "auto": false, "scripts": { "build": "echo lib" } },
+    { "name": "app", "path": "app", "auto": false, "dependsOn": ["libb"],
+      "scripts": { "build": "echo app" } } ],
+  "tasks": { "build": { "dependsOn": ["^build"] } } }
+JSON
+lat "$BADREF" run build --dry-run ; t_bad "a workspace dependsOn naming nothing is rejected"
+t_has "the unresolvable workspace name is named" "not a declared workspace"
+t_has "the nearest workspace name is offered"    "Did you mean \`lib\`?"
+
+cat > "$BADREF/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false, "scripts": { "build": "echo app" } } ],
+  "tasks": { "build": { "dependsOn": ["codegen"] } } }
+JSON
+lat "$BADREF" run build --dry-run ; t_bad "a task dependsOn naming nothing is rejected"
+t_has "the undefined task is named" "is not defined in"
+t_has "the defined tasks are listed" "Defined tasks: build"
+
+# The `^` form resolves against the same task map, so it is checked the same way.
+cat > "$BADREF/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false, "scripts": { "build": "echo app" } } ],
+  "tasks": { "build": { "dependsOn": ["^compile"] } } }
+JSON
+lat "$BADREF" run build --dry-run ; t_bad "a caret dependsOn naming nothing is rejected"
+t_has "the caret form is checked against the task map" "'compile'"
+
+# A resolvable graph still loads, so the check is not simply rejecting everything.
+cat > "$BADREF/lattice.json" <<'JSON'
+{ "workspaces": [
+    { "name": "lib", "path": "lib", "auto": false, "scripts": { "build": "echo lib" } },
+    { "name": "app", "path": "app", "auto": false, "dependsOn": ["lib"],
+      "scripts": { "build": "echo app" } } ],
+  "tasks": { "build": { "dependsOn": ["^build"] } } }
+JSON
+lat "$BADREF" run build --dry-run ; t_ok "a resolvable dependsOn still loads"
+
+# --- a workspace path that leaves the repo ---------------------------------
+ESC="$ENVROOT/escape"; mkdir -p "$ESC/repo"; mkdir -p "$ESC/outside"
+cat > "$ESC/repo/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "esc", "path": "../outside", "auto": false,
+                    "scripts": { "build": "echo x > out.txt" } } ],
+  "tasks": { "build": { "outputs": ["out.txt"] } } }
+JSON
+lat "$ESC/repo" run build --dry-run ; t_bad "a workspace path outside the repo is rejected"
+t_has "the escaping path is named" "outside the repo root"
+
+# --- prune leaves what is not a cache format -------------------------------
+# `cacheDir` can point at a directory Lattice does not own outright. Prune used
+# to remove every neighbour that was not the current format, which took the
+# provisioned toolchains and the installed binary with it.
+KEEP="$ENVROOT/prunekeep"; mkdir -p "$KEEP/app"
+cat > "$KEEP/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "echo hi > out.txt" } } ],
+  "tasks": { "build": { "outputs": ["out.txt"] } },
+  "settings": { "cacheDir": ".lattice", "maxCacheSize": "1B" } }
+JSON
+w "$KEEP/.lattice/toolchains/faketool/1.0.0-abcd/bin/faketool" '#!/bin/sh
+'
+w "$KEEP/.lattice/bin/lattice-1.0.0" 'the binary in use'
+w "$KEEP/.lattice/v1/dead.meta.json" '{}'
+lat "$KEEP" run build  ; t_ok "run with cacheDir=.lattice exits 0"
+lat "$KEEP" prune      ; t_ok "prune with cacheDir=.lattice exits 0"
+t_file   "$KEEP/.lattice/toolchains/faketool/1.0.0-abcd/bin/faketool" "prune keeps the provisioned toolchains"
+t_file   "$KEEP/.lattice/bin/lattice-1.0.0" "prune keeps the installed binary"
+t_nofile "$KEEP/.lattice/v1" "prune still reclaims an earlier cache format"
+
+# --- settings.maxCacheSize is enforced by the run --------------------------
+# The setting reads as a budget, so it has to be one: leaving enforcement to
+# `lattice prune` alone meant a repo that set one still grew without limit.
+BUDGET="$ENVROOT/budget"; mkdir -p "$BUDGET/app"
+cat > "$BUDGET/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "head -c 200000 /dev/zero | tr '\\0' 'x' > big.bin" } } ],
+  "tasks": { "build": { "outputs": ["big.bin"] } },
+  "settings": { "maxCacheSize": "1KB" } }
+JSON
+for seed in 1 2 3; do
+  w "$BUDGET/app/seed.txt" "seed$seed"
+  lat "$BUDGET" run build >/dev/null 2>&1
+done
+BUDGET_BYTES=0
+for f in "$BUDGET"/.lattice/cache/*/*.tar.gz "$BUDGET"/.lattice/cache/*/*.meta.json; do
+  [ -f "$f" ] || continue
+  BUDGET_BYTES=$((BUDGET_BYTES + $(wc -c < "$f")))
+done
+if [ "$BUDGET_BYTES" -le 1024 ]; then
+  pass "a run holds the cache to settings.maxCacheSize without calling prune"
+else
+  fail "a run holds the cache to settings.maxCacheSize without calling prune" \
+       "cache is $BUDGET_BYTES bytes against a 1KB budget"
+fi
+
+# --- a task timeout --------------------------------------------------------
+# A task with no limit that never exits hangs the run, in CI as much as locally.
+TMO="$ENVROOT/timeout"; mkdir -p "$TMO/app"
+cat > "$TMO/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "sleep 60; touch finished.txt" } } ],
+  "tasks": { "build": { "timeout": "1s" } } }
+JSON
+lat_timeout "$TMO" 45 run build
+t_ran  "an overrunning task ends the run on its own"
+t_bad  "an overrunning task fails the run"
+t_has  "the overrun is reported as a timeout" "timed out"
+t_nofile "$TMO/app/finished.txt" "the task did not run to completion"
+
+# A limit the task stays inside changes nothing.
+cat > "$TMO/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "echo hi > out.txt" } } ],
+  "tasks": { "build": { "timeout": "5m", "outputs": ["out.txt"] } } }
+JSON
+lat "$TMO" run build ; t_ok "a task inside its timeout is untouched"
+t_file "$TMO/app/out.txt" "a task inside its timeout still produces its outputs"
+
+# A timeout on a persistent task is ignored: a dev server is asked to keep
+# running, so a limit would only cut short the thing it exists to hold open.
+cat > "$TMO/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "dev": "echo serving; sleep 3117" } } ],
+  "tasks": { "dev": { "persistent": true, "timeout": "1s" } } }
+JSON
+lat_timeout "$TMO" 8 run dev
+if [ "$RC" -eq 124 ]; then
+  pass "a timeout on a persistent task is ignored"
+else
+  fail "a timeout on a persistent task is ignored" "the run ended by itself | $(snip)"
+fi
+pkill -f "sleep 3117" 2>/dev/null
+
+# --- an interrupt takes the whole child tree -------------------------------
+# Each task runs in its own process group, which is what lets a task that shells
+# out be cleaned up as a unit — and the same call detaches it from the terminal's
+# Ctrl-C. The signal reached Lattice, Lattice exited, and the children kept
+# running. Lattice has to pass the signal on itself.
+#
+# `SIGTERM` rather than `SIGINT`: a background job in a non-interactive shell
+# inherits `SIGINT` as ignored, so sending it here would prove nothing about
+# Lattice. `SIGTERM` is what a CI runner sends to cancel a job anyway, and both
+# take the same path.
+SIG="$ENVROOT/signals"; mkdir -p "$SIG/app"
+cat > "$SIG/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "sleep 4271" } } ],
+  "tasks": { "build": {} } }
+JSON
+# `exec`, so `$!` is the binary's own pid. Without it the subshell stays in the
+# way and the signal never reaches Lattice at all.
+( cd "$SIG" && exec "$BIN" run build >/dev/null 2>&1 ) &
+SIG_PID=$!
+# Wait for the child to actually be up before signalling.
+k=0
+while [ $k -lt 100 ] && ! pgrep -f "sleep 4271" >/dev/null 2>&1; do sleep 0.1; k=$((k + 1)); done
+if pgrep -f "sleep 4271" >/dev/null 2>&1; then
+  pass "the task's child process is running before the interrupt"
+  kill -TERM "$SIG_PID" 2>/dev/null
+  # The run has the grace period to stop its children and exit.
+  k=0
+  while kill -0 "$SIG_PID" 2>/dev/null && [ $k -lt 150 ]; do sleep 0.1; k=$((k + 1)); done
+  if kill -0 "$SIG_PID" 2>/dev/null; then
+    fail "an interrupted run exits rather than hanging" "still running after 15s"
+    kill -9 "$SIG_PID" 2>/dev/null
+    SIG_RC=-1
+  else
+    pass "an interrupted run exits rather than hanging"
+    wait "$SIG_PID" 2>/dev/null; SIG_RC=$?
+  fi
+  if pgrep -f "sleep 4271" >/dev/null 2>&1; then
+    fail "an interrupt leaves no child process behind" "the child outlived the run"
+    pkill -9 -f "sleep 4271" 2>/dev/null
+  else
+    pass "an interrupt leaves no child process behind"
+  fi
+  if [ "$SIG_RC" -eq 130 ]; then
+    pass "an interrupted run exits 130 rather than 1"
+  else
+    fail "an interrupted run exits 130 rather than 1" "exit=$SIG_RC"
+  fi
+else
+  fail "the task's child process is running before the interrupt" "child never appeared"
+  kill -9 "$SIG_PID" 2>/dev/null
+fi
 
 # =========================================================================
 # 13. Passthrough: a nested repo driven by its own runner.
