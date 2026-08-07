@@ -60,20 +60,8 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
-      # Everything compiles, which is the regression this job mainly exists to
-      # catch: the shell and path handling that differs here is easy to write
-      # unix-only and impossible to notice from a unix runner.
       - name: Build
         run: cargo build --workspace --all-targets
 
-      # Not the whole suite. A test that drives a task writes its body as a shell
-      # script, and those are POSIX: `cmd` has no `;` separator, its `mkdir` takes
-      # no `-p`, and `echo x >> f` appends a trailing space. The suites built on
-      # that only mean what they say under `sh`, so what runs here is the crates
-      # whose tests are pure logic, plus the CLI's own unit tests. Making the
-      # task-driving suites portable is worth doing and is not this job's job.
-      - name: Test the platform-independent crates
-        run: cargo test -p lattice-config -p lattice-cache -p dagger -p lattice-output --lib
-
-      - name: Test the CLI unit tests
-        run: cargo test -p lattice --bins
+      - name: Test
+        run: cargo test --workspace

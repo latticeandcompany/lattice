@@ -5,6 +5,7 @@
 mod common;
 
 use common::Fixture;
+use lattice_testkit as sh;
 use predicates::prelude::*;
 
 #[test]
@@ -12,15 +13,16 @@ fn build_only_repo_needs_no_toolchain_machinery() {
 	let fx = Fixture::new();
 	fx.mkdir("app");
 	// Workspaces + tasks, but no `engines`: runs on the host PATH.
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "app", "path": "app", "auto": false, "scripts": { "build": "echo built" } }
+    { "name": "app", "path": "app", "auto": false, "scripts": { "build": @build@ } }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[("build", sh::echo("built"))],
 	);
 
 	fx.lattice()
@@ -40,16 +42,20 @@ fn build_only_repo_needs_no_toolchain_machinery() {
 fn prune_evicts_cached_artifacts() {
 	let fx = Fixture::new();
 	fx.write("app/src/f.txt", "hello\n");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "app", "auto": false,
-      "scripts": { "build": "mkdir -p dist && echo hi > dist/out.txt" } }
+      "scripts": { "build": @build@ } }
   ],
   "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } }
 }
 "#,
+		&[(
+			"build",
+			sh::all([sh::mkdirs("dist"), sh::write("dist/out.txt", "hi")]),
+		)],
 	);
 
 	// Populate the cache.

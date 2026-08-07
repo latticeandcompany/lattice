@@ -1,32 +1,33 @@
 //! E2E tests for `lattice run`: caching, filtering, dry-run, stacked and
 //! sequential phases, keep-going, an undefined task, and unknown config keys.
 //!
-//! A task's command goes to the platform shell, so a test that writes its task
-//! body as a POSIX shell script only means what it says under `sh`. `cmd` has no
-//! `;` separator, `mkdir -p` is not its `mkdir`, and `echo x >> f` appends a
-//! trailing space. The handful that rely on any of that are marked `#[cfg(unix)]`
-//! rather than rewritten twice over; what they cover is the runner's behavior,
-//! which the rest of the suite exercises on both platforms.
+//! Task bodies come from `lattice_testkit`, which spells them for whichever shell
+//! will run them, so every case here covers the same behavior on both platforms.
 
 mod common;
 
 use common::Fixture;
+use lattice_testkit as sh;
 use predicates::prelude::*;
 
 /// A single `auto:false` workspace whose `build` writes an output file, with a
 /// task that declares inputs and outputs so the run is cacheable.
 fn single_ws_repo(fx: &Fixture) {
 	fx.write("app/src/f.txt", "hello\n");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "app", "auto": false,
-      "scripts": { "build": "mkdir -p dist && echo hi > dist/out.txt" } }
+      "scripts": { "build": @build@ } }
   ],
   "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } }
 }
 "#,
+		&[(
+			"build",
+			sh::all([sh::mkdirs("dist"), sh::write("dist/out.txt", "hi")]),
+		)],
 	);
 }
 
@@ -71,8 +72,6 @@ fn cold_then_cached_then_restores_outputs() {
 	);
 }
 
-// `mkdir -p` in the task body.
-#[cfg(unix)]
 #[test]
 fn corrupt_tarball_is_a_miss_not_a_false_hit() {
 	let fx = Fixture::new();
@@ -103,16 +102,20 @@ fn filter_runs_only_matching_workspace() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	fx.mkdir("b");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "echo A > marker.txt" } },
-    { "name": "beta",  "path": "b", "auto": false, "scripts": { "build": "echo B > marker.txt" } }
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @a@ } },
+    { "name": "beta",  "path": "b", "auto": false, "scripts": { "build": @b@ } }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[
+			("a", sh::write("marker.txt", "A")),
+			("b", sh::write("marker.txt", "B")),
+		],
 	);
 
 	fx.lattice()
@@ -135,19 +138,24 @@ fn chain_repo(fx: &Fixture) {
 	for dir in ["base", "mid", "top"] {
 		fx.mkdir(dir);
 	}
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "base", "path": "base", "auto": false, "scripts": { "build": "echo B > marker.txt" } },
+    { "name": "base", "path": "base", "auto": false, "scripts": { "build": @base@ } },
     { "name": "mid",  "path": "mid",  "auto": false, "dependsOn": ["base"],
-      "scripts": { "build": "echo M > marker.txt" } },
+      "scripts": { "build": @mid@ } },
     { "name": "top",  "path": "top",  "auto": false, "dependsOn": ["mid"],
-      "scripts": { "build": "echo T > marker.txt" } }
+      "scripts": { "build": @top@ } }
   ],
   "tasks": { "build": { "dependsOn": ["^build"] } }
 }
 "#,
+		&[
+			("base", sh::write("marker.txt", "B")),
+			("mid", sh::write("marker.txt", "M")),
+			("top", sh::write("marker.txt", "T")),
+		],
 	);
 }
 
@@ -207,15 +215,16 @@ fn filtered_dry_run_marks_pulled_in_dependencies() {
 fn dry_run_lists_tasks_without_executing() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "echo A > marker.txt" } }
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @a@ } }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[("a", sh::write("marker.txt", "A"))],
 	);
 
 	fx.lattice()
@@ -237,14 +246,14 @@ fn stacked_tasks_run_as_one_graph() {
 	fx.mkdir("a");
 	// test dependsOn build; lint is independent. Stacking all three should run
 	// build once (before test) and lint too.
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": "echo LINTED > lint.txt",
-      "build": "echo BUILT > build.txt",
-      "test": "echo TESTED > test.txt"
+      "lint": @lint@,
+      "build": @build@,
+      "test": @test@
     } }
   ],
   "tasks": {
@@ -254,6 +263,11 @@ fn stacked_tasks_run_as_one_graph() {
   }
 }
 "#,
+		&[
+			("lint", sh::write("lint.txt", "LINTED")),
+			("build", sh::write("build.txt", "BUILT")),
+			("test", sh::write("test.txt", "TESTED")),
+		],
 	);
 
 	fx.lattice()
@@ -273,16 +287,17 @@ fn stacked_tasks_run_as_one_graph() {
 fn stacked_dry_run_lists_all_tasks() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": "echo L", "build": "echo B" } }
+      "lint": @lint@, "build": @build@ } }
   ],
   "tasks": { "lint": {}, "build": {} }
 }
 "#,
+		&[("lint", sh::echo("L")), ("build", sh::echo("B"))],
 	);
 
 	fx.lattice()
@@ -294,23 +309,20 @@ fn stacked_dry_run_lists_all_tasks() {
 		.stdout(predicate::str::contains("app:build"));
 }
 
-// `echo x >> f` appends a trailing space under `cmd`, which the order assertion
-// would then read as a different word.
-#[cfg(unix)]
 #[test]
 fn sequentially_runs_each_task_phase_in_order() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	// Each task appends a marker; --sequentially must run them strictly in the
 	// listed order (lint, then test — which drags in its build dep — then build).
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": "echo lint >> order.txt",
-      "build": "echo build >> order.txt",
-      "test": "echo test >> order.txt"
+      "lint": @lint@,
+      "build": @build@,
+      "test": @test@
     } }
   ],
   "tasks": {
@@ -320,6 +332,11 @@ fn sequentially_runs_each_task_phase_in_order() {
   }
 }
 "#,
+		&[
+			("lint", sh::append("order.txt", "lint")),
+			("build", sh::append("order.txt", "build")),
+			("test", sh::append("order.txt", "test")),
+		],
 	);
 
 	fx.lattice()
@@ -339,18 +356,22 @@ fn sequentially_stops_at_first_failed_phase() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	// lint fails; --sequentially fail-fast must not reach the build phase.
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": "exit 1",
-      "build": "echo built > build.txt"
+      "lint": @lint@,
+      "build": @build@
     } }
   ],
   "tasks": { "lint": {}, "build": {} }
 }
 "#,
+		&[
+			("lint", sh::exit(1)),
+			("build", sh::write("build.txt", "built")),
+		],
 	);
 
 	fx.lattice()
@@ -368,16 +389,17 @@ fn sequentially_stops_at_first_failed_phase() {
 fn sequentially_dry_run_lists_each_phase() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": "echo L", "build": "echo B" } }
+      "lint": @lint@, "build": @build@ } }
   ],
   "tasks": { "lint": {}, "build": {} }
 }
 "#,
+		&[("lint", sh::echo("L")), ("build", sh::echo("B"))],
 	);
 
 	fx.lattice()
@@ -388,23 +410,25 @@ fn sequentially_dry_run_lists_each_phase() {
 		.stdout(predicate::str::contains("dry run · build (phase)"));
 }
 
-// POSIX shell in the task bodies.
-#[cfg(unix)]
 #[test]
 fn keep_going_runs_independent_and_reports_failure() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	fx.mkdir("b");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "good", "path": "a", "auto": false, "scripts": { "build": "echo GOOD-RAN" } },
-    { "name": "bad",  "path": "b", "auto": false, "scripts": { "build": "echo boom >&2; exit 1" } }
+    { "name": "good", "path": "a", "auto": false, "scripts": { "build": @good@ } },
+    { "name": "bad",  "path": "b", "auto": false, "scripts": { "build": @bad@ } }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[
+			("good", sh::echo("GOOD-RAN")),
+			("bad", sh::then([sh::echo_err("boom"), sh::exit(1)])),
+		],
 	);
 
 	// --no-cache keeps `good` running (so its output is emitted) on every run.
@@ -419,22 +443,24 @@ fn keep_going_runs_independent_and_reports_failure() {
 
 /// The typo case: `persistent: true` on a command that exits straight away. The
 /// run has to end on its own — no signal is ever sent here — and report it.
-// `;` as a command separator, and `>&2`, in the task body.
-#[cfg(unix)]
 #[test]
 fn persistent_task_that_exits_immediately_is_reported() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
     { "name": "app", "path": "a", "auto": false,
-      "scripts": { "dev": "echo port already in use >&2; exit 1" } }
+      "scripts": { "dev": @dev@ } }
   ],
   "tasks": { "dev": { "persistent": true } }
 }
 "#,
+		&[(
+			"dev",
+			sh::then([sh::echo_err("port already in use"), sh::exit(1)]),
+		)],
 	);
 
 	fx.lattice()
@@ -450,15 +476,16 @@ fn persistent_task_that_exits_immediately_is_reported() {
 fn persistent_task_that_finishes_cleanly_says_so() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": { "dev": "true" } }
+    { "name": "app", "path": "a", "auto": false, "scripts": { "dev": @dev@ } }
   ],
   "tasks": { "dev": { "persistent": true } }
 }
 "#,
+		&[("dev", sh::succeed())],
 	);
 
 	fx.lattice()
@@ -474,15 +501,16 @@ fn persistent_task_that_finishes_cleanly_says_so() {
 fn undefined_task_fails_cleanly() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } }
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[("build", sh::succeed())],
 	);
 
 	fx.lattice()
@@ -503,16 +531,17 @@ fn undefined_task_fails_cleanly() {
 fn unknown_top_level_key_fails_before_anything_runs() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "projects": {},
   "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } }
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[("build", sh::succeed())],
 	);
 
 	fx.lattice()
@@ -532,15 +561,16 @@ fn unknown_top_level_key_fails_before_anything_runs() {
 fn a_misspelled_outputs_key_names_the_task_and_the_fix() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } }
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } }
   ],
   "tasks": { "build": { "output": ["dist/**"] } }
 }
 "#,
+		&[("build", sh::succeed())],
 	);
 
 	fx.lattice()
@@ -559,16 +589,17 @@ fn an_unknown_workspace_key_indexes_the_entry() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	fx.mkdir("b");
-	fx.config(
+	fx.config_from(
 		r#"{
   "latticeVersion": "0.1.0",
   "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": "true" } },
+    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } },
     { "name": "beta", "path": "b", "auto": false, "glob": "b/*" }
   ],
   "tasks": { "build": {} }
 }
 "#,
+		&[("build", sh::succeed())],
 	);
 
 	fx.lattice()

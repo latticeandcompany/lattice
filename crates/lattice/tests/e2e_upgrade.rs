@@ -60,7 +60,7 @@ fn upgrade_installs_the_release_and_rewrites_the_pin() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 
 	fx.lattice()
 		.args([
@@ -96,7 +96,7 @@ fn upgrade_accepts_a_v_prefix_and_is_idempotent() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 
 	fx.lattice()
 		.args([
@@ -130,7 +130,7 @@ fn upgrade_latest_resolves_the_newest_release() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 
 	fx.lattice()
 		.args([
@@ -160,7 +160,7 @@ fn upgrade_latest_falls_back_to_the_newest_pre_release() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9-beta-2", "beta-binary");
+	release.publish("9.9.9-beta-2");
 
 	fx.lattice()
 		.args([
@@ -194,7 +194,7 @@ fn upgrade_latest_prefers_a_stable_release_over_a_newer_pre_release() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "stable-binary");
+	release.publish("9.9.9");
 
 	fx.lattice()
 		.args([
@@ -225,7 +225,7 @@ fn upgrade_refuses_an_archive_that_fails_its_checksum() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish_with_wrong_digest("9.9.9", "tampered");
+	release.publish_with_wrong_digest("9.9.9");
 
 	fx.lattice()
 		.args([
@@ -258,7 +258,7 @@ fn the_release_url_env_vars_still_work_without_a_flag() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 
 	fx.lattice()
 		.env("LATTICE_RELEASE_BASE_URL", release.base_url())
@@ -279,7 +279,7 @@ fn a_release_url_flag_beats_the_environment() {
 	}
 	let fx = fixture();
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 	let dead_end = FakeRelease::new();
 
 	fx.lattice()
@@ -330,7 +330,6 @@ fn upgrade_needs_a_version() {
 /// The first acceptance criterion: a managed binary in a repo pinned elsewhere
 /// says so and hands the invocation to the pinned build.
 #[test]
-#[cfg(unix)]
 fn a_pinned_repo_switches_to_the_version_it_pins() {
 	if !curl_supports_file() {
 		return;
@@ -341,7 +340,7 @@ fn a_pinned_repo_switches_to_the_version_it_pins() {
 	fx.install_managed(&bin);
 
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 
 	fx.managed_lattice(&bin)
 		.args(["--release-base-url", &release.base_url(), "run", "greet"])
@@ -349,19 +348,21 @@ fn a_pinned_repo_switches_to_the_version_it_pins() {
 		.success()
 		// The pinned build ran, with the whole command line passed through — the
 		// global flag included, so the build being handed to reads it the same way.
-		.stdout(predicates::str::contains("pinned-binary"))
+		.stdout(predicates::str::contains("lattice-9.9.9"))
 		.stdout(predicates::str::contains("--release-base-url"))
 		.stdout(predicates::str::contains("run greet"))
 		.stderr(predicates::str::contains("this repo pins"))
 		.stderr(predicates::str::contains("switching"));
 
 	assert!(fx.exists(&installed_bin("9.9.9")));
-	assert_eq!(fx.stable_link_target(), "lattice-9.9.9");
+	assert!(
+		fx.stable_points_at("9.9.9"),
+		"the stable path should resolve to the pinned install"
+	);
 }
 
 /// The second acceptance criterion: a version already on disk is a symlink swap.
 #[test]
-#[cfg(unix)]
 fn a_version_already_on_disk_is_not_downloaded_again() {
 	if !curl_supports_file() {
 		return;
@@ -372,7 +373,7 @@ fn a_version_already_on_disk_is_not_downloaded_again() {
 	fx.install_managed(&bin);
 
 	let release = FakeRelease::new();
-	release.publish("9.9.9", "pinned-binary");
+	release.publish("9.9.9");
 	fx.managed_lattice(&bin)
 		.args(["--release-base-url", &release.base_url(), "run", "greet"])
 		.assert()
@@ -387,14 +388,16 @@ fn a_version_already_on_disk_is_not_downloaded_again() {
 		.args(["--release-base-url", &release.base_url(), "run", "greet"])
 		.assert()
 		.success()
-		.stdout(predicates::str::contains("pinned-binary"))
+		.stdout(predicates::str::contains("lattice-9.9.9"))
 		.stderr(predicates::str::contains("switching"));
 
-	assert_eq!(fx.stable_link_target(), "lattice-9.9.9");
+	assert!(
+		fx.stable_points_at("9.9.9"),
+		"the stable path should resolve to the pinned install"
+	);
 }
 
 #[test]
-#[cfg(unix)]
 fn the_switch_can_be_turned_off_per_invocation() {
 	let bin = bin_version();
 	let fx = fixture();
@@ -428,7 +431,6 @@ fn the_switch_can_be_turned_off_per_invocation() {
 }
 
 #[test]
-#[cfg(unix)]
 fn a_missing_pinned_version_fails_loudly_rather_than_running_the_wrong_one() {
 	if !curl_supports_file() {
 		return;

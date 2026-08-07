@@ -13,8 +13,8 @@ user-facing pages do not.
 
 ## Crate layout
 
-Lattice is a Cargo workspace of seven crates under `crates/`. Each one owns a
-single concern:
+Lattice is a Cargo workspace of eight crates under `crates/`. Seven ship the
+tool; the eighth exists only for its own tests. Each owns a single concern:
 
 | Crate | Owns |
 | --- | --- |
@@ -25,6 +25,7 @@ single concern:
 | `lattice-runner` | The async scheduler (`execute_tasks`): spawns tasks, wires the cache, injects toolchain `PATH`s, manages persistent tasks |
 | `lattice-output` | `OutputMode`, `TaskEvent`, the `Reporter` trait (`InteractiveReporter`, `CiReporter`), and brand/splash rendering |
 | `lattice` | The `lattice` binary: the clap CLI surface, subcommands, version-pin handover, the bundled JSON Schema |
+| `lattice-testkit` | Dev-only. Task commands spelled for whichever shell will run them, so the test suites mean the same thing on every platform, plus the stand-in programs those suites put on `PATH` |
 
 The root `lattice.json` declares every crate plus `apps/web` as workspaces — the
 repo dogfoods itself.
@@ -43,6 +44,7 @@ lattice-config
               └── lattice   (+ all of the above)
 
 lattice-output — no internal dependencies
+lattice-testkit — no internal dependencies, and a dev-dependency only
 ```
 
 `lattice-config` is the base: every other crate models on top of its schema

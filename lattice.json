@@ -6,6 +6,7 @@
     { "name": "lattice-output", "path": "crates/lattice-output" },
     { "name": "lattice-workspace", "path": "crates/lattice-workspace", "dependsOn": ["lattice-config"] },
     { "name": "lattice-cache", "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
+    { "name": "lattice-testkit", "path": "crates/lattice-testkit" },
     { "name": "dagger", "path": "crates/dagger", "dependsOn": ["lattice-config", "lattice-workspace"] },
     { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
     { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },

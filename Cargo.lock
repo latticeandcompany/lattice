@@ -891,6 +891,7 @@ dependencies = [
  "lattice-config",
  "lattice-output",
  "lattice-runner",
+ "lattice-testkit",
  "lattice-workspace",
  "predicates",
  "semver",
@@ -950,11 +951,19 @@ dependencies = [
  "lattice-cache",
  "lattice-config",
  "lattice-output",
+ "lattice-testkit",
  "lattice-workspace",
  "libc",
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "lattice-testkit"
+version = "1.0.0-beta-2"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -965,6 +974,7 @@ dependencies = [
  "ignore",
  "indexmap",
  "lattice-config",
+ "lattice-testkit",
  "semver",
  "serde",
  "serde_json",

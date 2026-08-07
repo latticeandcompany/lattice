@@ -457,16 +457,16 @@ mod tests {
 	}
 
 	fn fake_engines() -> EngineMap {
-		// The installCmd writes a fake `faketool` binary that prints a version.
+		// The installCmd provisions a stand-in `faketool` that prints a version.
 		serde_json::from_value(json!({
-            "faketool": {
-                "version": ">=1.0.0",
-                "installCmd": "mkdir -p \"$LATTICE_TOOLCHAIN_DIR/bin\" && printf '#!/bin/sh\\necho faketool 1.2.3\\n' > \"$LATTICE_TOOLCHAIN_DIR/bin/faketool\" && chmod +x \"$LATTICE_TOOLCHAIN_DIR/bin/faketool\"",
-                "versionCmd": "faketool",
-                "bin": "bin"
-            }
-        }))
-        .unwrap()
+			"faketool": {
+				"version": ">=1.0.0",
+				"installCmd": lattice_testkit::install_fake_tool("faketool", "1.2.3"),
+				"versionCmd": "faketool",
+				"bin": "bin"
+			}
+		}))
+		.unwrap()
 	}
 
 	#[test]
@@ -487,7 +487,9 @@ mod tests {
 		let bin = &resolved.path_prepend[0];
 		assert!(bin.ends_with("bin"));
 		assert!(bin.is_dir());
-		assert!(bin.join("faketool").exists());
+		assert!(bin
+			.join(lattice_testkit::fake_tool_file("faketool"))
+			.exists());
 		assert!(bin.starts_with(tmp.path().join(".lattice").join("toolchains")));
 
 		// pins.json was written next to the bin dir.

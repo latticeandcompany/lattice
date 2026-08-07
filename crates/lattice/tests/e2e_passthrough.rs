@@ -4,34 +4,18 @@
 //! graph; the nested repo is a single node it schedules and caches as one unit.
 //!
 //! The inner runner here is a stub executable named `turbo` dropped on `PATH`:
-//! a POSIX shell script that fans `turbo run <task>` out over the nested repo's
-//! packages, so the suite stays hermetic (no node, no network). It also leaves a
-//! nondeterministic file in its own cache dir on every invocation, which is what
-//! the `ignore` patterns below have to keep out of Lattice's cache key.
-
-#![cfg(unix)]
+//! the `turbo-stub` program from `lattice_testkit`, which fans `turbo run <task>`
+//! out over the nested repo's packages, so the suite stays hermetic (no node, no
+//! network). It also leaves a nondeterministic file in its own cache dir on every
+//! invocation, which is what the `ignore` patterns below have to keep out of
+//! Lattice's cache key.
 
 mod common;
 
 use assert_cmd::Command;
 use common::Fixture;
+use lattice_testkit as sh;
 use predicates::prelude::*;
-
-/// Stand-in for the nested repo's runner: bundles every package and records a
-/// per-invocation marker in its own cache dir.
-const TURBO_STUB: &str = r#"#!/bin/sh
-set -e
-[ "$1" = "run" ] || { echo "turbo-stub: expected 'run', got '$*'" >&2; exit 2; }
-task="$2"
-mkdir -p .turbo
-echo "$$ $(date +%s)" > .turbo/last-run
-for pkg in packages/*; do
-  mkdir -p "$pkg/dist"
-  cat "$pkg/src/index.js" > "$pkg/dist/bundle.js"
-  echo "$(basename "$pkg"):$task: done"
-done
-echo "turbo-stub: $task complete"
-"#;
 
 /// The `ignore` set a passthrough workspace needs when its `inputs` are broad:
 /// dependency trees, the inner runner's own cache, and the outputs themselves
@@ -43,7 +27,7 @@ const IGNORE: &str = r#"["**/node_modules/**", "**/.turbo/**", "**/dist/**"]"#;
 /// to be scheduled first. `ignore` is a parameter so a test can show what
 /// happens when a pattern is missing.
 fn nested_repo(fx: &Fixture, ignore: &str) {
-	fx.write_exec("bin/turbo", TURBO_STUB);
+	fx.install_stub_bin("turbo-stub", "turbo");
 
 	// The nested repo: its own manifest, its own task config, its own packages.
 	fx.write(
@@ -68,13 +52,13 @@ fn nested_repo(fx: &Fixture, ignore: &str) {
 	fx.write("api/src/main.txt", "api v1\n");
 
 	fx.config(&format!(
-        r#"{{
+		r#"{{
   "latticeVersion": "0.1.0",
   "workspaces": [
     {{ "name": "frontend", "path": "frontend", "auto": false,
       "scripts": {{ "build": "turbo run build" }} }},
     {{ "name": "api", "path": "api", "auto": false, "dependsOn": ["frontend"],
-      "scripts": {{ "build": "mkdir -p dist && cp ../frontend/packages/site/dist/bundle.js dist/site.js && echo api-built" }} }}
+      "scripts": {{ "build": {api} }} }}
   ],
   "tasks": {{
     "build": {{
@@ -85,8 +69,13 @@ fn nested_repo(fx: &Fixture, ignore: &str) {
     }}
   }}
 }}
-"#
-    ))
+"#,
+		api = sh::json(&sh::all([
+			sh::mkdirs("dist"),
+			sh::copy("../frontend/packages/site/dist/bundle.js", "dist/site.js"),
+			sh::echo("api-built"),
+		])),
+	))
 }
 
 /// `lattice` with the stub runner's dir prepended to `PATH` — the same way a
@@ -94,8 +83,7 @@ fn nested_repo(fx: &Fixture, ignore: &str) {
 /// `node_modules/.bin`).
 fn lattice(fx: &Fixture) -> Command {
 	let mut cmd = fx.lattice();
-	let host = std::env::var("PATH").unwrap_or_default();
-	cmd.env("PATH", format!("{}:{host}", fx.join("bin").display()));
+	cmd.env("PATH", fx.path_with_stub_bin());
 	cmd
 }
 

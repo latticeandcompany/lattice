@@ -3,8 +3,9 @@
 //! Every test builds a fully self-contained repo inside its own
 //! [`tempfile::TempDir`] and drives the compiled `lattice` binary through
 //! `assert_cmd`. Nothing touches the real repo, `$HOME`, or global state. Task
-//! bodies are plain `sh`/`echo`/`printf` commands, so no real language
-//! toolchains are required.
+//! bodies come from `lattice_testkit`, which spells them for whichever shell will
+//! run them, so no real language toolchains are required and the suites mean the
+//! same thing on every platform.
 
 // Each integration-test binary pulls in this module but uses only a subset of
 // the helpers; silence the resulting per-binary dead-code warnings so the suite
@@ -51,20 +52,28 @@ impl Fixture {
 		std::fs::write(&path, contents).expect("write file");
 	}
 
-	/// Write an executable file (creating parents) at a repo-relative path.
-	/// Used to drop stand-in tools that a task resolves off `PATH`.
-	#[cfg(unix)]
-	pub fn write_exec(&self, rel: &str, contents: &str) {
-		use std::os::unix::fs::PermissionsExt;
-		self.write(rel, contents);
-		let path = self.join(rel);
-		let mut perms = std::fs::metadata(&path).expect("stat").permissions();
-		perms.set_mode(0o755);
-		std::fs::set_permissions(&path, perms).expect("chmod");
-	}
-
 	pub fn config(&self, json: &str) {
 		self.write("lattice.json", json);
+	}
+
+	/// Write `lattice.json` from a template, replacing each `@name@` token with
+	/// the matching command, JSON-escaped and quoted.
+	///
+	/// A task body has to be spelled for the shell that will run it, and on
+	/// Windows that means backslashes — which are not valid in a JSON string as
+	/// written. Substituting through here escapes them, and keeps the config
+	/// readable instead of turning it into a `format!` with doubled braces.
+	pub fn config_from(&self, template: &str, cmds: &[(&str, String)]) {
+		let mut text = template.to_string();
+		for (name, cmd) in cmds {
+			let token = format!("@{name}@");
+			assert!(
+				text.contains(&token),
+				"the template has no {token} to substitute"
+			);
+			text = text.replace(&token, &lattice_testkit::json(cmd));
+		}
+		self.config(&text);
 	}
 
 	pub fn read(&self, rel: &str) -> String {
@@ -81,6 +90,36 @@ impl Fixture {
 			.env("NO_COLOR", "1")
 			.env_remove("LATTICE_NO_VERSION_CHECK");
 		cmd
+	}
+
+	/// Install a workspace binary into `bin/` under the fixture, named `as_name`
+	/// plus the platform's executable suffix.
+	///
+	/// Used to put a stand-in tool on a test's `PATH`. A copied program works
+	/// wherever it was built, which a shell script dropped on disk does not.
+	pub fn install_stub_bin(&self, built: &str, as_name: &str) {
+		let source = assert_cmd::cargo::cargo_bin(built);
+		assert!(
+			source.exists(),
+			"{} has not been built; `cargo test --workspace` builds every member's \
+             binaries, so run that (or `cargo build --workspace --all-targets`) rather \
+             than this test target alone",
+			source.display()
+		);
+		let bin_dir = self.join("bin");
+		std::fs::create_dir_all(&bin_dir).expect("mkdir bin");
+		let dest = bin_dir.join(format!("{as_name}{}", std::env::consts::EXE_SUFFIX));
+		std::fs::remove_file(&dest).ok();
+		std::fs::copy(&source, &dest).expect("copy the stub binary");
+		wait_until_executable(&dest);
+	}
+
+	/// A `PATH` with the fixture's `bin/` in front of the host's.
+	pub fn path_with_stub_bin(&self) -> std::ffi::OsString {
+		let host = std::env::var_os("PATH").unwrap_or_default();
+		let mut dirs = vec![self.join("bin")];
+		dirs.extend(std::env::split_paths(&host));
+		std::env::join_paths(dirs).expect("join PATH")
 	}
 
 	/// Recursively collect every file path under a repo-relative directory.
@@ -149,13 +188,32 @@ impl Fixture {
 		cmd
 	}
 
-	/// Where `.lattice/bin/lattice` currently points, by file name.
-	#[cfg(unix)]
-	pub fn stable_link_target(&self) -> String {
-		std::fs::read_link(self.join(".lattice/bin/lattice"))
-			.expect("read the stable symlink")
-			.display()
-			.to_string()
+	/// Whether the stable `.lattice/bin/lattice` path resolves to `version`'s
+	/// install.
+	///
+	/// Unix links the two and Windows copies, so this asks the question each way
+	/// rather than reading a symlink that only one platform has.
+	pub fn stable_points_at(&self, version: &str) -> bool {
+		let stable = self.join(&format!(
+			".lattice/bin/lattice{}",
+			std::env::consts::EXE_SUFFIX
+		));
+		let versioned = self.join(&format!(
+			".lattice/bin/lattice-{version}{}",
+			std::env::consts::EXE_SUFFIX
+		));
+		#[cfg(unix)]
+		{
+			let target = std::fs::read_link(&stable).expect("read the stable symlink");
+			target == std::path::Path::new(versioned.file_name().unwrap())
+		}
+		#[cfg(not(unix))]
+		{
+			match (std::fs::read(&stable), std::fs::read(&versioned)) {
+				(Ok(a), Ok(b)) => a == b,
+				_ => false,
+			}
+		}
 	}
 }
 
@@ -183,8 +241,9 @@ fn wait_until_executable(bin: &Path) {
 ///
 /// The download, checksum, extract and link path is the same code whether the
 /// base URL is GitHub or a directory, so the tests exercise all of it without a
-/// network. The published "binary" is a shell script that identifies itself, so a
-/// handover is observable in stdout.
+/// network. The published binary is the compiled `release-stub`, which prints the
+/// name it was invoked as — so a handover is observable in stdout, and on a
+/// platform that cannot execute a shell script.
 pub struct FakeRelease {
 	dir: TempDir,
 }
@@ -206,30 +265,37 @@ impl FakeRelease {
 		env!("LATTICE_TARGET")
 	}
 
-	/// Publish `version` for the host target: an archive whose `lattice` prints
-	/// `marker` plus the arguments it received, and a checksums file listing it.
-	pub fn publish(&self, version: &str, marker: &str) {
-		self.publish_inner(version, marker, None);
+	/// Publish `version` for the host target: an archive carrying the stub binary,
+	/// and a checksums file listing it.
+	pub fn publish(&self, version: &str) {
+		self.publish_inner(version, None);
 	}
 
 	/// Publish `version` with a checksums file that does not describe the archive,
 	/// standing in for a tampered or truncated download.
-	pub fn publish_with_wrong_digest(&self, version: &str, marker: &str) {
-		self.publish_inner(version, marker, Some("0".repeat(64)));
+	pub fn publish_with_wrong_digest(&self, version: &str) {
+		self.publish_inner(version, Some("0".repeat(64)));
 	}
 
-	fn publish_inner(&self, version: &str, marker: &str, digest_override: Option<String>) {
+	fn publish_inner(&self, version: &str, digest_override: Option<String>) {
 		let target = Self::host_target();
 		let asset = format!("lattice-{version}-{target}.tar.gz");
 		let dir = self.dir.path().join(format!("v{version}"));
 		std::fs::create_dir_all(&dir).expect("mkdir release dir");
 
-		let script = format!("#!/bin/sh\nprintf '%s %s\\n' '{marker}' \"$*\"\n");
+		let stub = assert_cmd::cargo::cargo_bin("release-stub");
+		assert!(
+			stub.exists(),
+			"{} has not been built; `cargo test --workspace` builds every member's \
+             binaries, so run that rather than this test target alone",
+			stub.display()
+		);
+		let payload = std::fs::read(&stub).expect("read the stub binary");
 		let archive_path = dir.join(&asset);
 		write_archive(
 			&archive_path,
 			&format!("lattice-{version}-{target}"),
-			script.as_bytes(),
+			&payload,
 		);
 
 		let digest = digest_override.unwrap_or_else(|| sha256_hex(&archive_path));

@@ -1345,6 +1345,7 @@ mod tests {
 	use dagger::build_execution_graph;
 	use lattice_config::{EngineMap, PipelineTask};
 	use lattice_output::TaskEvent;
+	use lattice_testkit as sh;
 	use std::sync::Mutex;
 	use std::time::Duration;
 
@@ -1459,8 +1460,16 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let workspaces = vec![
-			ws("alpha", root, &[("build", "echo I-AM-ALPHA > out.txt")]),
-			ws("beta", root, &[("build", "echo I-AM-BETA > out.txt")]),
+			ws(
+				"alpha",
+				root,
+				&[("build", &sh::write("out.txt", "I-AM-ALPHA"))],
+			),
+			ws(
+				"beta",
+				root,
+				&[("build", &sh::write("out.txt", "I-AM-BETA"))],
+			),
 		];
 		let build = PipelineTask {
 			outputs: Some(vec!["out.txt".to_string()]),
@@ -1497,8 +1506,9 @@ mod tests {
 	async fn changing_a_dependency_invalidates_its_dependents() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let lib = ws("lib", root, &[("build", "echo built > out.txt")]);
-		let mut app = ws("app", root, &[("build", "echo built > out.txt")]);
+		let built = sh::write("out.txt", "built");
+		let lib = ws("lib", root, &[("build", &built)]);
+		let mut app = ws("app", root, &[("build", &built)]);
 		app.depends_on = vec!["lib".to_string()];
 		let source = root.join("lib/src.txt");
 		std::fs::write(&source, "v1").unwrap();
@@ -1551,7 +1561,7 @@ mod tests {
 	async fn force_refreshes_the_entry_while_no_cache_stores_nothing() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("build", "echo hi > out.txt")])];
+		let workspaces = vec![ws("app", root, &[("build", &sh::write("out.txt", "hi"))])];
 		let build = PipelineTask {
 			outputs: Some(vec!["out.txt".to_string()]),
 			..Default::default()
@@ -1643,8 +1653,8 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let workspaces = vec![
-			ws("wa", root, &[("build", "true")]),
-			ws("wb", root, &[("build", "true")]),
+			ws("wa", root, &[("build", &sh::succeed())]),
+			ws("wb", root, &[("build", &sh::succeed())]),
 		];
 		let config = config_with(&[("build", PipelineTask::default())]);
 		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
@@ -1670,14 +1680,14 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let order = root.join("order.txt");
-		let a = format!(
-			"printf a >> {p}; sleep 0.1; printf a >> {p}",
-			p = order.display()
-		);
-		let b = format!(
-			"printf b >> {p}; sleep 0.1; printf b >> {p}",
-			p = order.display()
-		);
+		let pair = |letter: &str| {
+			sh::then([
+				sh::append(&order, letter),
+				sh::sleep(1),
+				sh::append(&order, letter),
+			])
+		};
+		let (a, b) = (pair("a"), pair("b"));
 		let workspaces = vec![
 			ws("wa", root, &[("build", &a)]),
 			ws("wb", root, &[("build", &b)]),
@@ -1691,7 +1701,12 @@ mod tests {
 		let result = execute_tasks(o).await.unwrap();
 
 		assert_eq!(result.total, 2);
-		let content = std::fs::read_to_string(&order).unwrap();
+		// The letters, ignoring how each shell terminates a line.
+		let content: String = std::fs::read_to_string(&order)
+			.unwrap()
+			.chars()
+			.filter(|c| !c.is_whitespace())
+			.collect();
 		assert!(
 			content == "aabb" || content == "bbaa",
 			"expected serialized output, got {content:?}"
@@ -1704,8 +1719,8 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let order = root.join("order.txt");
-		let a = format!("printf a >> {}", order.display());
-		let b = format!("printf b >> {}", order.display());
+		let a = sh::append(&order, "a");
+		let b = sh::append(&order, "b");
 		let workspaces = vec![ws("wa", root, &[("a", &a), ("b", &b)])];
 		let config = config_with(&[("a", PipelineTask::default()), ("b", dep(&["a"]))]);
 		let graph = build_execution_graph(&workspaces, "b", &config).unwrap();
@@ -1715,7 +1730,12 @@ mod tests {
 			.await
 			.unwrap();
 
-		assert_eq!(std::fs::read_to_string(&order).unwrap(), "ab");
+		let written: Vec<String> = std::fs::read_to_string(&order)
+			.unwrap()
+			.lines()
+			.map(str::to_string)
+			.collect();
+		assert_eq!(written, vec!["a", "b"]);
 		assert!(r.index_of("finished:wa:a").unwrap() < r.index_of("started:wa:b").unwrap());
 	}
 
@@ -1724,8 +1744,12 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let marker = root.join("downstream.txt");
-		let test_cmd = format!("touch {}", marker.display());
-		let workspaces = vec![ws("wa", root, &[("build", "exit 1"), ("test", &test_cmd)])];
+		let test_cmd = sh::touch(&marker);
+		let workspaces = vec![ws(
+			"wa",
+			root,
+			&[("build", &sh::exit(1)), ("test", &test_cmd)],
+		)];
 		let config = config_with(&[
 			("build", PipelineTask::default()),
 			("test", dep(&["build"])),
@@ -1754,12 +1778,16 @@ mod tests {
 		let root = tmp.path();
 		let indep = root.join("indep.txt");
 		let downstream = root.join("down.txt");
-		let indep_cmd = format!("touch {}", indep.display());
-		let down_cmd = format!("touch {}", downstream.display());
+		let indep_cmd = sh::touch(&indep);
+		let down_cmd = sh::touch(&downstream);
 		// wa: build fails, test dependsOn build (skipped). wb: independent build.
 		let workspaces = vec![
-			ws("wa", root, &[("build", "exit 1"), ("test", &down_cmd)]),
-			ws("wb", root, &[("build", &indep_cmd), ("test", "true")]),
+			ws("wa", root, &[("build", &sh::exit(1)), ("test", &down_cmd)]),
+			ws(
+				"wb",
+				root,
+				&[("build", &indep_cmd), ("test", &sh::succeed())],
+			),
 		];
 		let config = config_with(&[
 			("build", PipelineTask::default()),
@@ -1789,7 +1817,7 @@ mod tests {
 	async fn passing_task_emits_started_then_finished() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("build", "true")])];
+		let workspaces = vec![ws("app", root, &[("build", &sh::succeed())])];
 		let config = config_with(&[("build", PipelineTask::default())]);
 		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
 		let r = RecordingReporter::new();
@@ -1808,7 +1836,11 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		// The command writes an output file; the task caches "out.txt".
-		let workspaces = vec![ws("app", root, &[("build", "echo hello > out.txt")])];
+		let workspaces = vec![ws(
+			"app",
+			root,
+			&[("build", &sh::write("out.txt", "hello"))],
+		)];
 		let out_file = workspaces[0].path.join("out.txt");
 		let build = PipelineTask {
 			outputs: Some(vec!["out.txt".to_string()]),
@@ -1867,7 +1899,11 @@ mod tests {
 	async fn stored_meta_records_the_env_the_key_was_computed_from() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("build", "echo hello > out.txt")])];
+		let workspaces = vec![ws(
+			"app",
+			root,
+			&[("build", &sh::write("out.txt", "hello"))],
+		)];
 		// PATH is declared so the task has a resolved env value without the test
 		// mutating the process environment.
 		let build = PipelineTask {
@@ -1908,12 +1944,12 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let marker = root.join("normal.txt");
-		let normal_cmd = format!("touch {}", marker.display());
+		let normal_cmd = sh::touch(&marker);
 		// dev (persistent) dependsOn build (normal). dev runs `sleep 30`.
 		let workspaces = vec![ws(
 			"app",
 			root,
-			&[("build", &normal_cmd), ("dev", "sleep 30")],
+			&[("build", &normal_cmd), ("dev", &sh::sleep(30))],
 		)];
 		let config = config_with(&[
 			("build", PipelineTask::default()),
@@ -1967,7 +2003,7 @@ mod tests {
 	async fn persistent_task_that_exits_nonzero_fails_the_run() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("dev", "exit 3")])];
+		let workspaces = vec![ws("app", root, &[("dev", &sh::exit(3))])];
 		let config = config_with(&[("dev", persistent(&[]))]);
 		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
 		let r = RecordingReporter::new();
@@ -1995,7 +2031,7 @@ mod tests {
 	async fn persistent_task_that_exits_zero_is_reported() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("dev", "true")])];
+		let workspaces = vec![ws("app", root, &[("dev", &sh::succeed())])];
 		let config = config_with(&[("dev", persistent(&[]))]);
 		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
 		let r = RecordingReporter::new();
@@ -2022,8 +2058,8 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let workspaces = vec![
-			ws("dies", root, &[("dev", "exit 1")]),
-			ws("stays", root, &[("dev", "sleep 30")]),
+			ws("dies", root, &[("dev", &sh::exit(1))]),
+			ws("stays", root, &[("dev", &sh::sleep(30))]),
 		];
 		let config = config_with(&[("dev", persistent(&[]))]);
 		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
@@ -2052,14 +2088,14 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let engines: EngineMap = serde_json::from_value(serde_json::json!({
-            "faketool": {
-                "version": ">=1.0.0",
-                "installCmd": "mkdir -p \"$LATTICE_TOOLCHAIN_DIR/bin\" && printf '#!/bin/sh\\necho faketool 1.2.3\\n' > \"$LATTICE_TOOLCHAIN_DIR/bin/faketool\" && chmod +x \"$LATTICE_TOOLCHAIN_DIR/bin/faketool\"",
-                "versionCmd": "faketool",
-                "bin": "bin"
-            }
-        }))
-        .unwrap();
+			"faketool": {
+				"version": ">=1.0.0",
+				"installCmd": sh::install_fake_tool("faketool", "1.2.3"),
+				"versionCmd": "faketool",
+				"bin": "bin"
+			}
+		}))
+		.unwrap();
 
 		let mut workspace = ws(root_ws_name(), root, &[("build", "faketool")]);
 		workspace.engines = engines;
@@ -2094,7 +2130,7 @@ mod tests {
 		let workspaces = vec![ws(
 			"app",
 			root,
-			&[("build", "cat ../shared.json > out.txt")],
+			&[("build", &sh::copy("../shared.json", "out.txt"))],
 		)];
 		let build = PipelineTask {
 			outputs: Some(vec!["out.txt".to_string()]),
@@ -2139,7 +2175,7 @@ mod tests {
 	async fn a_global_env_change_reruns_a_cached_task() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("build", "echo hi > out.txt")])];
+		let workspaces = vec![ws("app", root, &[("build", &sh::write("out.txt", "hi"))])];
 		let build = PipelineTask {
 			outputs: Some(vec!["out.txt".to_string()]),
 			..Default::default()
@@ -2174,7 +2210,7 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
 		let marker = root.join("finished.txt");
-		let cmd = format!("sleep 30; touch {}", marker.display());
+		let cmd = sh::then([sh::sleep(30), sh::touch(&marker)]);
 		let workspaces = vec![ws("app", root, &[("build", &cmd)])];
 		let build = PipelineTask {
 			timeout: Some(lattice_config::Duration(1)),
@@ -2206,7 +2242,7 @@ mod tests {
 	async fn a_task_inside_its_timeout_is_untouched() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("build", "true")])];
+		let workspaces = vec![ws("app", root, &[("build", &sh::succeed())])];
 		let build = PipelineTask {
 			timeout: Some(lattice_config::Duration(60)),
 			..Default::default()
@@ -2249,45 +2285,71 @@ mod tests {
 
 	/// `maxCacheSize` reads as a budget, so it has to be one. Leaving enforcement
 	/// to `lattice prune` alone meant a repo that set it still grew without limit.
+	///
+	/// Measured by whether entries were evicted rather than by total bytes, so it
+	/// does not depend on producing a file of a particular size — and the pairing
+	/// with the no-budget run is what distinguishes enforcement from a cache that
+	/// happened to stay small.
 	#[tokio::test]
 	async fn max_cache_size_is_enforced_after_a_run() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws(
-			"app",
-			root,
-			&[("build", "head -c 200000 /dev/zero | tr '\\0' 'x' > big.bin")],
-		)];
-		let build = PipelineTask {
-			outputs: Some(vec!["big.bin".to_string()]),
-			..Default::default()
-		};
-		let mut config = config_with(&[("build", build)]);
-		config.settings.max_cache_size = Some(lattice_config::CacheSize::parse("1KB").unwrap());
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
 
-		for seed in 0..3 {
-			std::fs::write(root.join("app/seed.txt"), format!("seed{seed}")).unwrap();
-			let r = RecordingReporter::new();
-			let mut o = opts(&graph, &workspaces, &config, root, &r);
-			o.no_cache = false;
-			o.no_store = false;
-			execute_tasks(o).await.unwrap();
+		/// Entries stored under the current cache format.
+		fn entries(root: &Path, config: &LatticeConfig) -> usize {
+			let dir = root
+				.join(config.settings.cache_dir())
+				.join(lattice_cache::CACHE_FORMAT);
+			std::fs::read_dir(&dir)
+				.map(|rd| {
+					rd.flatten()
+						.filter(|e| e.file_name().to_string_lossy().ends_with(".meta.json"))
+						.count()
+				})
+				.unwrap_or(0)
 		}
 
-		let cache_dir = root
-			.join(config.settings.cache_dir())
-			.join(lattice_cache::CACHE_FORMAT);
-		let total: u64 = std::fs::read_dir(&cache_dir)
-			.unwrap()
-			.flatten()
-			.filter_map(|e| e.metadata().ok())
-			.filter(|m| m.is_file())
-			.map(|m| m.len())
-			.sum();
-		assert!(
-			total <= 1024,
-			"the cache must be held to its declared budget, found {total} bytes"
+		async fn three_runs(root: &Path, config: &LatticeConfig) {
+			let workspaces = vec![ws(
+				"app",
+				root,
+				&[("build", &sh::write("out.txt", "built"))],
+			)];
+			let graph = build_execution_graph(&workspaces, "build", config).unwrap();
+			for seed in 0..3 {
+				std::fs::write(root.join("app/seed.txt"), format!("seed{seed}")).unwrap();
+				let r = RecordingReporter::new();
+				let mut o = opts(&graph, &workspaces, config, root, &r);
+				o.no_cache = false;
+				o.no_store = false;
+				execute_tasks(o).await.unwrap();
+			}
+		}
+
+		let build = PipelineTask {
+			outputs: Some(vec!["out.txt".to_string()]),
+			..Default::default()
+		};
+
+		// No budget: three different inputs leave three entries behind.
+		let unbounded = config_with(&[("build", build.clone())]);
+		three_runs(root, &unbounded).await;
+		assert_eq!(
+			entries(root, &unbounded),
+			3,
+			"without a budget nothing should be evicted"
+		);
+
+		// A budget no single entry can fit under: each run evicts what it finds.
+		let tmp2 = tempfile::tempdir().unwrap();
+		let root2 = tmp2.path();
+		let mut bounded = config_with(&[("build", build)]);
+		bounded.settings.max_cache_size = Some(lattice_config::CacheSize::parse("1B").unwrap());
+		three_runs(root2, &bounded).await;
+		assert_eq!(
+			entries(root2, &bounded),
+			0,
+			"a run must hold the cache to settings.maxCacheSize on its own"
 		);
 	}
 
@@ -2296,7 +2358,7 @@ mod tests {
 	async fn a_miss_names_the_part_of_the_key_that_moved() {
 		let tmp = tempfile::tempdir().unwrap();
 		let root = tmp.path();
-		let workspaces = vec![ws("app", root, &[("build", "echo hi > out.txt")])];
+		let workspaces = vec![ws("app", root, &[("build", &sh::write("out.txt", "hi"))])];
 		std::fs::write(root.join("app/src.txt"), "v1").unwrap();
 		let build = PipelineTask {
 			inputs: Some(vec!["src.txt".to_string()]),

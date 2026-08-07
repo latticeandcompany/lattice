@@ -10,6 +10,31 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The test suites run on Windows — 2026-08-07
+
+Adding a Windows CI job showed that most of the suite could not run there, for a
+reason that had nothing to do with what it covered: a test that drives a task
+wrote its body as a POSIX shell script. `cmd` has no `;` separator, its `mkdir`
+takes no `-p`, `echo hi > f` writes a trailing space, and `echo seed1>f` reads
+the trailing digit as a file descriptor. Those tests were not testing Lattice on
+Windows; they were failing on shell grammar.
+
+Task commands now come from a dev-only `lattice-testkit` crate, which spells each
+one for whichever shell will run it and is itself tested by executing every
+command and checking its effect. The two stand-in tools the suites put on `PATH`
+— a nested repo's task runner and a published release binary — are small Rust
+programs rather than shell scripts, so they run wherever they were built.
+
+`cargo test --workspace` now passes on Windows as well as unix, and the Windows
+job runs the whole suite rather than a subset. Three tests stay unix-only on
+purpose: two cover symlink round-tripping and one covers process-group teardown,
+which are the platform's own mechanisms rather than something to emulate.
+
+Two pre-existing suites were unix-only before this and are not any more:
+toolchain provisioning, and the nested-repo passthrough pattern. Neither is a
+unix feature, and provisioning is exactly the half where shell and `PATH`
+handling differ.
+
 ### Shared files reach the cache key, and a run cleans up after itself — 2026-08-06
 
 The first run after this upgrade re-runs everything: the key now covers more, so
