@@ -302,6 +302,15 @@ pub struct ExecuteOptions<'a> {
 	/// The CLI passes `ctrl_c()`; tests pass a short timer. `None` => if
 	/// persistent tasks remain, wait on `ctrl_c` internally.
 	pub shutdown: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+	/// Fires to abort the run the way Ctrl-C does: stop scheduling, terminate
+	/// every child, and finish as [`RunInterrupted`].
+	///
+	/// [`ExecuteOptions::shutdown`] cannot do this. It is only awaited once the
+	/// graph has drained and persistent tasks are holding the run open, so a graph
+	/// with no persistent task never consults it. A caller that is not a terminal
+	/// has no signal to send itself, so without this there is no way to stop a
+	/// build in progress.
+	pub cancel: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 /// A plain, `Send`-able description of one task to execute. Extracted from the
@@ -563,6 +572,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		reporter,
 		lattice_version,
 		shutdown,
+		cancel,
 	} = opts;
 
 	let global_start = Instant::now();
@@ -675,7 +685,17 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		let interrupted = interrupted.clone();
 		let children = children.clone();
 		tokio::spawn(async move {
-			interrupt_signal().await;
+			// A caller-supplied cancel is the same event as the signal, so it ends
+			// the run the same way and reports the same interruption.
+			match cancel {
+				Some(mut cancel) => {
+					tokio::select! {
+						_ = interrupt_signal() => {}
+						_ = &mut cancel => {}
+					}
+				}
+				None => interrupt_signal().await,
+			}
 			interrupted.store(true, Ordering::SeqCst);
 			abort.store(true, Ordering::SeqCst);
 			shutting_down.store(true, Ordering::SeqCst);
@@ -1704,6 +1724,7 @@ mod tests {
 			reporter,
 			lattice_version: "0.1.0-test",
 			shutdown: None,
+			cancel: None,
 		}
 	}
 
@@ -2453,5 +2474,52 @@ mod tests {
 
 		// A task that has never run has nothing to be measured against.
 		assert_eq!(cache_miss(&store, "app", "lint", &now), CacheMiss::FirstRun);
+	}
+	#[tokio::test]
+	async fn cancel_stops_a_graph_that_has_no_persistent_task() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		// A long, ordinary task. `shutdown` is never consulted for a graph like
+		// this one, so before `cancel` existed there was no way to stop it.
+		let workspaces = vec![ws("app", root, &[("build", &sh::sleep(30))])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
+		o.cancel = Some(shutdown_after(300));
+
+		let started = Instant::now();
+		let err = execute_tasks(o)
+			.await
+			.expect_err("a cancelled run does not complete");
+		let elapsed = started.elapsed();
+
+		assert!(
+			err.downcast_ref::<RunInterrupted>().is_some(),
+			"a cancel ends the run the way Ctrl-C does: {err:#}"
+		);
+		assert!(
+			elapsed < Duration::from_secs(15),
+			"the run waited {elapsed:?}, so the cancel did not reach the child"
+		);
+	}
+
+	#[tokio::test]
+	async fn a_run_with_no_cancel_still_finishes_on_its_own() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let marker = root.join("done.txt");
+		let workspaces = vec![ws("app", root, &[("build", &sh::touch(&marker))])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let o = opts(&graph, &workspaces, &config, root, &reporter);
+		let result = execute_tasks(o).await.unwrap();
+
+		assert_eq!(result.total, 1);
+		assert_eq!(result.failed, 0);
+		assert!(marker.exists());
 	}
 }

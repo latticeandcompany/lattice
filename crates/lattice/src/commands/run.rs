@@ -206,6 +206,9 @@ impl RunArgs {
 					reporter: reporter.as_ref(),
 					lattice_version: BIN_VERSION,
 					shutdown: make_shutdown(),
+					// The terminal's own Ctrl-C is the cancel here; the runner watches
+					// for it internally.
+					cancel: None,
 				};
 				if let Err(err) = execute_tasks(opts).await {
 					// An interrupt ends the whole run, not just this phase: the
@@ -246,6 +249,7 @@ impl RunArgs {
 			reporter: reporter.as_ref(),
 			lattice_version: BIN_VERSION,
 			shutdown: make_shutdown(),
+			cancel: None,
 		};
 
 		match execute_tasks(opts).await {
