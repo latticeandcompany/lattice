@@ -1868,6 +1868,65 @@ while IFS=$'\t' read -r tool fp inv; do
 done < "$DRVDIR/rows.tsv"
 
 # =========================================================================
+# The desktop app's wiring.
+#
+# The app itself needs a webview and a browser, neither of which belongs in a
+# hermetic suite. What is checkable here is the wiring around it: that its crate is
+# in the workspace, that its config says what the build depends on it saying, and
+# that it grants the webview no filesystem reach.
+# =========================================================================
+sect "the desktop app's wiring"
+
+DESKTOP="$REPO_ROOT/apps/desktop"
+CONF="$DESKTOP/src-tauri/tauri.conf.json"
+
+# A crate missing from the workspace only fails in the job that builds it, which is
+# not the job most changes run.
+META="$(cd "$REPO_ROOT" && cargo metadata --no-deps --format-version 1 2>/dev/null)"
+for crate in lattice-events lattice-project lattice-desktop; do
+  if printf '%s' "$META" | grep -q "\"name\":\"$crate\""; then
+    pass "cargo metadata lists $crate"
+  else
+    fail "cargo metadata lists $crate" "not a workspace member"
+  fi
+done
+
+t_file "$CONF" "the desktop app has a tauri.conf.json"
+
+# The version is deliberately absent so it falls back to Cargo.toml, which is why
+# check-versions.sh has nothing to assert about it. A version key here would drift.
+if grep -qE '^[[:space:]]*"version"[[:space:]]*:' "$CONF" 2>/dev/null; then
+  fail "tauri.conf.json declares no version of its own" "found a version key; it must fall back to Cargo.toml"
+else
+  pass "tauri.conf.json declares no version of its own"
+fi
+
+# devUrl and the dev server have to agree on a port, and frontendDist is what
+# generate_context! embeds.
+t_grepfile "$CONF" '"devUrl": "http://localhost:1420"' "tauri.conf.json points at the dev server port vite pins"
+t_grepfile "$CONF" '"frontendDist": "../dist"' "tauri.conf.json points at the frontend bundle"
+t_grepfile "$DESKTOP/vite.config.ts" 'port: 1420' "vite serves the port tauri.conf.json expects"
+t_grepfile "$DESKTOP/vite.config.ts" 'strictPort: true' "vite refuses another port rather than leaving the window pointed at nothing"
+
+CAPS="$DESKTOP/src-tauri/capabilities/default.json"
+t_grepfile "$CAPS" 'core:default' "the desktop app grants the core defaults"
+
+# A security invariant, not a preference: every filesystem access goes through a Rust
+# command, so the webview is never handed one of its own.
+if grep -q '"fs:' "$CAPS" 2>/dev/null; then
+  fail "the webview is granted no filesystem permission" "found an fs: permission in $CAPS"
+else
+  pass "the webview is granted no filesystem permission"
+fi
+
+# The brand token files are copies, so something has to notice when they diverge.
+if (cd "$REPO_ROOT" && node scripts/checkBrandTokens.mjs >/dev/null 2>&1); then
+  pass "the desktop app's brand tokens match the website's"
+else
+  fail "the desktop app's brand tokens match the website's" "scripts/checkBrandTokens.mjs reported drift"
+fi
+
+# =========================================================================
 # Summary.
 # =========================================================================
 sect "Summary"

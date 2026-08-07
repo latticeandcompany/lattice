@@ -103,7 +103,7 @@ hover/active and light/dark contexts. Use `-500` as the canonical value.
 | `purple-500`   | `#6622CC` |
 | `purple-700`   | `#4A1795` |
 
-**Crimson — reserved**
+**Crimson — reserved as a product accent; also the failure state in the desktop app (see below)**
 | Token           | Hex       |
 | --------------- | --------- |
 | `crimson-300`   | `#E06A87` |
@@ -146,6 +146,25 @@ accents on a log.
 It does not license a second palette anywhere else. Interactive mode, the site,
 the docs, and every other surface stay on §2 as written, and even here the rest
 of the line is unstyled: nothing but the label takes a color.
+
+### Crimson for failure — the second exception
+
+`#CA2E55` is a sanctioned status colour in the desktop app, on failed tasks and failed
+nodes in the graph. It is not a product accent there and does not spend the reserved
+crimson: it is never used on a product word, a wordmark, or a CTA, and no future
+product may take it as an identity.
+
+This is a deliberate amendment, made by the brand owner, not an exception someone
+found. It exists because a build tool with no failure colour asks a developer to read
+a list of forty rows to find the one that broke, and no other channel scans as fast.
+
+Colour is still not the only carrier. A failed task shows a `bi-x-lg`, the word
+"failed", a crimson left rule, and its output pane already open — four channels, so the
+list stays readable to someone who cannot distinguish the hues. In dark mode the state
+takes `crimson-300`, because the base shade does not clear AA on ink.
+
+The website has no failure state and the CLI has its own palette, so the tokens live in
+`apps/desktop/src/styles/_status.scss` rather than in the shared brand tokens.
 
 ### Accessibility
 
@@ -436,8 +455,9 @@ For independent projects in the family (e.g. ArenaSwap), include in the footer:
 
 - `Lattice` = always ink or paper. Product name = the color.
 - Base: `--ink #020D0C`, `--paper #FBF8FF` — never pure black/white.
-- Build = teal `#1B998B` · Cloud = purple `#6622CC` · Co. = neutral · crimson &
-  orange reserved.
+- Build = teal `#1B998B` · Cloud = purple `#6622CC` · Co. = neutral · orange
+  reserved; crimson reserved as a product accent but sanctioned for failure states
+  in the desktop app (§2).
 - Type: **DM Sans** everywhere, **DM Mono** for code.
 - 60 · 25 · 10 · 5 — accent is the 5 %.
 - Voice: precise, confident, understated.

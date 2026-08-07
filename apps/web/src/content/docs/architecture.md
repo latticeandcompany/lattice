@@ -13,22 +13,25 @@ user-facing pages do not.
 
 ## Crate layout
 
-Lattice is a Cargo workspace of eight crates under `crates/`. Seven ship the
-tool; the eighth exists only for its own tests. Each owns a single concern:
+Lattice is a Cargo workspace of ten crates under `crates/`, plus the desktop app's
+backend under `apps/desktop/src-tauri`. Nine crates ship the tool; the tenth exists
+only for its own tests. Each owns a single concern:
 
 | Crate | Owns |
 | --- | --- |
-| `lattice-config` | `lattice.json` types (`LatticeConfig`, `WorkspaceConfig`, `PipelineTask`, `Settings`, `EngineSpec`), `WELL_KNOWN_ENGINES`, `load_config`, `find_root`, schema validation |
+| `lattice-config` | `lattice.json` types (`LatticeConfig`, `WorkspaceConfig`, `PipelineTask`, `Settings`, `EngineSpec`), `WELL_KNOWN_ENGINES`, `load_config`, `find_root`, schema validation, and the bundled JSON Schema (`schema::SCHEMA_JSON`, `ensure_schema`) |
 | `lattice-workspace` | Workspace discovery, the driver evidence ladder (`DRIVERS`, `detect_drivers`), and (in its `toolchain` submodule) the engine gradient and toolchain provisioning |
 | `dagger` | Builds the cross-workspace `ExecutionGraph` from resolved workspaces + the task map, and flattens it into a `Schedule` |
 | `lattice-cache` | Cache identity (`compute_key`) and storage (the `CacheStore` trait, `LocalStore`) |
 | `lattice-runner` | The async scheduler (`execute_tasks`): spawns tasks, wires the cache, injects toolchain `PATH`s, manages persistent tasks |
-| `lattice-output` | `OutputMode`, `TaskEvent`, the `Reporter` trait (`InteractiveReporter`, `CiReporter`), and brand/splash rendering |
-| `lattice` | The `lattice` binary: the clap CLI surface, subcommands, version-pin handover, the bundled JSON Schema |
+| `lattice-events` | `TaskEvent`, the `Reporter` trait, `CacheMiss`, `OutputLine`. Depends on `serde` and nothing else |
+| `lattice-output` | `OutputMode`, the two terminal reporters (`InteractiveReporter`, `CiReporter`), and brand/splash rendering |
+| `lattice-project` | One opened repo (`Project`) and the pipeline both front ends run against it: `plan`, `run`, `RunOutcome`, the `scaffold` module `lattice init` writes through, and the `view` wire types |
+| `lattice` | The `lattice` binary: the clap CLI surface, subcommands, version-pin handover |
 | `lattice-testkit` | Dev-only. Task commands spelled for whichever shell will run them, so the test suites mean the same thing on every platform, plus the stand-in programs those suites put on `PATH` |
 
-The root `lattice.json` declares every crate plus `apps/web` as workspaces — the
-repo dogfoods itself.
+The root `lattice.json` declares every crate plus `apps/web` and `apps/desktop` as
+workspaces — the repo dogfoods itself.
 
 ## Dependency direction
 
@@ -36,14 +39,17 @@ The edges between them:
 
 ```text
 lattice-config
-  ├── lattice-workspace  (+ lattice-config)
+  ├── lattice-workspace  (+ lattice-config, lattice-events)
   ├── lattice-cache      (+ lattice-config)
   └── dagger             (+ lattice-config, lattice-workspace)
         └── lattice-runner (+ lattice-cache, lattice-config, dagger,
-                              lattice-output, lattice-workspace)
-              └── lattice   (+ all of the above)
+                              lattice-events, lattice-workspace)
+              └── lattice-project (+ all of the above)
+                    ├── lattice          (+ lattice-output)
+                    └── lattice-desktop  (apps/desktop/src-tauri)
 
-lattice-output — no internal dependencies
+lattice-events — serde only, and depended on by both reporters and the runner
+lattice-output → lattice-events
 lattice-testkit — no internal dependencies, and a dev-dependency only
 ```
 
@@ -69,17 +75,31 @@ then calls `build_schedule` to flatten it into a petgraph-independent `Schedule`
 exercise scheduling shape without a live process, and lets the graph library be
 swapped without touching the runner.
 
-### `lattice-output` is a true leaf
+### `lattice-runner` does not depend on the crate that renders its output
 
-It depends only on `console` and `indicatif`. Every crate above `lattice-config`
-may depend on it for reporting and branding; it depends on none of them back.
-That is what keeps `lattice-runner` I/O-only with respect to presentation: it
-emits typed `TaskEvent`s and calls `Reporter` hooks (`run_start`, `event`,
-`surface_failure`, `run_summary`, `note`, `warn`, `finish`), and never touches
-`console`, `indicatif`, or `println!` for task status. `InteractiveReporter` (a
-live `indicatif::MultiProgress` TUI) and `CiReporter` (plain greppable lines)
-are the two implementations `make_reporter` picks between; a third would not
-need to touch the runner.
+The events and the trait live in `lattice-events`, which depends on `serde` and
+nothing else. That is what keeps `lattice-runner` I/O-only with respect to
+presentation: it emits typed `TaskEvent`s and calls `Reporter` hooks (`run_start`,
+`event`, `surface_failure`, `run_summary`, `note`, `warn`, `finish`), and never
+touches `console`, `indicatif`, or `println!` for task status.
+
+They used to live in `lattice-output` alongside the renderers, which meant the async
+executor depended on a terminal stack for two type definitions. The desktop app is the
+third `Reporter` implementation and would have had to link `indicatif` to watch a run.
+
+`InteractiveReporter` (a live `indicatif::MultiProgress` TUI) and `CiReporter` (plain
+greppable lines) are the two implementations `make_reporter` picks between.
+`ChannelReporter` in `apps/desktop/src-tauri` is the third, and adding it required no
+change to the runner at all.
+
+### Both front ends run the same pipeline
+
+Opening a repo is four steps that always happen together — find the root, keep the
+schema present, load the config, resolve the workspaces — and running a task is five
+more. They live in `lattice-project`, not in the CLI subcommand that used to hold them,
+so the window and the terminal cannot disagree about what a task is or whether it needs
+to run. `lattice_project::run` returns a `RunOutcome` whose `exit_code()` the CLI exits
+with; nothing in the crate renders anything or ends the process.
 
 ## Data flow of `lattice run`
 

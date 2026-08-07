@@ -10,6 +10,41 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### A desktop app — 2026-08-07
+
+Lattice has a window. It lists the tasks each workspace can run and runs them, shows the
+dependency graph, edits `lattice.json`, and scaffolds a config for a repo that has none.
+It is a front end over the same engine, linked in process, so it cannot disagree with
+the CLI about what a task is or whether it needs to run.
+
+What it shows that a terminal cannot keep: which workspaces exist and what each one
+resolves to, the shape of the graph a task will run, and — when a task misses the cache
+— which of the ten key components actually moved.
+
+Run it with `npm run app` in `apps/desktop`. Installers are not part of this change.
+
+Four things moved to make room, none of which changes CLI behaviour:
+
+`TaskEvent` and the `Reporter` trait now live in a new `lattice-events` crate, which
+depends on `serde` and nothing else. `lattice-runner` no longer depends on
+`lattice-output`, so watching a run no longer means linking a terminal stack.
+
+A cache miss travels as data. It used to be collapsed into a sentence at the point it
+was detected, throwing away the component list behind it; it is now a typed
+`CacheMiss`, and the wording lives on it so both front ends say the same thing.
+
+The pipeline every front end runs — open a repo, plan, execute, interpret the result —
+moved out of the `run` subcommand into `lattice-project`. The subcommand had five
+`process::exit` calls in it, which is why nothing else could call it.
+
+`ExecuteOptions` gained `cancel`. `shutdown` reads like the way to stop a run but is
+only awaited once the graph has drained and persistent tasks are holding it open, so a
+graph of ordinary tasks never consulted it. A caller with no signal to send itself now
+has a way to stop a build.
+
+The JSON Schema moved from the binary to `lattice-config`, next to the types it
+describes.
+
 ### Cache entries live directly in the cache directory — 2026-08-07
 
 Entries were written under a subdirectory named for an on-disk cache format
