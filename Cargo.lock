@@ -892,6 +892,7 @@ dependencies = [
  "lattice-cache",
  "lattice-config",
  "lattice-output",
+ "lattice-project",
  "lattice-runner",
  "lattice-testkit",
  "lattice-workspace",
@@ -953,6 +954,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lattice-project"
+version = "1.0.0-beta-2"
+dependencies = [
+ "anyhow",
+ "dagger",
+ "lattice-cache",
+ "lattice-config",
+ "lattice-events",
+ "lattice-runner",
+ "lattice-testkit",
+ "lattice-workspace",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "lattice-runner"
 version = "1.0.0-beta-2"
 dependencies = [
@@ -966,6 +984,7 @@ dependencies = [
  "lattice-testkit",
  "lattice-workspace",
  "libc",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

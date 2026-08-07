@@ -6,6 +6,7 @@ members = [
     "crates/dagger",
     "crates/lattice-events",
     "crates/lattice-output",
+    "crates/lattice-project",
     "crates/lattice-runner",
     "crates/lattice-testkit",
     "crates/lattice-workspace",

@@ -31,6 +31,7 @@ use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
 use lattice_events::{CacheMiss, Reporter, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::Workspace;
+use serde::Serialize;
 
 /// Cap on how many child-output lines a single failing task retains for the
 /// expand-on-failure surface. Beyond this, lines are still streamed live but not
@@ -43,7 +44,8 @@ const MAX_CAPTURED_LINES: usize = 5000;
 #[cfg_attr(not(unix), allow(dead_code, reason = "the graceful step is unix-only"))]
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunResult {
 	pub total: usize,
 	pub cached: usize,

@@ -148,6 +148,7 @@ t_hasE()  { if haveE "$2"; then pass "$1"; else fail "$1" "missing /$2/ | $(snip
 t_hasnt() { if have  "$2"; then fail "$1" "unexpected [$2] | $(snip)"; else pass "$1"; fi; }
 t_file()  { if [ -e "$1" ]; then pass "$2"; else fail "$2" "missing file $1"; fi; }
 t_nofile(){ if [ -e "$1" ]; then fail "$2" "unexpected file $1"; else pass "$2"; fi; }
+t_dir()   { if [ -d "$1" ]; then pass "$2"; else fail "$2" "missing directory $1"; fi; }
 t_grepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then pass "$3"; else fail "$3" "[$2] not in $1"; fi; }
 t_nogrepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then fail "$3" "unexpected [$2] in $1"; else pass "$3"; fi; }
 
@@ -501,21 +502,27 @@ late "STRESS_VAR=beta"  "$PROD" run envtask --filter core ; t_hasnt "changed env
 
 # The stored entry records the value its key was computed from, so an opaque key
 # stays explainable.
-if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*/*.meta.json 2>/dev/null; then
+if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*.meta.json 2>/dev/null; then
   pass "the cache entry records the env value it was keyed on"
 else
   fail "the cache entry records the env value it was keyed on" "no meta file names STRESS_VAR=alpha"
 fi
 
-# Entries are grouped by cache format, so changing what goes into a key retires
-# the old group instead of risking a read against keys that meant something else.
-# Matched by shape rather than by the current version, so a format bump does not
-# have to remember to come back here.
-FORMAT_DIRS="$(find "$PROD/.lattice/cache" -mindepth 1 -maxdepth 1 -type d -name 'v[0-9]*' 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$FORMAT_DIRS" -ge 1 ]; then
-  pass "cache entries live under a format directory"
+# Entries sit directly under cacheDir. The running version is already part of
+# every key, so a release that changes what a key covers moves every key on its
+# own and needs no second grouping mechanism to retire the old ones.
+ENTRIES="$(find "$PROD/.lattice/cache" -maxdepth 1 -name '*.meta.json' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$ENTRIES" -ge 1 ]; then
+  pass "cache entries sit directly under the cache directory"
 else
-  fail "cache entries live under a format directory" "no v<n> directory in $PROD/.lattice/cache"
+  fail "cache entries sit directly under the cache directory" "no *.meta.json at the top of $PROD/.lattice/cache"
+fi
+
+NESTED="$(find "$PROD/.lattice/cache" -mindepth 1 -maxdepth 1 -type d -name 'v[0-9]*' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$NESTED" -eq 0 ]; then
+  pass "no cache-format directory is created"
+else
+  fail "no cache-format directory is created" "found a v<n> directory in $PROD/.lattice/cache"
 fi
 
 # Full cache: a run where every scheduled task came back from cache is called
@@ -1210,7 +1217,10 @@ lat "$KEEP" run build  ; t_ok "run with cacheDir=.lattice exits 0"
 lat "$KEEP" prune      ; t_ok "prune with cacheDir=.lattice exits 0"
 t_file   "$KEEP/.lattice/toolchains/faketool/1.0.0-abcd/bin/faketool" "prune keeps the provisioned toolchains"
 t_file   "$KEEP/.lattice/bin/lattice-1.0.0" "prune keeps the installed binary"
-t_nofile "$KEEP/.lattice/v1" "prune still reclaims an earlier cache format"
+# Prune removes no directories at all, which is what keeps it from ever calling
+# remove_dir_all on a path the user chose as cacheDir. A leftover v1/ from an
+# older build is unreachable, and deleting it is the user's call, not prune's.
+t_dir    "$KEEP/.lattice/v1" "prune removes no directories, including an unreachable old format"
 
 # --- settings.maxCacheSize is enforced by the run --------------------------
 # The setting reads as a budget, so it has to be one: leaving enforcement to

@@ -65,6 +65,10 @@ pub struct DriverSpec {
 	pub fingerprint: &'static [&'static str],
 	/// Command that prints the tool's version.
 	pub version_cmd: &'static str,
+	/// The ecosystem this tool belongs to, as a stable lowercase slug. A front
+	/// end keys a language mark off it. `None` for the language-agnostic task
+	/// runners, which sit above whatever the workspace actually is.
+	pub language: Option<&'static str>,
 	/// Invoke template with a `{task}` placeholder (invoke form via [`DriverSpec::invoke`]).
 	invoke_tpl: &'static str,
 }
@@ -87,6 +91,7 @@ impl DriverSpec {
 static DRIVERS: &[DriverSpec] = &[
 	DriverSpec {
 		tool: "node",
+		language: Some("node"),
 		roles: &[Role::Runtime],
 		fingerprint: &[".nvmrc"],
 		version_cmd: "node --version",
@@ -94,6 +99,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "deno",
+		language: Some("node"),
 		roles: &[Role::Runtime, Role::PackageManager, Role::TaskRunner],
 		fingerprint: &["deno.json", "deno.jsonc", "deno.lock"],
 		version_cmd: "deno --version",
@@ -101,6 +107,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "bun",
+		language: Some("node"),
 		roles: &[Role::Runtime, Role::PackageManager],
 		fingerprint: &["bun.lockb", "bun.lock"],
 		version_cmd: "bun --version",
@@ -108,6 +115,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "pnpm",
+		language: Some("node"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["pnpm-lock.yaml"],
 		version_cmd: "pnpm --version",
@@ -115,6 +123,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "yarn",
+		language: Some("node"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["yarn.lock"],
 		version_cmd: "yarn --version",
@@ -122,6 +131,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "npm",
+		language: Some("node"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["package-lock.json", "npm-shrinkwrap.json"],
 		version_cmd: "npm --version",
@@ -129,6 +139,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "cargo",
+		language: Some("rust"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["Cargo.lock", "rust-toolchain.toml", "rust-toolchain"],
 		version_cmd: "cargo --version",
@@ -136,6 +147,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "go",
+		language: Some("go"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["go.sum"],
 		version_cmd: "go version",
@@ -143,6 +155,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "uv",
+		language: Some("python"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["uv.lock"],
 		version_cmd: "uv --version",
@@ -150,6 +163,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "poetry",
+		language: Some("python"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["poetry.lock"],
 		version_cmd: "poetry --version",
@@ -157,6 +171,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "pdm",
+		language: Some("python"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["pdm.lock"],
 		version_cmd: "pdm --version",
@@ -164,6 +179,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "pipenv",
+		language: Some("python"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["Pipfile.lock"],
 		version_cmd: "pipenv --version",
@@ -171,6 +187,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "pip",
+		language: Some("python"),
 		roles: &[Role::PackageManager],
 		// A `requirements.txt` names no tool — pip, uv, and pip-tools all read it
 		// — so pip is only ever selected by declaration.
@@ -180,6 +197,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "python",
+		language: Some("python"),
 		roles: &[Role::Runtime],
 		fingerprint: &[".python-version"],
 		version_cmd: "python --version",
@@ -187,6 +205,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "bundler",
+		language: Some("ruby"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["Gemfile.lock"],
 		version_cmd: "bundle --version",
@@ -194,6 +213,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "rake",
+		language: Some("ruby"),
 		roles: &[Role::TaskRunner],
 		fingerprint: &["Rakefile"],
 		version_cmd: "rake --version",
@@ -201,6 +221,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "ruby",
+		language: Some("ruby"),
 		roles: &[Role::Runtime],
 		fingerprint: &[".ruby-version"],
 		version_cmd: "ruby --version",
@@ -208,6 +229,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "gradle",
+		language: Some("java"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["gradlew"],
 		version_cmd: "gradle --version",
@@ -215,6 +237,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "maven",
+		language: Some("java"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["mvnw"],
 		version_cmd: "mvn --version",
@@ -222,6 +245,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "java",
+		language: Some("java"),
 		roles: &[Role::Runtime],
 		fingerprint: &[".java-version"],
 		version_cmd: "java -version",
@@ -229,6 +253,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "kotlin",
+		language: Some("kotlin"),
 		roles: &[Role::Runtime],
 		// Kotlin projects are driven by gradle or maven; nothing on disk names
 		// the Kotlin toolchain itself except a `.tool-versions` entry.
@@ -238,6 +263,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "dotnet",
+		language: Some("dotnet"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["global.json"],
 		version_cmd: "dotnet --version",
@@ -245,6 +271,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "nuget",
+		language: Some("dotnet"),
 		roles: &[Role::PackageManager],
 		// `packages.lock.json` is deliberately absent: an SDK-style project can
 		// have one and still be driven by `dotnet`. `packages.config` is the
@@ -255,6 +282,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "pod",
+		language: Some("swift"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["Podfile", "Podfile.lock"],
 		version_cmd: "pod --version",
@@ -262,6 +290,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "swift",
+		language: Some("swift"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["Package.resolved"],
 		version_cmd: "swift --version",
@@ -269,6 +298,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "composer",
+		language: Some("php"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["composer.lock"],
 		version_cmd: "composer --version",
@@ -276,6 +306,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "mix",
+		language: Some("elixir"),
 		roles: &[Role::PackageManager, Role::TaskRunner],
 		fingerprint: &["mix.lock"],
 		version_cmd: "mix --version",
@@ -283,6 +314,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "dart",
+		language: Some("dart"),
 		roles: &[Role::PackageManager],
 		fingerprint: &["pubspec.lock"],
 		version_cmd: "dart --version",
@@ -290,6 +322,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "stack",
+		language: Some("haskell"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["stack.yaml.lock"],
 		version_cmd: "stack --version",
@@ -297,6 +330,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "cabal",
+		language: Some("haskell"),
 		roles: &[Role::BuildTool],
 		fingerprint: &["cabal.project.freeze"],
 		version_cmd: "cabal --version",
@@ -304,6 +338,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "just",
+		language: None,
 		roles: &[Role::TaskRunner],
 		fingerprint: &["justfile", ".justfile"],
 		version_cmd: "just --version",
@@ -311,6 +346,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "task",
+		language: None,
 		roles: &[Role::TaskRunner],
 		fingerprint: &["Taskfile.yml", "Taskfile.yaml"],
 		version_cmd: "task --version",
@@ -318,6 +354,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "turbo",
+		language: Some("node"),
 		roles: &[Role::TaskRunner],
 		fingerprint: &["turbo.json"],
 		version_cmd: "turbo --version",
@@ -325,6 +362,7 @@ static DRIVERS: &[DriverSpec] = &[
 	},
 	DriverSpec {
 		tool: "nx",
+		language: Some("node"),
 		roles: &[Role::TaskRunner],
 		fingerprint: &["nx.json"],
 		version_cmd: "nx --version",
@@ -1441,5 +1479,37 @@ mod tests {
 			DriverRegistry::get("nx").unwrap().invoke("build"),
 			"nx run build"
 		);
+	}
+	#[test]
+	fn only_the_agnostic_task_runners_have_no_language() {
+		// `just` and `task` run whatever a directory happens to be, so there is no
+		// ecosystem to name. Every other driver belongs to one.
+		for spec in DriverRegistry::known() {
+			let agnostic = matches!(spec.tool, "just" | "task");
+			assert_eq!(
+				spec.language.is_none(),
+				agnostic,
+				"'{}' has language {:?}, which does not match its role",
+				spec.tool,
+				spec.language
+			);
+		}
+	}
+
+	#[test]
+	fn a_language_slug_is_lowercase_and_reused_across_its_tools() {
+		for spec in DriverRegistry::known() {
+			if let Some(language) = spec.language {
+				assert_eq!(language, language.to_lowercase(), "{}", spec.tool);
+				assert!(!language.is_empty());
+			}
+		}
+		// The families that exist to be shared really are shared.
+		let node: Vec<&str> = DriverRegistry::known()
+			.iter()
+			.filter(|s| s.language == Some("node"))
+			.map(|s| s.tool)
+			.collect();
+		assert!(node.contains(&"npm") && node.contains(&"pnpm") && node.contains(&"node"));
 	}
 }
