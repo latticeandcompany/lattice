@@ -4,8 +4,9 @@
 //! still watching them for an exit.
 //!
 //! The runner is deliberately I/O-only with respect to presentation: it emits
-//! typed [`lattice_output::TaskEvent`]s and calls the [`lattice_output::Reporter`]
-//! hooks. It never touches `console`, `indicatif`, or `println!` for task status.
+//! typed [`lattice_events::TaskEvent`]s and calls the [`lattice_events::Reporter`]
+//! hooks. It never touches `console`, `indicatif`, or `println!` for task status,
+//! and it does not depend on the crate that renders them.
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -27,7 +28,7 @@ use lattice_cache::{
 	KeyBreakdown, LocalStore,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
-use lattice_output::{Reporter, TaskEvent};
+use lattice_events::{CacheMiss, Reporter, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::Workspace;
 
@@ -1010,11 +1011,11 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 				}
 			}
 			Ok(None) => {
-				let _ = ctx.tx.send(RunnerMsg::TaskNote {
+				let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::CacheMiss {
 					workspace: ws.clone(),
 					task: task.clone(),
-					msg: miss_reason(ctx.store.as_ref(), &ws, &task, &breakdown),
-				});
+					miss: cache_miss(ctx.store.as_ref(), &ws, &task, &breakdown),
+				}));
 			}
 			Err(e) => {
 				let _ = ctx.tx.send(RunnerMsg::TaskWarn {
@@ -1217,20 +1218,25 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 
 /// Why this task did not hit the cache, in the terms the config uses.
 ///
-/// A key is one hash: on its own it can say a task missed, never what moved. The
-/// components behind it can, measured against what this task resolved to the
-/// last time it ran.
-fn miss_reason(store: &dyn CacheStore, workspace: &str, task: &str, now: &KeyBreakdown) -> String {
+/// The component names travel as data rather than as a sentence: a front end
+/// wants to point at the inputs that moved, and [`CacheMiss::describe`] is what
+/// turns them back into the line a terminal prints.
+fn cache_miss(
+	store: &dyn CacheStore,
+	workspace: &str,
+	task: &str,
+	now: &KeyBreakdown,
+) -> CacheMiss {
 	let Some(previous) = store.last_fingerprint(workspace, task) else {
-		return "cache miss (nothing cached for this task yet)".to_string();
+		return CacheMiss::FirstRun;
 	};
 	let changed = now.changed_from(&previous);
 	if changed.is_empty() {
-		// The key matches what last ran, so the entry itself is gone: evicted by a
-		// prune, or dropped as corrupt on the way in.
-		return "cache miss (the entry for this key is no longer in the cache)".to_string();
+		return CacheMiss::EntryEvicted;
 	}
-	format!("cache miss: {} changed", changed.join(", "))
+	CacheMiss::Changed {
+		components: changed.into_iter().map(String::from).collect(),
+	}
 }
 
 /// Wait on one persistent child until either it ends on its own — reported back
@@ -1392,7 +1398,7 @@ mod tests {
 	use super::*;
 	use dagger::build_execution_graph;
 	use lattice_config::{EngineMap, PipelineTask};
-	use lattice_output::TaskEvent;
+	use lattice_events::TaskEvent;
 	use lattice_testkit as sh;
 	use std::sync::Mutex;
 	use std::time::Duration;
@@ -1421,6 +1427,11 @@ mod tests {
 						workspace, task, ..
 					} => {
 						format!("cachehit:{workspace}:{task}")
+					}
+					TaskEvent::CacheMiss {
+						workspace, task, ..
+					} => {
+						format!("cachemiss:{workspace}:{task}")
 					}
 					TaskEvent::Output {
 						workspace, task, ..
@@ -2426,14 +2437,21 @@ mod tests {
 		now.components
 			.insert("inputs".to_string(), "moved".to_string());
 
-		let reason = miss_reason(&store, "app", "build", &now);
+		// The components travel as data, so the assertion is on the data rather
+		// than on the sentence built from it.
+		assert_eq!(
+			cache_miss(&store, "app", "build", &now),
+			CacheMiss::Changed {
+				components: vec!["inputs".to_string()],
+			}
+		);
+		let reason = cache_miss(&store, "app", "build", &now).describe();
 		assert!(
 			reason.contains("inputs changed"),
 			"a miss should name the part that moved: {reason}"
 		);
 
 		// A task that has never run has nothing to be measured against.
-		let unseen = miss_reason(&store, "app", "lint", &now);
-		assert!(unseen.contains("nothing cached"), "{unseen}");
+		assert_eq!(cache_miss(&store, "app", "lint", &now), CacheMiss::FirstRun);
 	}
 }

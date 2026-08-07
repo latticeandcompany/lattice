@@ -367,76 +367,11 @@ pub fn switching_notice(binary_version: &str, pinned_version: &str) -> String {
 	)
 }
 
-/// Typed events the runner emits. Reporter impls decide how to render them.
-#[derive(Clone)]
-pub enum TaskEvent {
-	Started {
-		workspace: String,
-		task: String,
-	},
-	CacheHit {
-		workspace: String,
-		task: String,
-		key: String,
-	},
-	Output {
-		workspace: String,
-		task: String,
-		line: String,
-		stderr: bool,
-		/// From a persistent task (dev server/watcher). Streamed live even
-		/// outside loquacious mode.
-		persistent: bool,
-	},
-	Finished {
-		workspace: String,
-		task: String,
-		duration_ms: u64,
-	},
-	Failed {
-		workspace: String,
-		task: String,
-	},
-	/// A persistent task's process ended without being asked to. `code` is its
-	/// exit code, or `None` when a signal ended it. Anything but `Some(0)` also
-	/// counts as a run failure.
-	PersistentExited {
-		workspace: String,
-		task: String,
-		code: Option<i32>,
-		duration_ms: u64,
-	},
-	Skipped {
-		workspace: String,
-		task: String,
-		reason: String,
-	},
-}
-
-/// One output abstraction, consumed via events. Must be `Send + Sync`: the
-/// runner shares it across concurrently spawned tasks behind an `Arc`, so all
-/// state lives behind interior mutability.
-pub trait Reporter: Send + Sync {
-	fn run_start(&self, task: &str, workspaces: usize);
-	fn event(&self, ev: TaskEvent);
-	/// A failed task's captured output, surfaced together (expand-on-fail).
-	fn surface_failure(&self, workspace: &str, task: &str, captured: &[(bool, String)]);
-	fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64);
-	/// Trace/detail line (hashing/cache/toolchain trace) — shown only in loquacious.
-	fn note(&self, msg: &str);
-	fn warn(&self, msg: &str);
-	/// A [`Reporter::note`] about one specific task. Rendered as
-	/// `workspace:task: msg`; [`CiReporter`] overrides it to color the label.
-	fn task_note(&self, workspace: &str, task: &str, msg: &str) {
-		self.note(&format!("{workspace}:{task}: {msg}"));
-	}
-	/// A [`Reporter::warn`] about one specific task, labeled the same way.
-	fn task_warn(&self, workspace: &str, task: &str, msg: &str) {
-		self.warn(&format!("{workspace}:{task}: {msg}"));
-	}
-	/// Called once at the end so the interactive impl can clear its progress surface.
-	fn finish(&self);
-}
+// The events and the trait live in `lattice-events`, which depends on nothing but
+// `serde`, so a front end can consume a run without linking `console` and
+// `indicatif`. Re-exported here because this crate's two reporters are the
+// terminal implementations of that trait.
+pub use lattice_events::{CacheMiss, OutputLine, Reporter, TaskEvent};
 
 /// Pick the reporter from detected mode. `Interactive` → [`InteractiveReporter`],
 /// else [`CiReporter`] (carrying `loquacious` so its trace lines turn on).
@@ -527,6 +462,13 @@ impl Reporter for CiReporter {
 					self.label(&workspace, &task),
 					short_key(&key)
 				);
+			}
+			TaskEvent::CacheMiss {
+				workspace,
+				task,
+				miss,
+			} => {
+				self.task_note(&workspace, &task, &miss.describe());
 			}
 			TaskEvent::Output {
 				workspace,
@@ -739,6 +681,13 @@ impl Reporter for InteractiveReporter {
 					style(format!("[{}]", short_key(&key))).dim()
 				);
 				self.settle(&workspace, &task, line);
+			}
+			TaskEvent::CacheMiss {
+				workspace,
+				task,
+				miss,
+			} => {
+				self.task_note(&workspace, &task, &miss.describe());
 			}
 			TaskEvent::Output { .. } => {
 				// Child output is buffered by the runner and surfaced only on

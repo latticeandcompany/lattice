@@ -933,11 +933,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lattice-events"
+version = "1.0.0-beta-2"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lattice-output"
 version = "1.0.0-beta-2"
 dependencies = [
  "console",
  "indicatif",
+ "lattice-events",
 ]
 
 [[package]]
@@ -950,7 +959,7 @@ dependencies = [
  "indexmap",
  "lattice-cache",
  "lattice-config",
- "lattice-output",
+ "lattice-events",
  "lattice-testkit",
  "lattice-workspace",
  "libc",

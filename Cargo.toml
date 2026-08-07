@@ -4,6 +4,7 @@ members = [
     "crates/lattice-cache",
     "crates/lattice-config",
     "crates/dagger",
+    "crates/lattice-events",
     "crates/lattice-output",
     "crates/lattice-runner",
     "crates/lattice-testkit",

@@ -1,5 +1,5 @@
 [package]
-name = "lattice-output"
+name = "lattice-events"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,9 +11,10 @@ homepage.workspace = true
 documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Lattice terminal output formatting"
+description = "Lattice run events and the reporter abstraction that consumes them"
 
 [dependencies]
-lattice-events = { path = "../lattice-events" }
-console = "0.16"
-indicatif = "0.18"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
