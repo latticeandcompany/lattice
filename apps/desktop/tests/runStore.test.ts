@@ -229,3 +229,52 @@ test('a task nobody mentioned reads as idle rather than undefined', () => {
 	assert.equal(view.workspace, 'ghost');
 	assert.equal(view.task, 'build');
 });
+
+// useSyncExternalStore re-reads the snapshot on every render and compares it with
+// Object.is. A store that hands back a fresh object each time reads as "changed
+// again" forever, and React re-renders until it gives up and unmounts the tree --
+// which showed up as the whole window going black on opening a folder.
+test('reading a task twice returns the identical object', () => {
+	const s = store();
+	s.begin(graph);
+	assert.equal(s.taskView('api:build'), s.taskView('api:build'));
+});
+
+test('a task no run has touched is also stable across reads', () => {
+	// This is the case that broke: before a run there are no slots at all, so every
+	// row in the list was reading a freshly built placeholder.
+	const s = store();
+	assert.equal(s.taskView('never:seen'), s.taskView('never:seen'));
+
+	const withGraph = store();
+	withGraph.begin(graph);
+	assert.equal(withGraph.taskView('not:in-the-graph'), withGraph.taskView('not:in-the-graph'));
+});
+
+test('the run view is stable across reads too', () => {
+	const s = store();
+	assert.equal(s.runView(), s.runView());
+	s.begin(graph);
+	assert.equal(s.runView(), s.runView());
+});
+
+test('a task that changes hands back a different object', () => {
+	// The flip side: stability must not become staleness, or a row never updates.
+	const s = store();
+	s.begin(graph);
+	const before = s.taskView('api:build');
+	s.ingest(event({ kind: 'event', event: { type: 'started', workspace: 'api', task: 'build' } }));
+	assert.notEqual(s.taskView('api:build'), before);
+	assert.equal(s.taskView('api:build').state, 'running');
+});
+
+test('a placeholder is replaced once a run gives the task a real slot', () => {
+	const s = store();
+	const placeholder = s.taskView('api:build');
+	assert.equal(placeholder.state, 'idle');
+
+	s.begin(graph);
+	const seeded = s.taskView('api:build');
+	assert.notEqual(seeded, placeholder);
+	assert.equal(seeded.state, 'queued');
+});

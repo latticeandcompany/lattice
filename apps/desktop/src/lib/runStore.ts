@@ -56,6 +56,8 @@ const key = (workspace: string, task: string) => `${workspace}:${task}`;
 
 class RunStore {
 	private slots = new Map<string, Slot>();
+	/** Placeholder views for tasks no run has touched, kept so they stay identical. */
+	private idle = new Map<string, TaskView>();
 	private run: RunView = IDLE;
 
 	private viewSubs = new Map<string, Set<() => void>>();
@@ -72,17 +74,31 @@ class RunStore {
 
 	// ---- reading ----
 
+	/**
+	 * The current view of a task, including one that no run has touched.
+	 *
+	 * The returned object has to be identical between calls until something about
+	 * the task actually changes. `useSyncExternalStore` re-reads this on every
+	 * render and compares with `Object.is`, so building a fresh placeholder each
+	 * time reads as "changed again" forever and re-renders until React gives up.
+	 */
 	taskView(taskKey: string): TaskView {
 		const slot = this.slots.get(taskKey);
 		if (slot) return slot.view;
+
+		const cached = this.idle.get(taskKey);
+		if (cached) return cached;
+
 		const [workspace, task] = taskKey.split(':');
-		return {
+		const view: TaskView = {
 			key: taskKey,
 			workspace: workspace ?? taskKey,
 			task: task ?? '',
 			state: 'idle',
 			hasOutput: false,
 		};
+		this.idle.set(taskKey, view);
+		return view;
 	}
 
 	runView(): RunView {
@@ -129,6 +145,7 @@ class RunStore {
 	/** Reset for a new run, seeding every node in the graph as queued. */
 	begin(graph: GraphDump | null): void {
 		this.slots = new Map();
+		this.idle = new Map();
 		if (graph) {
 			for (const node of graph.nodes) {
 				this.slots.set(node.id, {
@@ -171,6 +188,7 @@ class RunStore {
 
 	reset(): void {
 		this.slots = new Map();
+		this.idle = new Map();
 		this.run = IDLE;
 		this.notifyAll();
 	}
@@ -303,6 +321,7 @@ class RunStore {
 				outputRev: 0,
 			};
 			this.slots.set(taskKey, slot);
+			this.idle.delete(taskKey);
 		}
 		return slot;
 	}
