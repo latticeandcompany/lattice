@@ -179,6 +179,10 @@ The website has no failure state and the CLI has its own palette, so the tokens 
 - Accent-on-base is for large text, CTAs, and non-text UI only. Do not set long
   body copy in an accent color. `teal-500`/`purple-500` on `--paper` pass AA for
   large/bold text; verify per-context.
+- Crimson is measured, so it does not have to be re-derived: `crimson-500` on
+  `--paper` is 4.95:1 and `crimson-300` on `--ink` is 6.18:1, both clearing AA for
+  body text. `crimson-500` on `--ink` is only 3.79:1, which is why dark surfaces take
+  the tint rather than the base shade.
 - Never rely on color alone to convey meaning.
 
 ---
