@@ -47,6 +47,11 @@ What it writes is what `lattice init` writes: `lattice.json`, a committed
 `.lattice/schema.json` so your editor can validate the config, and three lines appended
 to `.gitignore`.
 
+The open repo sits at the top of the sidebar, and it is also the control that changes
+it: click it for every repo you have opened, plus a way to open another one or close
+this one. Switching does not restart anything — the window reads the new repo and
+redraws.
+
 ## Tasks
 
 One card per workspace, in the order `lattice.json` declares them, with one row per task
@@ -54,20 +59,24 @@ that resolves to a command there. A workspace whose toolchain has no `lint` show
 `lint` row, which is the same thing that happens on the command line — the task is
 skipped rather than failed.
 
+Each card carries the logo of the ecosystem its driver belongs to, so a repo with forty
+workspaces can be scanned by shape rather than read. Every ecosystem Lattice detects has
+one; a task runner with no ecosystem of its own gets a monogram instead.
+
 Each row runs on its own, or the Run button runs everything the selection covers.
 ⌘-click the task tabs to stack several the way `lattice run lint test build` does.
 
-**Cache mode** is three choices rather than two switches, because the two underlying
+**Cached results** is three choices rather than two switches, because the two underlying
 flags overlap:
 
-| Mode | What it does | On the command line |
+| Choice | What it does | On the command line |
 | --- | --- | --- |
-| Normal | Reads and writes the cache. | `lattice run build` |
-| Force | Re-runs, then refreshes the entry. | `--force` |
-| Ignore cache | Neither reads nor writes. | `--no-cache` |
+| Use the cache | Reuses anything unchanged, and saves what runs. | `lattice run build` |
+| Run it all again | Runs everything, then saves the new results. | `--force` |
+| Skip the cache | Runs everything, and saves nothing. | `--no-cache` |
 
-The difference between the last two matters more than it looks: Force replaces a stale
-entry, and Ignore cache leaves whatever is there untouched.
+The difference between the last two matters more than it looks: the middle one replaces
+a stale entry, and the last leaves whatever is there untouched.
 
 **Stop** ends a run the way Ctrl-C does — scheduling stops, children are terminated, and
 the run reports as interrupted rather than failed.
@@ -98,6 +107,14 @@ read by a screen reader or walked with a keyboard; the table can.
 
 Two ways to edit the same file. The form covers workspaces, tasks, engines, and settings;
 the JSON tab is the whole file.
+
+The form asks in English — "files it reads", "keeps running until stopped", "how much of
+the disk it may use" — and prints the `lattice.json` key each control writes beside it.
+You can use the form without having read the schema, and you come away having read it.
+
+Three-way controls where you might expect a switch are not an oversight. `persistent`
+and `cache` each have a default that is not always "no", so leaving a key out of the file
+is a third state, and "leave it to Lattice" is what that state is called here.
 
 Both edit the file's text rather than a parsed copy of it, which matters more than it
 sounds. Lattice rejects unknown keys in `lattice.json`, so a key a newer version

@@ -157,8 +157,15 @@ of the line is unstyled: nothing but the label takes a color.
 `#CA2E55` also marks failure inside the desktop app — failed tasks, and failed nodes
 in the graph. Crimson is that product's own accent, so this is the one place in the
 brand where a product colour and a status colour are the same hue. That is deliberate
-and worth naming: the accent lands on the `desktop` product word and on the app's
-primary action, the status lands on a row that broke, and they never share a surface.
+and worth naming: inside the app, crimson means one of two things and no more — the
+`desktop` product word in the lockup, and a row that broke.
+
+Which is why the app's primary actions are teal rather than crimson. Lattice Desktop
+is a front end for Lattice Build, so Build's accent is the right one on a button you
+are meant to press, and it leaves crimson free to mean failure and nothing else. A Run
+button in the same colour as a failed task would spend the app's most legible signal on
+the thing least in need of one. On the website, where there is no failure state, the
+Lattice Desktop section keeps crimson on its own primary action as §1 expects.
 
 This is an amendment made by the brand owner, not an exception someone found. It
 exists because a build tool with no failure colour asks a developer to read a list of
@@ -466,8 +473,8 @@ For independent projects in the family (e.g. ArenaSwap), include in the footer:
 - `Lattice` = always ink or paper. Product name = the color.
 - Base: `--ink #020D0C`, `--paper #FBF8FF` — never pure black/white.
 - Build = teal `#1B998B` · Cloud = purple `#6622CC` · Desktop = crimson `#CA2E55` ·
-  Co. = neutral · orange reserved. Crimson doubles as the failure state inside the
-  desktop app (§2).
+  Co. = neutral · orange reserved. Inside the desktop app crimson is the `desktop`
+  word and the failure state and nothing else, so its buttons take Build's teal (§2).
 - Type: **DM Sans** everywhere, **DM Mono** for code.
 - 60 · 25 · 10 · 5 — accent is the 5 %.
 - Voice: precise, confident, understated.

@@ -9,6 +9,3 @@ export const useThemeTokens = (): Tokens => {
 	useEffect(() => observeTokens(setTokens), []);
 	return tokens;
 };
-
-/** Whether the app is in dark mode right now, for picking an image variant. */
-export const useIsDark = (): boolean => useThemeTokens().dark;

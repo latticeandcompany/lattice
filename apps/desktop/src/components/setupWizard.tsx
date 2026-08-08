@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { useApp } from '../context/appContext.tsx';
-import { useIsDark } from '../hooks/useThemeTokens.ts';
 import * as api from '../lib/api.ts';
 import type { EnginePin, ScanResult, WorkspaceCandidate } from '../lib/types.ts';
 import LanguageMark from './languageMark.tsx';
+import Spinner from './spinner.tsx';
 
 // The numbered rail from the website's get-started page, because the steps are a
 // sequence and the connecting thread is what makes them read as one.
@@ -15,7 +15,6 @@ import LanguageMark from './languageMark.tsx';
 // change to either.
 const SetupWizard = () => {
 	const { pendingRoot, openProject, pickAndOpen, catalog } = useApp();
-	const dark = useIsDark();
 
 	const [scan, setScan] = useState<ScanResult | null>(null);
 	const [chosenWorkspaces, setChosenWorkspaces] = useState<Set<string>>(new Set());
@@ -41,9 +40,7 @@ const SetupWizard = () => {
 				// Honour the engine's own judgement about what to propose: a candidate
 				// with no resolved driver is offered but not pre-selected.
 				setChosenWorkspaces(
-					new Set(
-						result.candidates.filter((c) => c.defaultSelected).map((c) => c.path),
-					),
+					new Set(result.candidates.filter((c) => c.defaultSelected).map((c) => c.path)),
 				);
 				setChosenPins(new Set(result.pins.map((pin) => pin.engine)));
 			} catch (caught) {
@@ -102,10 +99,10 @@ const SetupWizard = () => {
 						Open a repo to get started
 					</h1>
 					<p style={{ maxWidth: '28rem' }}>
-						Pick a directory. If it already has a lattice.json, Lattice reads it; if not, it
-						reads the repo and proposes one.
+						Pick a folder. If it already has a lattice.json, Lattice opens it. If it does not,
+						Lattice looks around the repo and suggests one.
 					</p>
-					<button type="button" className="btn btn-contrast px-4" onClick={() => void pickAndOpen()}>
+					<button type="button" className="btn btn-primary px-4" onClick={() => void pickAndOpen()}>
 						Choose a folder
 					</button>
 				</div>
@@ -130,7 +127,7 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">1</div>
 					<div className="step__body">
-						<h2 className="step__title">The directory</h2>
+						<h2 className="step__title">The folder</h2>
 						<div className="step__code step__code--file selectable">{pendingRoot}</div>
 						<button
 							type="button"
@@ -145,26 +142,27 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">2</div>
 					<div className="step__body">
-						<h2 className="step__title">Workspaces</h2>
+						<h2 className="step__title">Where things can run</h2>
 						{scan === null ? (
-							<p className="step__hint">Reading the repo…</p>
+							<Spinner label="Looking through the repo…" className="step__hint" />
 						) : scan.candidates.length === 0 ? (
 							<p className="step__hint">
-								No directory here holds a manifest Lattice recognizes. You can still declare
-								workspaces by hand after writing the config.
+								Nothing here looks like a workspace yet — no package.json, Cargo.toml, go.mod, or
+								anything else Lattice knows. You can still add folders by hand once the config
+								exists.
 							</p>
 						) : (
 							<>
 								<p className="step__hint">
-									Every directory holding a manifest is offered. One with no resolved driver
-									starts unchecked, because Lattice would have nothing to run there yet.
+									Every folder with a manifest of its own is listed. The ones Lattice could not
+									find a tool for start unticked, because there would be nothing to run in them
+									yet.
 								</p>
 								{scan.candidates.map((candidate) => (
 									<CandidateRow
 										key={candidate.path}
 										candidate={candidate}
 										language={language(candidate.driver)}
-										dark={dark}
 										checked={chosenWorkspaces.has(candidate.path)}
 										onToggle={() =>
 											setChosenWorkspaces((current) => toggle(current, candidate.path))
@@ -179,15 +177,17 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">3</div>
 					<div className="step__body">
-						<h2 className="step__title">Tool versions</h2>
+						<h2 className="step__title">Tool versions to carry over</h2>
 						{scan === null ? (
-							<p className="step__hint">Reading the repo…</p>
+							<Spinner label="Looking for pinned versions…" className="step__hint" />
 						) : scan.pins.length === 0 ? (
-							<p className="step__hint">This repo pins no tool versions in a native file.</p>
+							<p className="step__hint">
+								Nothing in this repo records a tool version yet, so there is nothing to carry over.
+							</p>
 						) : (
 							<>
 								<p className="step__hint">
-									Taken verbatim from the file that already records them.
+									Copied exactly as the files here already have them. Nothing is being changed.
 								</p>
 								{scan.pins.map((pin) => (
 									<PinRow
@@ -218,16 +218,17 @@ const SetupWizard = () => {
 							</div>
 						</div>
 						<p className="step__hint mb-3">
-							Also written: <code>.lattice/schema.json</code>, so an editor can validate the
-							config, and three lines appended to <code>.gitignore</code> for the cache,
-							provisioned toolchains, and installed binaries.
+							Two other things get written: <code>.lattice/schema.json</code>, so your editor can
+							check the config as you type, and three lines added to <code>.gitignore</code> to keep
+							the cache, the tools Lattice fetches, and the binaries it installs out of git.
 						</p>
 						<button
 							type="button"
-							className="btn btn-contrast px-4"
+							className="btn btn-primary px-4 d-inline-flex align-items-center gap-2"
 							onClick={() => void write()}
 							disabled={writing || scan === null}
 						>
+							{writing && <Spinner label="Writing" quiet />}
 							{writing ? 'Writing…' : 'Write lattice.json'}
 						</button>
 					</div>
@@ -247,13 +248,11 @@ const toggle = (current: Set<string>, value: string): Set<string> => {
 const CandidateRow = ({
 	candidate,
 	language,
-	dark,
 	checked,
 	onToggle,
 }: {
 	candidate: WorkspaceCandidate;
 	language: string | null;
-	dark: boolean;
 	checked: boolean;
 	onToggle: () => void;
 }) => (
@@ -266,14 +265,14 @@ const CandidateRow = ({
 			id={`candidate-${candidate.path}`}
 			aria-label={`Include ${candidate.name}`}
 		/>
-		<LanguageMark tool={candidate.driver} language={language} dark={dark} />
-		<label className="flex-grow-1 min-w-0" htmlFor={`candidate-${candidate.path}`}>
+		<LanguageMark tool={candidate.driver} language={language} />
+		<label className="flex-grow-1 tw:min-w-0" htmlFor={`candidate-${candidate.path}`}>
 			<span className="d-block" style={{ fontWeight: 500 }}>
 				{candidate.name}
 			</span>
 			<span className="scan-row__meta d-block">
-				{candidate.path} · {candidate.marker}
-				{candidate.driver ? ` · ${candidate.driver}` : ' · no driver resolved'}
+				{candidate.path} · found {candidate.marker}
+				{candidate.driver ? ` · runs with ${candidate.driver}` : ' · nothing found to run it with'}
 			</span>
 		</label>
 	</div>
@@ -295,13 +294,13 @@ const PinRow = ({
 			checked={checked}
 			onChange={onToggle}
 			id={`pin-${pin.engine}`}
-			aria-label={`Pin ${pin.engine}`}
+			aria-label={`Pin ${pin.engine} at ${pin.version}`}
 		/>
 		<label className="flex-grow-1" htmlFor={`pin-${pin.engine}`}>
 			<span className="chip me-2">
 				{pin.engine} {pin.version}
 			</span>
-			<span className="scan-row__meta">from {pin.source}</span>
+			<span className="scan-row__meta">already written in {pin.source}</span>
 		</label>
 	</div>
 );

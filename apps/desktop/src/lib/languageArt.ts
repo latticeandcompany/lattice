@@ -3,36 +3,42 @@
 // Separate from `languages.ts` because a bundler resolves these imports and the test
 // runner does not, and keeping them apart is what lets the mark logic be tested.
 //
-// The images are committed at the size they are displayed. The site's copies run to
-// 2MB each because Astro resizes them at build time; Vite has no equivalent, so a
-// pre-sized copy is the honest way to keep the bundle small.
+// Vector, not raster: a mark is drawn at 1.75rem and again on a HiDPI screen, and the
+// whole set costs less than one of the site's PNGs. It also means adding an ecosystem
+// is one file with nothing to pre-size.
+//
+// The artwork is each ecosystem's own logo, from devicon (MIT). `dotnet.svg` is the
+// one composed here, because devicon still ships the retired ".NET Core" lettering —
+// the wordmark is Simple Icons' (CC0) on the official purple.
 
-import dotnet from '../assets/languages/dotnet.png';
-import go from '../assets/languages/go.png';
-import java from '../assets/languages/java.png';
-import node from '../assets/languages/node.png';
-import nodeDark from '../assets/languages/node-dark.png';
-import python from '../assets/languages/python.png';
-import ruby from '../assets/languages/ruby.png';
+import dart from '../assets/languages/dart.svg';
+import dotnet from '../assets/languages/dotnet.svg';
+import elixir from '../assets/languages/elixir.svg';
+import go from '../assets/languages/go.svg';
+import haskell from '../assets/languages/haskell.svg';
+import java from '../assets/languages/java.svg';
+import kotlin from '../assets/languages/kotlin.svg';
+import node from '../assets/languages/node.svg';
+import php from '../assets/languages/php.svg';
+import python from '../assets/languages/python.svg';
+import ruby from '../assets/languages/ruby.svg';
+import rust from '../assets/languages/rust.svg';
+import swift from '../assets/languages/swift.svg';
 
-export interface Art {
-	light: string;
-	/** Only where a logo would otherwise disappear against ink. */
-	dark?: string;
-}
-
-export const ART: Record<string, Art> = {
-	node: { light: node, dark: nodeDark },
-	go: { light: go },
-	java: { light: java },
-	ruby: { light: ruby },
-	python: { light: python },
-	dotnet: { light: dotnet },
+export const ART: Record<string, string> = {
+	node,
+	rust,
+	go,
+	python,
+	ruby,
+	java,
+	kotlin,
+	dotnet,
+	swift,
+	php,
+	elixir,
+	dart,
+	haskell,
 };
 
-/** Which image to use for the theme in play. */
-export const artFor = (slug: string, dark: boolean): string | undefined => {
-	const art = ART[slug];
-	if (!art) return undefined;
-	return dark && art.dark ? art.dark : art.light;
-};
+export const artFor = (slug: string): string | undefined => ART[slug];

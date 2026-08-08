@@ -224,7 +224,7 @@ export const LEGEND: LegendEntry[] = [
 	{ icon: 'bi-circle-fill', label: 'ran' },
 	{ icon: 'bi-circle', label: 'not run' },
 	{ icon: 'bi-lightning-charge', label: 'faded — came from cache' },
-	{ icon: 'bi-square', label: 'rounded square — persistent task' },
+	{ icon: 'bi-square', label: 'rounded square — runs until stopped' },
 	{ icon: 'bi-dash', label: 'dashed outline — pulled in as a dependency' },
 	{ icon: 'bi-x-lg', label: 'crimson outline — failed' },
 ];

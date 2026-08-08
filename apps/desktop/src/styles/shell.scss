@@ -41,12 +41,43 @@
 	color: var(--text);
 }
 
-.app-rail__project {
-	padding: 0 0.35rem;
+// The open repo, as the control that changes it. It reads as a field rather than a
+// button so it does not compete with the rail's destinations, and picks up an edge on
+// hover to say it can be pressed.
+.rail-project {
 	min-width: 0;
 }
 
-.app-rail__project-name {
+.rail-project__trigger {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	width: 100%;
+	padding: 0.4rem 0.5rem;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	text-align: left;
+
+	&:hover:not(:disabled),
+	&[aria-expanded='true'] {
+		border-color: var(--border);
+		background: var(--surface-2);
+	}
+
+	&:disabled {
+		opacity: 0.6;
+	}
+}
+
+.rail-project__caret {
+	flex: 0 0 auto;
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.rail-project__name {
+	display: block;
 	font-size: 0.9rem;
 	font-weight: 500;
 	color: var(--text);
@@ -55,7 +86,9 @@
 	white-space: nowrap;
 }
 
-.app-rail__project-path {
+// The tail of a path is the part that identifies it, so overflow is cut from the front.
+.rail-project__path {
+	display: block;
 	font-family: 'DM Mono', ui-monospace, monospace;
 	font-size: 0.72rem;
 	color: var(--text-muted);
@@ -64,6 +97,55 @@
 	white-space: nowrap;
 	direction: rtl;
 	text-align: left;
+}
+
+.rail-project__current {
+	display: block;
+	font-size: 0.85rem;
+	font-weight: 500;
+	color: var(--text);
+}
+
+.rail-project__current .bi {
+	color: var(--focus);
+}
+
+// The rail scrolls, so a menu wider than it is clipped by the scroll container rather
+// than allowed to overflow — it would take a horizontal scrollbar with it. The menu
+// stays the rail's width and cuts its own text instead, and because a path is cut from
+// the front the part that identifies a repo is the part that survives.
+.rail-project__menu {
+	min-width: 100%;
+	max-width: 100%;
+}
+
+.rail-project__row {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+
+	// Without this the name sets the row's width and pushes the forget button out of
+	// the menu instead of being cut short itself.
+	.dropdown-item {
+		min-width: 0;
+	}
+}
+
+// Quiet enough that removing a repo from the list is never the obvious thing to click.
+.rail-project__forget {
+	flex: 0 0 auto;
+	margin-right: 0.35rem;
+	padding: 0.15rem 0.4rem;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-muted);
+	line-height: 1;
+
+	&:hover {
+		color: var(--text);
+		background: var(--surface-2);
+	}
 }
 
 .app-rail__group {
@@ -84,8 +166,8 @@
 	padding: 0 0.15rem;
 }
 
-// The active destination carries a teal left rule, the same marker the docs nav
-// uses. Teal only ever lands on the one active item.
+// The active destination carries a teal left rule, the same marker the docs nav uses.
+// Only one destination is ever active, so the rail spends the accent once.
 .rail-link {
 	display: flex;
 	align-items: center;
@@ -214,9 +296,13 @@
 	overflow: hidden;
 }
 
+// Every logo is drawn for a light background, and several are ink or a deep purple
+// that would sink into a dark surface. A fixed paper plate — invisible in light mode,
+// a tile in dark — shows all thirteen in their own colours with no second file each.
 .lang-mark--art {
 	border-color: var(--border-subtle);
-	background: transparent;
+	background: var(--paper);
+	padding: 2px;
 }
 
 .lang-mark img {

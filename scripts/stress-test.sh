@@ -1919,11 +1919,40 @@ else
   pass "the webview is granted no filesystem permission"
 fi
 
-# The brand token files are copies, so something has to notice when they diverge.
+# The brand token files are copies, so something has to notice when they diverge. The
+# script also pins the one setting they are allowed to disagree about, $primary.
 if (cd "$REPO_ROOT" && node scripts/checkBrandTokens.mjs >/dev/null 2>&1); then
   pass "the desktop app's brand tokens match the website's"
 else
   fail "the desktop app's brand tokens match the website's" "scripts/checkBrandTokens.mjs reported drift"
+fi
+
+# Crimson means two things in the app and no more: the product word, and failure. A
+# primary action in crimson would make it mean a third.
+t_grepfile "$DESKTOP/src/components/appShell.tsx" 'wordmark__product">desktop<' "the app's lockup carries the desktop product word"
+t_grepfile "$DESKTOP/src/globals.scss" '.wordmark__product' "the product word has a colour rule"
+t_nogrepfile "$DESKTOP/src/globals.scss" 'btn-contrast' "the app's primary action is btn-primary, not the site's ink CTA"
+
+# Bootstrap draws a spinner from currentColor, so without a rule of its own each one
+# takes the colour of whatever it sits in. Waiting is one state and reads as one colour.
+t_grepfile "$DESKTOP/src/globals.scss" '.spinner-border' "every spinner takes the accent rather than its surroundings"
+
+# Swapping repos is the thing a window that shows one repo at a time is most often asked
+# to do, so it lives on the repo itself rather than behind an icon in a corner.
+t_grepfile "$DESKTOP/src/components/appShell.tsx" '<ProjectSwitcher />' "the rail's repo block is the switcher"
+
+# The ecosystem a driver belongs to is chosen in Rust; the artwork for it lives in the
+# app. A new driver in a new ecosystem would otherwise ship an empty square, and only
+# somebody opening that kind of repo would ever see it.
+ART="$DESKTOP/src/assets/languages"
+MISSING_ART=""
+for lang in $(grep -o 'language: Some("[a-z]*")' "$REPO_ROOT/crates/lattice-workspace/src/lib.rs" | sed 's/.*Some("//; s/").*//' | sort -u); do
+  [ -f "$ART/$lang.svg" ] || MISSING_ART="$MISSING_ART $lang"
+done
+if [ -z "$MISSING_ART" ]; then
+  pass "every ecosystem a driver reports has artwork in the desktop app"
+else
+  fail "every ecosystem a driver reports has artwork in the desktop app" "no svg for:$MISSING_ART"
 fi
 
 # =========================================================================

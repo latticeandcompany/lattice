@@ -2,9 +2,10 @@
 // fonts register the local typefaces, Bootstrap Icons ships its own @font-face +
 // glyph classes through SASS.
 //
-// Everything down to `.btn-contrast` is the same vocabulary the website uses, so
-// the two surfaces read as one product. What is not here is the marketing layer:
-// no pattern band, no hero threads, no language-logo field.
+// Most of what follows is the same vocabulary the website uses, so the two surfaces
+// read as one product. What is not here is the marketing layer: no pattern band, no
+// hero threads, no language-logo field. Nor is the site's high-contrast ink CTA: a
+// primary action here is Bootstrap's own `.btn-primary`, which is already teal.
 
 @use './styles/paths' as paths;
 @use './styles/tokens';
@@ -70,6 +71,13 @@ samp {
 	font-family: 'DM Mono', ui-monospace, monospace;
 }
 
+// Bootstrap sets inline code in its own pink, which is not a brand colour and, at a
+// glance in this app, reads as the crimson that means a task failed. The mono face
+// already sets code apart from the sentence around it, so no colour is needed.
+:root {
+	--bs-code-color: var(--text-subtle);
+}
+
 :focus-visible {
 	outline: 2px solid var(--focus);
 	outline-offset: 2px;
@@ -77,6 +85,13 @@ samp {
 }
 
 .lattice-accent {
+	color: var(--focus);
+}
+
+// Bootstrap's spinner draws itself from `currentColor`, so left alone it takes whatever
+// the thing around it is set in — the muted grey of a run bar in one place, a task's
+// status colour in another. Waiting is one state and it reads as the accent everywhere.
+.spinner-border {
 	color: var(--focus);
 }
 
@@ -136,6 +151,15 @@ samp {
 	text-align: center;
 }
 
+// The `lattice.json` key a control writes, shown beside the plain-English label. The
+// form leads with the English so it can be used without the schema, and carries the
+// key so using it teaches the schema.
+.form-key {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.7rem;
+	color: var(--text-muted);
+}
+
 .dropdown-item.active,
 .dropdown-item:active {
 	background: var(--surface-2);
@@ -146,24 +170,15 @@ samp {
 	color: var(--focus);
 }
 
-// Primary CTA that always contrasts the surface: ink button on light, paper on dark.
-.btn-contrast {
-	background: var(--text);
-	color: var(--surface);
-	border: 1px solid var(--text);
+// Per BRAND.md §1, `lattice` stays ink or paper and only the product word takes an
+// accent. This is the app's own lockup, so the word is `desktop` and the colour is
+// crimson — the one place crimson appears that is not a failure.
+.wordmark__product {
+	color: var(--crimson-500);
+}
 
-	&:hover,
-	&:focus {
-		background: var(--text-subtle);
-		border-color: var(--text-subtle);
-		color: var(--surface);
-	}
-
-	&:disabled {
-		background: var(--text);
-		border-color: var(--text);
-		color: var(--surface);
-	}
+[data-bs-theme='dark'] .wordmark__product {
+	color: var(--crimson-300);
 }
 
 // The mark is 8 stroked ellipses, each normalized to pathLength 1 with its dash

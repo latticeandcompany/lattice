@@ -36,11 +36,11 @@ export interface CacheModeOption {
 	hint: string;
 }
 
-/** The hints say what actually differs, in the CLI's own terms. */
+/** The hints say what actually differs, in terms of what happens rather than flags. */
 export const CACHE_MODES: CacheModeOption[] = [
-	{ mode: 'normal', label: 'Normal', hint: 'Read and write the cache.' },
-	{ mode: 'force', label: 'Force', hint: 'Re-run, then refresh the cache entry.' },
-	{ mode: 'ignore', label: 'Ignore cache', hint: 'Neither read nor write the cache.' },
+	{ mode: 'normal', label: 'Use the cache', hint: 'Reuse anything unchanged, and save what runs.' },
+	{ mode: 'force', label: 'Run it all again', hint: 'Run everything, then save the new results.' },
+	{ mode: 'ignore', label: 'Skip the cache', hint: 'Run everything, and save nothing.' },
 ];
 
 export const cacheModeHint = (mode: CacheMode): string =>

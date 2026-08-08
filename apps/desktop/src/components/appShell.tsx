@@ -1,11 +1,11 @@
 import { useApp } from '../context/appContext.tsx';
-import { shortenPath } from '../lib/format.ts';
 import ConfigView from './configView.tsx';
 import GraphView from './graphView.tsx';
 import ProjectSwitcher from './projectSwitcher.tsx';
 import Rosette from './rosette.tsx';
 import SetupWizard from './setupWizard.tsx';
 import SidebarNav from './sidebarNav.tsx';
+import Spinner from './spinner.tsx';
 import TaskListView from './taskListView.tsx';
 import ThemeControl from './themeControl.tsx';
 
@@ -17,36 +17,29 @@ const AppShell = () => {
 			<aside className="app-rail" data-tauri-drag-region>
 				<div className="app-rail__head">
 					<Rosette size="1.6rem" />
-					<span className="app-rail__wordmark">lattice</span>
+					<span className="app-rail__wordmark">
+						lattice <span className="wordmark__product">desktop</span>
+					</span>
+					{busy && <Spinner label="Working…" quiet className="ms-auto" />}
 				</div>
 
-				{project && (
-					<div className="app-rail__project">
-						<div className="app-rail__project-name" title={project.name}>
-							{project.name}
-						</div>
-						<div className="app-rail__project-path" title={project.root}>
-							{shortenPath(project.root, 2)}
-						</div>
-					</div>
-				)}
-
-				<SidebarNav />
-
-				{project && (
-					<div>
-						<div className="app-rail__group">Repo</div>
+				<div>
+					<div className="app-rail__group">Repo</div>
+					<ProjectSwitcher />
+					{project && (
 						<button
 							type="button"
-							className="rail-link nav-link nav-link--quiet"
+							className="rail-link nav-link nav-link--quiet mt-1"
 							onClick={() => void reload()}
 							disabled={busy}
 						>
 							<i className="bi bi-arrow-repeat" aria-hidden="true" />
 							<span>Reload from disk</span>
 						</button>
-					</div>
-				)}
+					)}
+				</div>
+
+				<SidebarNav />
 
 				<div className="app-rail__foot">
 					<span
@@ -58,10 +51,7 @@ const AppShell = () => {
 					>
 						{info?.latticeVersion ?? ''}
 					</span>
-					<div className="d-flex align-items-center">
-						<ProjectSwitcher />
-						<ThemeControl />
-					</div>
+					<ThemeControl />
 				</div>
 			</aside>
 

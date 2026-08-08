@@ -135,7 +135,7 @@ test('every encoding the graph uses is in the legend', () => {
 	// A shape or an opacity needs a key as much as a hue would.
 	assert.ok(LEGEND.length >= 6);
 	const text = LEGEND.map((entry) => entry.label).join(' ');
-	for (const word of ['cache', 'persistent', 'dependency', 'failed']) {
+	for (const word of ['cache', 'until stopped', 'dependency', 'failed']) {
 		assert.ok(text.includes(word), `the legend never mentions ${word}`);
 	}
 });

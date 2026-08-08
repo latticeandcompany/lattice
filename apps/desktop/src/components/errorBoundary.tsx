@@ -63,7 +63,7 @@ class ErrorBoundary extends Component<Props, State> {
 
 					<button
 						type="button"
-						className="btn btn-contrast mt-3 px-4"
+						className="btn btn-primary mt-3 px-4"
 						onClick={() => this.setState({ error: null, stack: null })}
 					>
 						Try again

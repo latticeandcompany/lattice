@@ -121,7 +121,7 @@ const GraphView = () => {
 		<div className="app-main__scroll">
 			<div className="app-main__inner graph-shell">
 				<div className="run-bar__row">
-					<div className="command-tabs" role="group" aria-label="Task">
+					<div className="command-tabs" role="group" aria-label="Which task to show">
 						{taskNames.map((task) => (
 							<button
 								key={task}
@@ -143,7 +143,7 @@ const GraphView = () => {
 						))}
 					</div>
 
-					<div className="command-tabs" role="group" aria-label="Presentation">
+					<div className="command-tabs" role="group" aria-label="How to show it">
 						<button
 							type="button"
 							className={`command-tab${mode === 'graph' ? ' command-tab--active' : ''}`}
@@ -185,7 +185,7 @@ const GraphView = () => {
 					)}
 
 					<span className="ms-auto run-bar__summary">
-						{filtered.nodes.length} tasks · {layerCount(filtered)} layers
+						{filtered.nodes.length} tasks · {layerCount(filtered)} rounds, one after another
 					</span>
 				</div>
 
@@ -199,7 +199,7 @@ const GraphView = () => {
 				{filtered.nodes.length === 0 ? (
 					<div className="empty-state">
 						<i className="bi bi-diagram-3 fs-2" aria-hidden="true" />
-						<div>Nothing to draw for this selection.</div>
+						<div>Nothing to draw — no task matches what you picked.</div>
 					</div>
 				) : mode === 'graph' ? (
 					<>
@@ -235,7 +235,7 @@ const GraphView = () => {
 									<td className="mono selectable">{node.command}</td>
 									<td>
 										{[
-											node.persistent ? 'persistent' : '',
+											node.persistent ? 'runs until stopped' : '',
 											node.pulledIn ? 'pulled in as a dependency' : '',
 											states.get(node.id)?.state ?? '',
 										]

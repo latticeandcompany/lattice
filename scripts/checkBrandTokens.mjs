@@ -7,10 +7,19 @@
 // rewriting the docs workflow's cache key — a lot of moving parts to share about
 // 350 lines of SCSS.
 //
-// The cost of copying is silent drift, and this is what stops it. Four files must be
-// byte-identical. _paths.scss is the one deliberate difference: the site is served
-// from a GitHub Pages subpath and the app from the webview root, and Sass cannot
-// read the base URL from the environment, so the literal lives in each copy.
+// The cost of copying is silent drift, and this is what stops it. Three files must be
+// byte-identical, and two carry a deliberate difference each:
+//
+// _paths.scss — the site is served from a GitHub Pages subpath and the app from the
+// webview root, and Sass cannot read the base URL from the environment, so the literal
+// lives in each copy.
+//
+// bootstrap.scss — the site is the standalone brand, which BRAND.md §1 keeps
+// monochrome, so its $primary is ink. The app is Lattice Build's front end and spends
+// that product's teal on its primary actions, so its $primary is teal-500 and it sets
+// $color-contrast-* so the label Bootstrap picks for a filled accent is brand ink or
+// paper rather than pure #000 / #fff. Every other setting still has to match, which is
+// why this compares the settings rather than the bytes.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +29,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const web = join(root, 'apps/web/src/styles');
 const desktop = join(root, 'apps/desktop/src/styles');
 
-const identical = ['_tokens.scss', '_fonts.scss', 'bootstrap.scss', 'tailwind.css'];
+const identical = ['_tokens.scss', '_fonts.scss', 'tailwind.css'];
+const divergent = ['$primary', '$color-contrast-dark', '$color-contrast-light'];
 
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 
@@ -31,6 +41,48 @@ for (const name of identical) {
 	const b = read(join(desktop, name));
 	if (a !== b) {
 		failures.push(`${name} differs between apps/web and apps/desktop`);
+	}
+}
+
+// `$name: value` on its own line, which is every Sass setting in these files. The
+// trailing separator goes because a token file ends the line with `;` and an argument
+// list ends it with `,`, and the value is the same either way.
+const declarations = (text) => {
+	const found = new Map();
+	for (const line of text.split('\n')) {
+		const match = /^\s*(\$[\w-]+):\s*(.*?)[,;]?\s*$/.exec(line);
+		if (match) found.set(match[1], match[2]);
+	}
+	return found;
+};
+
+const tokens = declarations(read(join(web, '_tokens.scss')));
+const settings = {
+	web: declarations(read(join(web, 'bootstrap.scss'))),
+	desktop: declarations(read(join(desktop, 'bootstrap.scss'))),
+};
+
+for (const name of new Set([...settings.web.keys(), ...settings.desktop.keys()])) {
+	if (divergent.includes(name)) continue;
+	if (settings.web.get(name) !== settings.desktop.get(name)) {
+		failures.push(`bootstrap.scss sets a different ${name} in apps/web and apps/desktop`);
+	}
+}
+
+// The divergence itself is pinned, so "the app's accent" cannot quietly become a
+// colour that is not in the brand.
+const expected = [
+	['web', '$primary', tokens.get('$ink')],
+	['desktop', '$primary', tokens.get('$teal-500')],
+	['desktop', '$color-contrast-dark', tokens.get('$ink')],
+	['desktop', '$color-contrast-light', tokens.get('$paper')],
+];
+
+for (const [surface, name, value] of expected) {
+	if (settings[surface].get(name) !== value) {
+		failures.push(
+			`apps/${surface === 'web' ? 'web' : 'desktop'}'s bootstrap.scss must set ${name} to ${value}, not ${settings[surface].get(name)}`,
+		);
 	}
 }
 
@@ -54,4 +106,6 @@ if (failures.length > 0) {
 	process.exit(1);
 }
 
-console.log(`brand tokens agree (${identical.length} files identical, $base differs as designed)`);
+console.log(
+	`brand tokens agree (${identical.length} files identical, $base and the accent differ as designed)`,
+);

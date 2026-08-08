@@ -1,6 +1,7 @@
 import { useRunView } from '../hooks/useRunStore.ts';
 import { isFullCache, runSummary } from '../lib/format.ts';
 import { CACHE_MODES, type CacheMode } from '../lib/runOptions.ts';
+import Spinner from './spinner.tsx';
 
 export interface RunBarState {
 	selected: string[];
@@ -40,7 +41,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 	return (
 		<div className="run-bar">
 			<div className="run-bar__row">
-				<div className="command-tabs" role="group" aria-label="Task">
+				<div className="command-tabs" role="group" aria-label="Which task to run">
 					{tasks.map((task) => (
 						<button
 							key={task}
@@ -68,7 +69,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 				) : (
 					<button
 						type="button"
-						className="btn btn-contrast btn-sm d-inline-flex align-items-center gap-2 px-3 py-2"
+						className="btn btn-primary btn-sm d-inline-flex align-items-center gap-2 px-3 py-2"
 						onClick={onRun}
 						disabled={state.selected.length === 0}
 					>
@@ -77,15 +78,18 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 					</button>
 				)}
 
-				<div className="ms-auto run-bar__summary" role="status" aria-live="polite">
-					{run.result
-						? `${runSummary(run.result)}${isFullCache(run.result) ? ' · full cache' : ''}`
-						: outcomeText(run.phase)}
+				<div className="ms-auto run-bar__summary" aria-live="polite">
+					{inFlight ? (
+						<Spinner label={run.phase === 'stopping' ? 'stopping…' : 'running…'} />
+					) : (
+						run.result &&
+						`${runSummary(run.result)}${isFullCache(run.result) ? ' · everything came from cache' : ''}`
+					)}
 				</div>
 			</div>
 
 			<div className="run-bar__row">
-				<div className="command-tabs" role="group" aria-label="Cache">
+				<div className="command-tabs" role="group" aria-label="Cached results">
 					{CACHE_MODES.map((option) => (
 						<button
 							key={option.mode}
@@ -109,8 +113,8 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 					<input
 						type="text"
 						className="form-control"
-						placeholder="Filter workspaces (substring)"
-						aria-label="Filter workspaces by name substring"
+						placeholder="Only workspaces named like…"
+						aria-label="Only run in workspaces whose name contains this"
 						value={state.filter}
 						onChange={(event) => onChange({ filter: event.target.value })}
 						disabled={inFlight}
@@ -119,16 +123,16 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 
 				<select
 					className="form-select form-select-sm"
-					style={{ maxWidth: '9rem' }}
+					style={{ maxWidth: '11rem' }}
 					aria-label="How many tasks run at once"
 					value={state.concurrency}
 					onChange={(event) => onChange({ concurrency: event.target.value })}
 					disabled={inFlight}
 				>
-					<option value="">Concurrency: auto</option>
+					<option value="">As many as fit</option>
 					{[1, 2, 4, 8, 16].map((value) => (
 						<option key={value} value={String(value)}>
-							Concurrency: {value}
+							{value} at once
 						</option>
 					))}
 				</select>
@@ -143,7 +147,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						disabled={inFlight}
 					/>
 					<label className="form-check-label small" htmlFor="keep-going">
-						Keep going after a failure
+						Carry on when something fails
 					</label>
 				</div>
 
@@ -163,17 +167,6 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 			</div>
 		</div>
 	);
-};
-
-const outcomeText = (phase: string): string => {
-	switch (phase) {
-		case 'running':
-			return 'running…';
-		case 'stopping':
-			return 'stopping…';
-		default:
-			return '';
-	}
 };
 
 export default RunBar;

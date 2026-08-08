@@ -10,6 +10,42 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The desktop app says what it means — 2026-08-08
+
+The app's controls asked in the CLI's vocabulary. `dependsOn`, `persistent`, "Ignore
+cache", "Concurrency: auto", "no driver resolved" — accurate, and no help at all to
+anyone who has not already read the schema. They now ask in English: "waits for",
+"keeps running until stopped", "skip the cache", "as many at once as fits", "nothing
+found to run it with". Every control in the config form still shows the `lattice.json`
+key it writes, so the form can be used without the schema and teaches it on the way
+through.
+
+Nothing the CLI also prints was reworded. A task's state and a run's summary line are
+still the terminal's, to the character, because the same run described two ways is
+worse than either wording alone.
+
+The app's accent is now teal rather than ink, on the buttons, the checkboxes, and the
+focus rings. Crimson inside the app is the `desktop` product word — which the lockup in
+the sidebar now carries — and a task that failed, and nothing else; a Run button in the
+colour of a failure spends the clearest signal in the app on the thing least in need of
+one. `scripts/checkBrandTokens.mjs` compares the two copies of `bootstrap.scss` setting
+by setting instead of byte by byte, so the one value they must disagree about is pinned
+and every other value still cannot drift.
+
+All thirteen ecosystems Lattice detects have artwork; seven of them showed a two-letter
+monogram before. They are vector now rather than pre-sized PNGs, and they sit on a fixed
+light plate, so a mark drawn for a white background is legible in dark mode without a
+second file per ecosystem.
+
+Waiting looks like waiting: opening a repo, scanning one, saving a config, and a run in
+flight all show a spinner with a word beside it, in the accent, wherever it appears.
+
+Switching repos was a two-glyph icon button in the bottom corner of the sidebar, which
+said nothing about what it switched. The open repo is now a dropdown in its own right,
+at the top of the rail where it already named itself: it lists every repo you have
+opened, marks the current one, and carries opening another and closing this one. In a
+window that only ever shows one repo, that is the control most worth being able to find.
+
 ### A desktop app — 2026-08-07
 
 Lattice has a window. It lists the tasks each workspace can run and runs them, shows the

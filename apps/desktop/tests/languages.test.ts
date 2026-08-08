@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import { test } from 'node:test';
-import { ART_SLUGS, DARK_VARIANT_SLUGS, hasDarkVariant, languageMark } from '../src/lib/languages.ts';
+import { fileURLToPath } from 'node:url';
+import { ART_SLUGS, languageMark } from '../src/lib/languages.ts';
 
 // The driver-to-ecosystem map lives in Rust so a new driver cannot skip it. What this
-// checks is the second half: that every ecosystem resolves to *some* mark.
+// checks is the second half: that every ecosystem resolves to a mark.
 const ECOSYSTEMS = [
 	'node',
 	'rust',
@@ -20,48 +22,37 @@ const ECOSYSTEMS = [
 	'haskell',
 ];
 
-test('every ecosystem gets a mark, with or without artwork', () => {
+test('every ecosystem the engine reports has artwork', () => {
 	for (const language of ECOSYSTEMS) {
 		const mark = languageMark('sometool', language);
-		assert.ok(mark.kind === 'art' || mark.kind === 'monogram', `${language} has no mark`);
-		if (mark.kind === 'monogram') {
-			assert.ok(mark.monogram && mark.monogram.length > 0, `${language} has an empty monogram`);
-		}
-	}
-});
-
-test('the ecosystems we ship art for use it', () => {
-	for (const language of ART_SLUGS) {
-		const mark = languageMark('sometool', language);
-		assert.equal(mark.kind, 'art');
+		assert.equal(mark.kind, 'art', `${language} has no artwork`);
 		assert.equal(mark.slug, language);
 	}
 });
 
-test('every art slug is a real ecosystem', () => {
-	for (const slug of ART_SLUGS) {
-		assert.ok(ECOSYSTEMS.includes(slug), `${slug} is not an ecosystem the engine reports`);
-	}
+test('the art list and the ecosystem list are the same set', () => {
+	assert.deepEqual([...ART_SLUGS].sort(), [...ECOSYSTEMS].sort());
 });
 
-test('node has a dark variant because its wordmark is ink', () => {
-	assert.ok(hasDarkVariant('node'));
-	assert.ok(!hasDarkVariant('go'));
-	for (const slug of DARK_VARIANT_SLUGS) {
-		assert.ok((ART_SLUGS as readonly string[]).includes(slug));
-	}
+// `languageArt.ts` cannot be imported here — the test runner does not resolve an SVG
+// import — so the directory is checked instead. A slug with no file would render an
+// empty square, which nothing else would catch.
+test('every slug has a file, and no file is stranded', () => {
+	const directory = fileURLToPath(new URL('../src/assets/languages', import.meta.url));
+	assert.deepEqual(readdirSync(directory).sort(), [...ART_SLUGS].sort().map((slug) => `${slug}.svg`));
 });
 
-test('a monogram comes from the ecosystem, not the tool that found it', () => {
-	// `cargo` showing "Ca" would be wrong; it is Rust.
-	const mark = languageMark('cargo', 'rust');
+test('an ecosystem this build has never heard of still gets a mark', () => {
+	// A newer engine can report a driver whose language predates this window.
+	const mark = languageMark('zig', 'zig');
 	assert.equal(mark.kind, 'monogram');
-	assert.equal(mark.monogram, 'Rs');
+	assert.equal(mark.monogram, 'Zi');
 });
 
 test('an agnostic task runner has a mark but no ecosystem', () => {
 	const mark = languageMark('just', null);
 	assert.equal(mark.kind, 'monogram');
+	assert.equal(mark.monogram, 'Ju');
 	assert.equal(mark.title, 'just');
 });
 

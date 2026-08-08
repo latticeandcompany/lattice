@@ -4,30 +4,30 @@
 // new driver cannot be added without choosing one, and the backend catalog hands it
 // over. What is here is the second half — what to draw for an ecosystem.
 //
-// Six of the thirteen ecosystems have artwork. The rest get a monogram on the same
-// square, which reads as a deliberate mark rather than a missing image, and covers
-// every driver Lattice can detect instead of only the popular ones.
+// Every ecosystem Lattice can detect has artwork. The monogram is what a driver with
+// no ecosystem falls back to — one of the agnostic task runners — so a workspace still
+// shows a deliberate mark rather than a missing image.
 //
 // No asset imports in this file. The URLs live in `languageArt.ts` because a bundler
-// resolves a PNG import and the test runner does not, and this half is the half worth
+// resolves an SVG import and the test runner does not, and this half is the half worth
 // testing.
 
-/** The ecosystems we ship artwork for. Kept in step with `languageArt.ts` by a test. */
-export const ART_SLUGS = ['node', 'go', 'java', 'ruby', 'python', 'dotnet'] as const;
-
-/** Ecosystems whose logo would disappear against ink and need a second image. */
-export const DARK_VARIANT_SLUGS = ['node'] as const;
-
-/** The two letters shown when an ecosystem has no artwork. */
-const MONOGRAM: Record<string, string> = {
-	rust: 'Rs',
-	kotlin: 'Kt',
-	swift: 'Sw',
-	php: 'Php',
-	elixir: 'Ex',
-	dart: 'Dt',
-	haskell: 'Hs',
-};
+/** Every ecosystem a driver can carry. Kept in step with `languageArt.ts` by a test. */
+export const ART_SLUGS = [
+	'node',
+	'rust',
+	'go',
+	'python',
+	'ruby',
+	'java',
+	'kotlin',
+	'dotnet',
+	'swift',
+	'php',
+	'elixir',
+	'dart',
+	'haskell',
+] as const;
 
 export interface LanguageMark {
 	kind: 'art' | 'monogram' | 'none';
@@ -51,7 +51,7 @@ export const languageMark = (
 	language: string | null | undefined,
 ): LanguageMark => {
 	if (!tool) {
-		return { kind: 'none', title: 'No driver resolved' };
+		return { kind: 'none', title: 'No tool found to run this' };
 	}
 	if (!language) {
 		// A task runner runs whatever the directory happens to be.
@@ -60,16 +60,9 @@ export const languageMark = (
 	if (hasArt(language)) {
 		return { kind: 'art', slug: language, title: `${tool} (${language})` };
 	}
-	return {
-		kind: 'monogram',
-		monogram: MONOGRAM[language] ?? monogramFor(language),
-		title: `${tool} (${language})`,
-	};
+	return { kind: 'monogram', monogram: monogramFor(language), title: `${tool} (${language})` };
 };
 
-/** Title case of the first two letters, so `cargo` never shows as `ca`. */
+/** Title case of the first two letters, so `just` never shows as `ju`. */
 const monogramFor = (slug: string): string =>
 	slug.slice(0, 2).replace(/^./, (character) => character.toUpperCase());
-
-export const hasDarkVariant = (slug: string): boolean =>
-	(DARK_VARIANT_SLUGS as readonly string[]).includes(slug);
