@@ -1,26 +1,17 @@
-// Status colors, which only this surface has.
+// The failure state.
 //
-// The website has no failure state to render and the CLI has its own palette, so
-// these live here rather than in the shared brand tokens. Crimson is sanctioned
-// for failure by decision of the brand owner; see marketing/BRAND.md §2.
+// Crimson is Lattice Desktop's own accent, so the ramp itself lives in the shared
+// brand tokens; what is local is the semantic name pointing at it.
 //
-// Color is never the only carrier: a failed task also gets an icon, the word
-// "failed", and its output pane opened. This is the fourth channel, not the first.
-
-$crimson-300: #e06a87;
-$crimson-500: #ca2e55;
-$crimson-700: #92203d;
+// Colour is never the only carrier. A failed task also shows an icon, the word
+// "failed", and its output pane already open. This is the fourth channel, not the
+// first — see marketing/BRAND.md §2.
 
 :root {
-	--crimson-300: #{$crimson-300};
-	--crimson-500: #{$crimson-500};
-	--crimson-700: #{$crimson-700};
-
-	// Semantic: the one thing that reads as "this went wrong".
-	--fail: #{$crimson-500};
+	--fail: var(--crimson-500);
 }
 
 [data-bs-theme='dark'] {
 	// The base shade does not clear AA on ink, so dark mode takes the tint.
-	--fail: #{$crimson-300};
+	--fail: var(--crimson-300);
 }

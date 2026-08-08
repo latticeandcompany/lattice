@@ -20,6 +20,7 @@ single assigned accent color, never through a different look.
 ```
 Lattice Build      →  "Lattice" in ink/paper, "Build" in teal
 Lattice Cloud      →  "Lattice" in ink/paper, "Cloud" in purple
+Lattice Desktop    →  "Lattice" in ink/paper, "Desktop" in crimson
 Lattice & Co.      →  fully neutral, no accent (the parent)
 ```
 
@@ -37,10 +38,14 @@ the brand.
 | **Lattice & Co.** | Parent company                | Neutral (none)    |
 | **Lattice Build** | The build system (this repo)  | Teal `#1B998B`    |
 | **Lattice Cloud** | Cloud platform                | Purple `#6622CC`  |
-| _Reserved_      | Future products               | Crimson `#CA2E55`, Orange `#FF6F00` |
+| **Lattice Desktop** | The desktop app (this repo) | Crimson `#CA2E55` |
+| _Reserved_      | Future products               | Orange `#FF6F00`  |
 
-A product keeps its color permanently. Crimson and orange are held in reserve;
-do not spend them on marketing moments or one-off surfaces.
+A product keeps its color permanently. Orange is held in reserve; do not spend it on
+marketing moments or one-off surfaces.
+
+Lattice Desktop is a front end for Lattice Build rather than a separate tool, so it
+takes the product word `desktop` beside the wordmark and never a mark of its own.
 
 ### Donated / independent projects
 
@@ -103,7 +108,7 @@ hover/active and light/dark contexts. Use `-500` as the canonical value.
 | `purple-500`   | `#6622CC` |
 | `purple-700`   | `#4A1795` |
 
-**Crimson — reserved as a product accent; also the failure state in the desktop app (see below)**
+**Crimson — Lattice Desktop**
 | Token           | Hex       |
 | --------------- | --------- |
 | `crimson-300`   | `#E06A87` |
@@ -149,14 +154,15 @@ of the line is unstyled: nothing but the label takes a color.
 
 ### Crimson for failure — the second exception
 
-`#CA2E55` is a sanctioned status colour in the desktop app, on failed tasks and failed
-nodes in the graph. It is not a product accent there and does not spend the reserved
-crimson: it is never used on a product word, a wordmark, or a CTA, and no future
-product may take it as an identity.
+`#CA2E55` also marks failure inside the desktop app — failed tasks, and failed nodes
+in the graph. Crimson is that product's own accent, so this is the one place in the
+brand where a product colour and a status colour are the same hue. That is deliberate
+and worth naming: the accent lands on the `desktop` product word and on the app's
+primary action, the status lands on a row that broke, and they never share a surface.
 
-This is a deliberate amendment, made by the brand owner, not an exception someone
-found. It exists because a build tool with no failure colour asks a developer to read
-a list of forty rows to find the one that broke, and no other channel scans as fast.
+This is an amendment made by the brand owner, not an exception someone found. It
+exists because a build tool with no failure colour asks a developer to read a list of
+forty rows to find the one that broke, and no other channel scans as fast.
 
 Colour is still not the only carrier. A failed task shows a `bi-x-lg`, the word
 "failed", a crimson left rule, and its output pane already open — four channels, so the
@@ -455,9 +461,9 @@ For independent projects in the family (e.g. ArenaSwap), include in the footer:
 
 - `Lattice` = always ink or paper. Product name = the color.
 - Base: `--ink #020D0C`, `--paper #FBF8FF` — never pure black/white.
-- Build = teal `#1B998B` · Cloud = purple `#6622CC` · Co. = neutral · orange
-  reserved; crimson reserved as a product accent but sanctioned for failure states
-  in the desktop app (§2).
+- Build = teal `#1B998B` · Cloud = purple `#6622CC` · Desktop = crimson `#CA2E55` ·
+  Co. = neutral · orange reserved. Crimson doubles as the failure state inside the
+  desktop app (§2).
 - Type: **DM Sans** everywhere, **DM Mono** for code.
 - 60 · 25 · 10 · 5 — accent is the 5 %.
 - Voice: precise, confident, understated.

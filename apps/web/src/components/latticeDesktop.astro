@@ -1,0 +1,142 @@
+---
+// Lattice Desktop on the home page.
+//
+// Crimson is this product's accent, so it appears on the product word and on the one
+// primary action — the same budget teal gets everywhere else, not a licence to tint
+// the section. Everything structural stays monochrome.
+import Rosette from './rosette.tsx';
+import { withBase } from '../lib/base';
+
+interface Capability {
+	icon: string;
+	title: string;
+	body: string;
+}
+
+const capabilities: Capability[] = [
+	{
+		icon: 'bi-list-task',
+		title: 'Run anything, see everything',
+		body: 'Every workspace and every task it can actually run, in one list. Start one, watch its output arrive, and see at a glance which results came from cache.',
+	},
+	{
+		icon: 'bi-diagram-3',
+		title: 'The graph, laid out',
+		body: 'What runs before what, drawn in dependency order and filling in as the build moves through it. Click a task to see everything it affects.',
+	},
+	{
+		icon: 'bi-braces',
+		title: 'Edit the config without editing JSON',
+		body: 'Workspaces, tasks, and tool versions as a form, validated by the same parser a run uses. A repo with no config gets walked through making one.',
+	},
+	{
+		icon: 'bi-search',
+		title: 'Find out why a task re-ran',
+		body: 'When something misses the cache, the app names which inputs moved — the command, the files, the toolchain — instead of leaving you with a hash.',
+	},
+];
+---
+
+<section id="desktop" class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
+	<div class="mx-auto" style="max-width: 72rem;">
+		<div class="mx-auto text-center mb-5" style="max-width: 44rem;">
+			<div class="d-inline-flex align-items-center gap-2 mb-3">
+				<Rosette client:visible size="2rem" />
+				<span class="desktop-wordmark">
+					lattice <span class="desktop-wordmark__product">desktop</span>
+				</span>
+			</div>
+			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
+				The same engine, with a window
+			</h2>
+			<p class="fs-5 mb-0" style="color: var(--text-muted);">
+				Everything the CLI does, plus the things a terminal cannot keep on screen: what your
+				repo is made of, what a task depends on, and why it ran again.
+			</p>
+		</div>
+
+		<div class="row g-4 mb-5">
+			{
+				capabilities.map((capability) => (
+					<div class="col-12 col-md-6">
+						<div class="card h-100">
+							<div class="card-body p-4">
+								<i class={`bi ${capability.icon} fs-3 d-block mb-3 desktop-accent`} aria-hidden="true" />
+								<h3 class="card-title fw-bold mb-2" style="font-size: 1.375rem;">
+									{capability.title}
+								</h3>
+								<p class="card-text mb-0" style="color: var(--text-subtle); line-height: 1.6;">
+									{capability.body}
+								</p>
+							</div>
+						</div>
+					</div>
+				))
+			}
+		</div>
+
+		<div class="text-center">
+			<a class="btn btn-desktop px-4" href={withBase('/docs/desktop-app')}>
+				Read the guide
+				<i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
+			</a>
+			<p class="command-tab__hint mt-3 mb-0">
+				Runs from a clone today; installers are not out yet.
+			</p>
+		</div>
+	</div>
+</section>
+
+<style>
+	.desktop-wordmark {
+		font-size: 1.35rem;
+		font-weight: 500;
+		letter-spacing: var(--wordmark-tracking);
+		color: var(--text);
+	}
+
+	/* Per BRAND.md, `lattice` stays ink or paper and only the product word takes the
+	   accent. */
+	.desktop-wordmark__product {
+		color: var(--crimson-500);
+	}
+
+	:global([data-bs-theme='dark']) .desktop-wordmark__product {
+		color: var(--crimson-300);
+	}
+
+	.desktop-accent {
+		color: var(--crimson-500);
+	}
+
+	:global([data-bs-theme='dark']) .desktop-accent {
+		color: var(--crimson-300);
+	}
+
+	/* This section's one primary action, in this product's colour. */
+	.btn-desktop {
+		background: var(--crimson-500);
+		color: var(--paper);
+		border: 1px solid var(--crimson-500);
+	}
+
+	.btn-desktop:hover,
+	.btn-desktop:focus {
+		background: var(--crimson-700);
+		border-color: var(--crimson-700);
+		color: var(--paper);
+	}
+
+	:global([data-bs-theme='dark']) .btn-desktop {
+		background: var(--crimson-300);
+		border-color: var(--crimson-300);
+		color: var(--ink);
+	}
+
+	:global([data-bs-theme='dark']) .btn-desktop:hover,
+	:global([data-bs-theme='dark']) .btn-desktop:focus {
+		background: var(--crimson-500);
+		border-color: var(--crimson-500);
+		color: var(--paper);
+	}
+</style>
