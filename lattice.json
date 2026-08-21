@@ -38,6 +38,10 @@
     "check": {
       "inputs": ["src/**/*", "Cargo.toml"]
     },
-    "clean": {}
+    "clean": {},
+    "bundle": {
+      "dependsOn": ["build", "^bundle"],
+      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "vite.config.ts", "index.html", "tsconfig.json", "src-tauri/src/**/*", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "src-tauri/capabilities/**"]
+    }
   }
 }

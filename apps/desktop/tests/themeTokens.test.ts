@@ -17,6 +17,6 @@ test('the fallbacks are the brand values, never pure black or white', () => {
 	assert.equal(FALLBACK.surface, '#fbf8ff');
 	assert.notEqual(FALLBACK.text, '#000000');
 	assert.notEqual(FALLBACK.surface, '#ffffff');
-	assert.equal(FALLBACK.focus, '#1b998b');
-	assert.equal(FALLBACK.fail, '#ca2e55');
+	assert.equal(FALLBACK.focus, '#ca2e55');
+	assert.equal(FALLBACK.fail, '#b45309');
 });

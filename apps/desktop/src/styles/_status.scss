@@ -1,17 +1,31 @@
 // The failure state.
 //
-// Crimson is Lattice Desktop's own accent, so the ramp itself lives in the shared
-// brand tokens; what is local is the semantic name pointing at it.
+// Crimson is Lattice Desktop's accent, so it is spent on things you are meant to press
+// and cannot also mean "this broke" — a Run button and a failed row would read the
+// same. Failure takes amber instead.
+//
+// Amber is not a brand colour and never becomes one. It is deliberately not the
+// reserved orange `#FF6F00`, which is held for a future product; spending that here
+// would burn a product accent on a status. So the ramp lives in this file rather than
+// in the shared brand tokens, and nothing outside the failure state may use it.
+//
+// Both shades are measured against the surface they sit on: `#b45309` on `--paper` is
+// 4.77:1 and `#f5a524` on `--ink` is 9.66:1, so either clears AA for body text.
 //
 // Colour is never the only carrier. A failed task also shows an icon, the word
 // "failed", and its output pane already open. This is the fourth channel, not the
 // first — see marketing/BRAND.md §2.
 
+$amber-300: #f5a524;
+$amber-500: #b45309;
+
 :root {
-	--fail: var(--crimson-500);
+	--amber-300: #{$amber-300};
+	--amber-500: #{$amber-500};
+	--fail: var(--amber-500);
 }
 
 [data-bs-theme='dark'] {
-	// The base shade does not clear AA on ink, so dark mode takes the tint.
-	--fail: var(--crimson-300);
+	// The base shade is far too dark on ink, so dark mode takes the tint.
+	--fail: var(--amber-300);
 }

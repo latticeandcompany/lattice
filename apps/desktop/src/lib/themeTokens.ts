@@ -39,8 +39,8 @@ export const FALLBACK: Tokens = {
 	textSubtle: '#3a4443',
 	border: '#b6bcbb',
 	borderSubtle: '#e7e6e9',
-	focus: '#1b998b',
-	fail: '#ca2e55',
+	focus: '#ca2e55',
+	fail: '#b45309',
 	dark: false,
 };
 

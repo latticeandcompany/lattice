@@ -98,7 +98,7 @@ While a run is going the graph fills in live, so you can watch the build move th
 Encoding is deliberately not all colour. Position carries dependency depth, a rounded
 square is a persistent task, a dashed outline means the task came along as a
 prerequisite rather than because you asked for it, a faded node came back from cache, and
-a crimson outline is a failure. The legend under the graph names all of it.
+an amber outline is a failure. The legend under the graph names all of it.
 
 The **List** tab shows the same tasks as a table in dependency order. A canvas cannot be
 read by a screen reader or walked with a keyboard; the table can.

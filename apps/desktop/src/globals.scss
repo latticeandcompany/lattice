@@ -5,11 +5,12 @@
 // Most of what follows is the same vocabulary the website uses, so the two surfaces
 // read as one product. What is not here is the marketing layer: no pattern band, no
 // hero threads, no language-logo field. Nor is the site's high-contrast ink CTA: a
-// primary action here is Bootstrap's own `.btn-primary`, which is already teal.
+// primary action here is Bootstrap's own `.btn-primary`, which is already crimson.
 
 @use './styles/paths' as paths;
 @use './styles/tokens';
 @use './styles/fonts';
+@use './styles/accent';
 @use './styles/status';
 // The package's default src uses a cache-buster query Vite won't bundle, so point
 // it at the self-hosted copies in public/fonts.
@@ -71,9 +72,9 @@ samp {
 	font-family: 'DM Mono', ui-monospace, monospace;
 }
 
-// Bootstrap sets inline code in its own pink, which is not a brand colour and, at a
-// glance in this app, reads as the crimson that means a task failed. The mono face
-// already sets code apart from the sentence around it, so no colour is needed.
+// Bootstrap sets inline code in its own pink, which is not a brand colour and sits
+// close enough to crimson to read as the accent. The mono face already sets code apart
+// from the sentence around it, so no colour is needed.
 :root {
 	--bs-code-color: var(--text-subtle);
 }
@@ -172,7 +173,7 @@ samp {
 
 // Per BRAND.md §1, `lattice` stays ink or paper and only the product word takes an
 // accent. This is the app's own lockup, so the word is `desktop` and the colour is
-// crimson — the one place crimson appears that is not a failure.
+// crimson, the same accent the rest of the app spends.
 .wordmark__product {
 	color: var(--crimson-500);
 }

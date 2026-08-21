@@ -71,7 +71,7 @@ test('a cached node recedes and says so in its label', () => {
 	assert.ok(node.label.formatter.includes('cached'));
 });
 
-test('failure is the only place crimson appears', () => {
+test('failure is the only place amber appears', () => {
 	const s = series(option({ states: new Map([['api:build', { state: 'failed' }]]) }));
 	const failed = s.data.find((n) => n.id === 'api:build');
 	assert.equal(failed.itemStyle.borderColor, FALLBACK.fail);
@@ -82,7 +82,7 @@ test('failure is the only place crimson appears', () => {
 	}
 });
 
-test('teal appears only on the focused closure', () => {
+test('the accent appears only on the focused closure', () => {
 	// The brand budgets the accent at about 5% of a view, and a focus ring is exactly
 	// what it is licensed for.
 	const plain = series(option());

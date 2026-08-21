@@ -24,13 +24,16 @@ Nothing the CLI also prints was reworded. A task's state and a run's summary lin
 still the terminal's, to the character, because the same run described two ways is
 worse than either wording alone.
 
-The app's accent is now teal rather than ink, on the buttons, the checkboxes, and the
-focus rings. Crimson inside the app is the `desktop` product word — which the lockup in
-the sidebar now carries — and a task that failed, and nothing else; a Run button in the
-colour of a failure spends the clearest signal in the app on the thing least in need of
-one. `scripts/checkBrandTokens.mjs` compares the two copies of `bootstrap.scss` setting
-by setting instead of byte by byte, so the one value they must disagree about is pinned
-and every other value still cannot drift.
+The app's accent is now crimson rather than ink, on the buttons, the checkboxes, the
+focus rings, and the active rail — Lattice Desktop's own product colour, on its own
+product surface, including the `desktop` word the lockup in the sidebar now carries.
+Failure moved off crimson to amber so a broken row and a Run button never share a
+colour; amber is a status hue only, and deliberately not the orange BRAND.md holds in
+reserve for a future product. `scripts/checkBrandTokens.mjs` compares the two copies of
+`bootstrap.scss` setting by setting instead of byte by byte, so the one value they must
+disagree about is pinned and every other value still cannot drift; the accent's
+`--focus` override lives in the app's own `_accent.scss` so the shared token file the
+website also uses stays identical.
 
 All thirteen ecosystems Lattice detects have artwork; seven of them showed a two-letter
 monogram before. They are vector now rather than pre-sized PNGs, and they sit on a fixed

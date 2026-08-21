@@ -1,17 +1,16 @@
 // Bootstrap, customized entirely through variable overrides (per .agents/CODESTYLE.md
 // styling priority: Bootstrap first, customize via variables). Structure is monochrome
-// and type is DM Sans / DM Mono; the one accent is teal, Lattice Build's colour, which
-// this app is a front end for. Crimson is spent on the `desktop` product word and on
-// the failure state, so it never doubles as the colour of a button you are meant to
-// press.
+// and type is DM Sans / DM Mono; the one accent is crimson, Lattice Desktop's own
+// colour, which carries every primary action, focus ring, and the `desktop` product
+// word. Failure is amber (see _status.scss) so a broken row never looks pressable.
 //
 // $color-contrast-* are overridden so the label Bootstrap picks for a filled accent is
-// the brand's ink or paper rather than pure #000 / #fff. On teal it resolves to ink,
-// at 5.59:1.
+// the brand's ink or paper rather than pure #000 / #fff. On crimson it resolves to
+// paper, at 4.95:1, over ink's 3.79:1.
 
 @use '../../node_modules/bootstrap/scss/bootstrap' as bs with (
 	$prefix: 'bs-',
-	$primary: #1b998b,
+	$primary: #ca2e55,
 	$secondary: #6e7776,
 	$dark: #020d0c,
 	$light: #fbf8ff,

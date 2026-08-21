@@ -15,11 +15,15 @@
 // lives in each copy.
 //
 // bootstrap.scss — the site is the standalone brand, which BRAND.md §1 keeps
-// monochrome, so its $primary is ink. The app is Lattice Build's front end and spends
-// that product's teal on its primary actions, so its $primary is teal-500 and it sets
-// $color-contrast-* so the label Bootstrap picks for a filled accent is brand ink or
-// paper rather than pure #000 / #fff. Every other setting still has to match, which is
-// why this compares the settings rather than the bytes.
+// monochrome, so its $primary is ink. The app is Lattice Desktop and spends its own
+// product colour, so its $primary is crimson-500 and it sets $color-contrast-* so the
+// label Bootstrap picks for a filled accent is brand ink or paper rather than pure
+// #000 / #fff. Every other setting still has to match, which is why this compares the
+// settings rather than the bytes.
+//
+// The app's accent also has to override --focus, which _tokens.scss sets to teal for
+// the site. That override lives in apps/desktop/src/styles/_accent.scss precisely so
+// the shared token file can stay byte-identical.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -73,7 +77,7 @@ for (const name of new Set([...settings.web.keys(), ...settings.desktop.keys()])
 // colour that is not in the brand.
 const expected = [
 	['web', '$primary', tokens.get('$ink')],
-	['desktop', '$primary', tokens.get('$teal-500')],
+	['desktop', '$primary', tokens.get('$crimson-500')],
 	['desktop', '$color-contrast-dark', tokens.get('$ink')],
 	['desktop', '$color-contrast-light', tokens.get('$paper')],
 ];

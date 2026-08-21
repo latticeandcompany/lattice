@@ -6,11 +6,11 @@
     wallpaper the user has, and BRAND.md does not allow the ink mark on a dark surface.
 
     Geometry is the real mark's, unaltered — rx 250, ry 95, stroke 15.635, eight
-    ellipses at 22.5 degree steps. The group is scaled so the mark fills about 80% of
+    ellipses at 22.5 degree steps. The group is scaled so the mark fills about 92% of
     the canvas, which keeps the stroke-to-radius ratio identical to the lockup.
   -->
   <rect width="1024" height="1024" rx="224" fill="#FBF8FF"/>
-  <g transform="translate(512 512) scale(1.589) translate(-350 -350)"
+  <g transform="translate(512 512) scale(1.827) translate(-350 -350)"
      fill="none" stroke="#020D0C" stroke-width="15.635" stroke-linecap="round">
     <ellipse cx="350" cy="350" rx="250" ry="95"/>
     <ellipse cx="350" cy="350" rx="250" ry="95" transform="rotate(22.5 350 350)"/>
