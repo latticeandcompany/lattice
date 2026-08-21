@@ -60,18 +60,11 @@ the check is suppressed.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `name` | `string` | yes | — | Unique across the file. |
-| `path` | `string` | yes | — | Literal directory relative to the repo root. Never a glob. Must be non-empty. |
+| `path` | `string` | yes | — | Literal directory relative to the repo root. Must be non-empty. |
 | `auto` | `boolean` | no | `true` | Infer the driver, engine, and task commands from the directory's own evidence. `false` disables all inference. |
 | `engines` | engine map | no | `{}` | Per-workspace constraints. A key here overrides the same key at the root. |
 | `dependsOn` | array of `string` | no | none | Other workspaces, by `name`. |
 | `scripts` | object of `string` → `string` | no | `{}` | Task name → exact shell command. Wins over anything inferred. |
-
-`path` is checked for existence as-is:
-
-```text
-workspace path 'packages/*' does not point to a directory; workspace paths
-are literal directories, not globs
-```
 
 Two workspaces cannot share a `name` or resolve to the same directory — both
 are errors, not a merge.

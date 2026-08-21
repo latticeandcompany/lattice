@@ -227,8 +227,7 @@ literal directories, not globs
 ```
 
 Raised during workspace discovery when a configured `path` doesn't resolve to an
-existing directory. Fatal. `path` is never a glob; see
-[Workspaces](/lattice/docs/workspaces).
+existing directory. Fatal. See [Workspaces](/lattice/docs/workspaces).
 
 ### Duplicate workspace name or path (discovery)
 

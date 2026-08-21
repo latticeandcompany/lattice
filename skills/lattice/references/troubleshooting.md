@@ -187,7 +187,7 @@ survives it.
 
 ## `--filter` ran more or fewer workspaces than expected
 
-It's a substring match on workspace `name`, never on `path` and never a glob. The
+It's a substring match on workspace `name`, never on `path`. The
 matches are the roots of the run, so their transitive dependencies are in the
 graph too, tagged `(dependency)` under `--dry-run`. Nothing that depends on a
 match is included. A filter matching nothing exits `0`.

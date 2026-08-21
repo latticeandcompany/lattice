@@ -252,12 +252,12 @@ pub struct EngineSpecObject {
 }
 
 /// One workspace: a single project directory that is the unit of task running
-/// and caching. Declared explicitly; never a glob.
+/// and caching.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceConfig {
 	pub name: String,
-	/// Literal directory path (relative to repo root). Never a glob.
+	/// Literal directory path (relative to repo root).
 	pub path: String,
 	/// When true (default), infer engine and task commands from the native manifest.
 	#[serde(default = "default_true")]
