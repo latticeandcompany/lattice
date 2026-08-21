@@ -14,8 +14,8 @@
 // webview root, and Sass cannot read the base URL from the environment, so the literal
 // lives in each copy.
 //
-// bootstrap.scss — the site is the standalone brand, which BRAND.md §1 keeps
-// monochrome, so its $primary is ink. The app is Lattice Desktop and spends its own
+// bootstrap.scss — the site is the standalone brand, which stays monochrome, so its
+// $primary is ink. The app is Lattice Desktop and spends its own
 // product colour, so its $primary is crimson-500 and it sets $color-contrast-* so the
 // label Bootstrap picks for a filled accent is brand ink or paper rather than pure
 // #000 / #fff. Every other setting still has to match, which is why this compares the

@@ -17,7 +17,7 @@
    stay in sync with the rest of the theme switch. */
 @custom-variant dark (&:where([data-bs-theme='dark'], [data-bs-theme='dark'] *));
 
-/* Brand tokens (mirrors marketing/BRAND.md). Monochrome-first: ink/paper base, the
+/* Brand tokens. Monochrome-first: ink/paper base, the
    derived gray ramp, and teal as the one reserved product accent. */
 @theme {
 	--color-transparent: transparent;

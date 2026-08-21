@@ -3,7 +3,7 @@
     The app icon: the rosette on a paper chip.
 
     A chip rather than a transparent background because an app icon sits on whatever
-    wallpaper the user has, and BRAND.md does not allow the ink mark on a dark surface.
+    wallpaper the user has, and the ink mark is not used on a dark surface.
 
     Geometry is the real mark's, unaltered — rx 250, ry 95, stroke 15.635, eight
     ellipses at 22.5 degree steps. The group is scaled so the mark fills about 92% of
