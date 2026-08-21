@@ -10,8 +10,13 @@ updates:
       time: '15:00'
       timezone: 'America/New_York'
     open-pull-requests-limit: 10
+    # Direct dependencies only. A transitive bump arrives for free when the direct
+    # dep that pulls it moves, and on its own it can contradict a pin its family
+    # holds: a solo js-sys 0.3.104 against wasm-bindgen-futures' exact =0.3.103
+    # left mega unable to resolve at all. Security advisories are unaffected --
+    # security updates ignore this filter and still cover transitive crates.
     allow:
-      - dependency-type: 'all'
+      - dependency-type: 'direct'
     commit-message:
       prefix: 'Upgrade'
       include: 'scope'
@@ -50,6 +55,15 @@ updates:
           - 'assert_cmd'
           - 'predicates'
           - 'tempfile'
+        update-types:
+          - 'minor'
+          - 'patch'
+      # These pin each other to exact versions, so one moving alone cannot resolve.
+      wasm-bindgen:
+        patterns:
+          - 'wasm-bindgen*'
+          - 'js-sys'
+          - 'web-sys'
         update-types:
           - 'minor'
           - 'patch'
