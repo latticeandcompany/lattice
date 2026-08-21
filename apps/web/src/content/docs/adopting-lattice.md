@@ -29,7 +29,7 @@ task and no configuration at all:
 }
 ```
 
-`path` is a literal directory, never a glob. With `auto` left at its default of
+With `auto` left at its default of
 `true`, Lattice reads the workspace's own lockfile or manifest to work out which
 tool runs `build`. For a directory with a `package.json` and a
 `package-lock.json`, that resolves to `npm run build`, the command you'd already

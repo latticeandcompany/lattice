@@ -62,11 +62,11 @@ authoritative if anything here disagrees with the installed binary.
   anyway, the run reports `EXITED (code <n>)` and ends, counting a non-zero exit
   as a failed task.
 - **`--filter` selects the roots of a run, not all of it.** It matches
-  workspaces whose `name` *contains* the pattern (substring, not glob, matched on
-  `name` and never on `path`), then the graph adds everything those workspaces
-  depend on, transitively. So a filtered run also runs its prerequisites (from
-  cache where they're current), and `--dry-run` tags those nodes `(dependency)`.
-  Nothing that depends *on* a match is included.
+  workspaces whose `name` *contains* the pattern (a substring match on `name`,
+  never on `path`), then the graph adds everything those workspaces depend on,
+  transitively. So a filtered run also runs its prerequisites (from cache where
+  they're current), and `--dry-run` tags those nodes `(dependency)`. Nothing that
+  depends *on* a match is included.
 - **A task with no `inputs` hashes its whole workspace.** Everything the
   applicable `.gitignore` files don't exclude goes into the key, minus the task's
   own `outputs`. It is correct but slower than it needs to be, and it re-runs on
@@ -84,8 +84,6 @@ authoritative if anything here disagrees with the installed binary.
   defined task; either miss is rejected at load with the nearest name offered.
   Don't "fix" one by deleting the reference — the ordering it was written for is
   usually real.
-- **A workspace `path` is a literal directory.** `packages/*` is treated as a
-  directory named `*` and fails. One entry per project directory.
 - **An unknown key in `lattice.json` fails the load.** Every command that reads
   the config rejects a key Lattice doesn't define, naming the key, the object it
   sits in, its line and column, and the nearest valid field. There is no way to

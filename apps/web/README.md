@@ -47,10 +47,10 @@ the index is missing.
 ## Brand
 
 Monochrome-first: ink `#020D0C` / paper `#FBF8FF` and a derived gray ramp, with a
-restrained teal accent (per `marketing/BRAND.md`) on a few icons, the active nav
+restrained teal accent on a few icons, the active nav
 item, and focus rings. Copy speaks only to the end-user benefit; the product is
-described as "A high-performance, local toolchain for managing monorepos." See
-`marketing/BRAND.md` and `marketing/MESSAGING.md` for the full system.
+described as "A high-performance, local toolchain for managing monorepos." The
+colors themselves live in `src/styles/_tokens.scss`.
 
 ## Dogfood
 

@@ -117,7 +117,7 @@ does a `glob` key on a workspace entry.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `name` | `string` | yes | — | Workspace name. Must be unique across the file. |
-| `path` | `string` | yes | — | Literal directory path, relative to the repo root. Never a glob. Must be non-empty. |
+| `path` | `string` | yes | — | Literal directory path, relative to the repo root. Must be non-empty. |
 | `auto` | `boolean` | no | `true` | When true, infer the engine and task commands from the workspace's native manifest. `false` disables all inference — declare `scripts` and `engines` yourself. |
 | `engines` | engine map | no | `{}` | Per-workspace toolchain constraints. A key here overrides the same key at the root. |
 | `dependsOn` | array of `string` | no | none | Other workspaces, by name, this one depends on. |
