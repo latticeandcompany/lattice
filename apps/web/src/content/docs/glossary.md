@@ -77,7 +77,7 @@ a task. See [Engines and provisioning](/lattice/docs/engines).
 ### Filter
 
 The `-f`/`--filter <PATTERN>` flag on `lattice run`, which selects the
-workspaces whose `name` contains `PATTERN` (a substring match, not a glob).
+workspaces whose `name` contains `PATTERN` (a substring match).
 The matches are the roots of the run: the graph also holds everything they
 depend on, transitively, and nothing that depends on them. A filter that
 matches nothing is not an error. See [Selecting what
@@ -233,7 +233,7 @@ installed either way. See [Engines and provisioning](/lattice/docs/engines).
 ### Workspace
 
 A single project directory — the unit of task running and caching. Declared
-explicitly by `name` and a literal `path` (never a glob) under the root
+explicitly by `name` and `path` under the root
 `lattice.json`'s `workspaces` list. A workspace's own `dependsOn` names other
 *workspaces* by name and only takes effect where a task's `dependsOn` uses a
 `^`-prefixed token — on its own it declares nothing about scheduling (see

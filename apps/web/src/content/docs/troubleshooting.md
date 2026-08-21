@@ -257,7 +257,7 @@ persistent task out of the requested list and run its prerequisites alone.
 ### A `--filter` ran more or fewer workspaces than you expected
 
 `--filter <pattern>` matches workspaces whose **name** contains `pattern` — a
-substring match, not a glob and not a path match. The matches are the roots of
+substring match, not a path match. The matches are the roots of
 the run, so the graph also holds everything they depend on, transitively. Those
 extra nodes are tagged `(dependency)` under `--dry-run`. Nothing that depends on
 a match is included. A filter matching nothing prints

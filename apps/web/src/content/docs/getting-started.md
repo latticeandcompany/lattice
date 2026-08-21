@@ -86,8 +86,8 @@ nothing to propose and `init` wrote the bare skeleton:
 `latticeVersion` pins the config to the release that scaffolded it; see
 [Upgrading](/lattice/docs/upgrading) for what happens when the installed binary
 and this field disagree. `workspaces` is empty — a workspace is a project
-directory declared by a literal path, no globs, and it is the unit Lattice runs
-and caches tasks in (see [Workspaces](/lattice/docs/workspaces)). In
+directory declared by name and path, and it is the unit Lattice runs and caches
+tasks in (see [Workspaces](/lattice/docs/workspaces)). In
 `tasks.build`, `dependsOn: ["^build"]` means "run this workspace's dependencies'
 `build` first" and `outputs: ["dist/**"]` tells the cache which files to
 capture. There's no workspace to run it in yet, so it does nothing until you add

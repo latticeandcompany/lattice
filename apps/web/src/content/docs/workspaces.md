@@ -33,14 +33,10 @@ validated before anything else runs — duplicate workspace names and empty path
 are rejected there — and every workspace `path` resolves relative to the root,
 not to the directory you ran from.
 
-## `path` is literal, never a glob
+## `path` is a literal directory
 
-A `path` is a single directory, checked for existence as written. A wildcard is
-treated as a literal directory name and fails:
-
-```json
-{ "name": "packages", "path": "packages/*" }
-```
+A `path` names one directory and is checked for existence as written, so a
+wildcard is read as a directory whose name contains `*` and fails:
 
 ```text
 workspace path 'packages/*' does not point to a directory; workspace paths
