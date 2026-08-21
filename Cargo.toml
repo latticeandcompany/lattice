@@ -1,10 +1,13 @@
 [workspace]
 members = [
+    "apps/desktop/src-tauri",
     "crates/lattice",
     "crates/lattice-cache",
     "crates/lattice-config",
     "crates/dagger",
+    "crates/lattice-events",
     "crates/lattice-output",
+    "crates/lattice-project",
     "crates/lattice-runner",
     "crates/lattice-testkit",
     "crates/lattice-workspace",

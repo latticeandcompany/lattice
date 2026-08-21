@@ -2,12 +2,14 @@
 
 > Project coding standards and style guide. This document defines **how code should be written**, not architectural decisions or agent behavior.
 
-This repo is two codebases with different conventions:
+This repo is Rust and web code, in four places:
 
 | Location | Language | Section |
 |---|---|---|
 | `crates/` | Rust — the CLI and its libraries | [Rust](#rust) |
+| `apps/desktop/src-tauri/` | Rust — the desktop app's backend | [Rust](#rust) |
 | `apps/web/` | Astro, TypeScript, SCSS — the docs site | [Web](#web) |
+| `apps/desktop/src/` | React, TypeScript, SCSS — the desktop app's window | [Web](#web) |
 
 The [General Principles](#general-principles), [Comments](#comments), [Error Handling](#error-handling), [Testing](#testing), [Dependency Style](#dependency-style) and [Decision Order](#decision-order) sections apply to both.
 
@@ -44,7 +46,7 @@ If something feels overengineered, it probably is.
 
 # Rust
 
-Everything under `crates/`.
+Everything under `crates/` and `apps/desktop/src-tauri/`.
 
 ## Formatting
 
@@ -77,7 +79,9 @@ Library crates are named `lattice-<role>` for the role they own. `dagger` is the
 
 One library crate per responsibility, each entered through `src/lib.rs`. A crate splits into further modules only once `lib.rs` covers two genuinely separate concerns — `lattice-workspace` has `toolchain.rs` for that reason. The binary crate `lattice` is the only one with a `src/commands/` tree, one module per subcommand.
 
-Nothing in `crates/` may depend on `apps/web`, and no crate may reach back into the binary.
+`apps/desktop/src-tauri` is the second binary crate and follows this section, not the Web one. It is a flat module set rather than a tree: `state`, `reporter`, `service`, `commands`, each a genuinely separate concern.
+
+Nothing in `crates/` may depend on `apps/`, and no crate may reach back into a binary. The desktop backend depends on the library crates the same way the CLI does — anything both front ends need lives in `lattice-project`, never in `crates/lattice`.
 
 ## Errors
 
@@ -93,7 +97,7 @@ Every crate opens `lib.rs` with a `//!` header saying what the crate owns and, w
 
 # Web
 
-Everything under `apps/web/`. The docs site is Astro with React islands, Bootstrap, Tailwind v4 and SCSS.
+Everything under `apps/web/` and `apps/desktop/src/`. The docs site is Astro with React islands; the desktop app is React with Vite. Both use Bootstrap, Tailwind v4 and SCSS, and share their brand token files byte for byte — `scripts/checkBrandTokens.mjs` fails CI if they drift.
 
 ## Naming
 
@@ -223,7 +227,7 @@ Do **not** lazy-load:
 
 # React
 
-Applies to the React islands under `apps/web/src/components/`.
+Applies to the React islands under `apps/web/src/components/` and the components under `apps/desktop/src/components/`.
 
 - Component filename should match the component name.
 - Keep components focused and modular.
@@ -236,7 +240,7 @@ Split components when they become difficult to understand or maintain.
 
 # Styling
 
-Applies to the Web codebase. For terminal output, see `lattice-output`.
+Applies to the Web codebase. For terminal output, see `lattice-output`. The desktop app adds one sheet of its own, `_status.scss`, for the failure colour the site has no use for.
 
 ## Priority Order
 
@@ -361,6 +365,8 @@ Tests should be:
 Avoid overly complicated test setups.
 
 In Rust, unit tests live in an inline `mod tests` in the file they cover; end-to-end tests are `crates/lattice/tests/e2e_*.rs` and share their fixtures through `tests/common/`. `AGENTS.md` also requires `scripts/stress-test.sh` to stay current with every change — that suite, not the unit tests, is what proves Lattice still works end to end.
+
+In the desktop app, Node runs the tests by stripping types rather than compiling them, which has two consequences worth knowing before you hit them: it cannot load a `.tsx` file, and it rejects TypeScript parameter properties and `enum`. So every testable thing is a `.ts` module under `src/lib/`, components stay thin, and unions of string literals replace enums. Internal imports carry a `.ts` extension, because Node's resolver does not guess one.
 
 ---
 

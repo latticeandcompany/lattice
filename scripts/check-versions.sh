@@ -65,15 +65,15 @@ else bad "apps/web/package.json version is $v, want $CARGO_VERSION"; fi
 # --- 2. Cargo.lock agrees for every workspace crate --------------------------
 # A forgotten `cargo update -w` after a bump makes --locked release builds fail.
 missing=''
-for crate in lattice lattice-cache lattice-config dagger lattice-output lattice-runner \
-	lattice-testkit lattice-workspace; do
+for crate in lattice lattice-cache lattice-config dagger lattice-events lattice-output \
+	lattice-project lattice-runner lattice-testkit lattice-workspace; do
 	text Cargo.lock | grep -q "^name = \"$crate\"\$" ||
 		{ missing="$missing $crate(absent)"; continue; }
 	text Cargo.lock | awk -F'"' -v c="$crate" -v want="$CARGO_VERSION" '
 		$0 == "name = \"" c "\"" { getline; if ($2 != want) exit 1; exit 0 }
 	' || missing="$missing $crate"
 done
-if [ -z "$missing" ]; then good "Cargo.lock agrees for all 8 crates"
+if [ -z "$missing" ]; then good "Cargo.lock agrees for all 10 crates"
 else bad "Cargo.lock disagrees for:$missing — run \`cargo update -w\`"; fi
 
 # --- 3. the hardcoded version badge stays dead -------------------------------

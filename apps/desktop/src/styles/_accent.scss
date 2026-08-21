@@ -1,0 +1,21 @@
+// The app's accent.
+//
+// `_tokens.scss` is byte-identical with the website's copy (scripts/checkBrandTokens.mjs
+// enforces it), and that file is the standalone brand: monochrome, with teal for focus
+// because the site is Lattice Build's. This app is Lattice Desktop, so it spends its own
+// product colour — crimson — on every primary action, focus ring, active nav rule, and
+// the `desktop` word in the lockup. The override lives here rather than in the shared
+// tokens so the site keeps teal.
+//
+// Loaded after the tokens, which is what makes these win at equal specificity.
+
+@use './tokens' as tokens;
+
+:root {
+	--focus: var(--crimson-500);
+}
+
+[data-bs-theme='dark'] {
+	// crimson-500 is only 3.79:1 on ink, so dark surfaces take the tint at 6.18:1.
+	--focus: var(--crimson-300);
+}

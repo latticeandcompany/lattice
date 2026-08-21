@@ -10,6 +10,7 @@ export const navLinks: NavLink[] = [
 	{ name: 'Docs', href: withBase('/docs') },
 	{ name: 'For agents', href: withBase('/for-agents') },
 	{ name: 'Why Lattice', href: withBase('/#why') },
+	{ name: 'Desktop', href: withBase('/#desktop') },
 	{ name: 'GitHub', href: 'https://github.com/latticeandcompany/lattice', external: true },
 ];
 

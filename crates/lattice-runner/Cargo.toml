@@ -17,10 +17,11 @@ description = "Lattice async task executor"
 lattice-cache = { path = "../lattice-cache" }
 lattice-config = { path = "../lattice-config" }
 dagger = { path = "../dagger" }
-lattice-output = { path = "../lattice-output" }
+lattice-events = { path = "../lattice-events" }
 lattice-workspace = { path = "../lattice-workspace" }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(unix)'.dependencies]

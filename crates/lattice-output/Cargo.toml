@@ -14,5 +14,6 @@ categories.workspace = true
 description = "Lattice terminal output formatting"
 
 [dependencies]
+lattice-events = { path = "../lattice-events" }
 console = "0.16"
 indicatif = "0.18"

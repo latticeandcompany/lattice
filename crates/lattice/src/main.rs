@@ -2,7 +2,6 @@ mod cli;
 mod commands;
 mod drift;
 mod release;
-mod schema;
 
 use anyhow::Result;
 use clap::Parser;

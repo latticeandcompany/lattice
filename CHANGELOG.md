@@ -10,6 +10,80 @@ first run after an upgrade re-runs everything.
 
 <!-- Add your entry here, as a `###` section titled for what changed. -->
 
+### The desktop app says what it means — 2026-08-08
+
+The app's controls asked in the CLI's vocabulary. `dependsOn`, `persistent`, "Ignore
+cache", "Concurrency: auto", "no driver resolved" — accurate, and no help at all to
+anyone who has not already read the schema. They now ask in English: "waits for",
+"keeps running until stopped", "skip the cache", "as many at once as fits", "nothing
+found to run it with". Every control in the config form still shows the `lattice.json`
+key it writes, so the form can be used without the schema and teaches it on the way
+through.
+
+Nothing the CLI also prints was reworded. A task's state and a run's summary line are
+still the terminal's, to the character, because the same run described two ways is
+worse than either wording alone.
+
+The app's accent is now crimson rather than ink, on the buttons, the checkboxes, the
+focus rings, and the active rail — Lattice Desktop's own product colour, on its own
+product surface, including the `desktop` word the lockup in the sidebar now carries.
+Failure moved off crimson to amber so a broken row and a Run button never share a
+colour; amber is a status hue only, and deliberately not the orange BRAND.md holds in
+reserve for a future product. `scripts/checkBrandTokens.mjs` compares the two copies of
+`bootstrap.scss` setting by setting instead of byte by byte, so the one value they must
+disagree about is pinned and every other value still cannot drift; the accent's
+`--focus` override lives in the app's own `_accent.scss` so the shared token file the
+website also uses stays identical.
+
+All thirteen ecosystems Lattice detects have artwork; seven of them showed a two-letter
+monogram before. They are vector now rather than pre-sized PNGs, and they sit on a fixed
+light plate, so a mark drawn for a white background is legible in dark mode without a
+second file per ecosystem.
+
+Waiting looks like waiting: opening a repo, scanning one, saving a config, and a run in
+flight all show a spinner with a word beside it, in the accent, wherever it appears.
+
+Switching repos was a two-glyph icon button in the bottom corner of the sidebar, which
+said nothing about what it switched. The open repo is now a dropdown in its own right,
+at the top of the rail where it already named itself: it lists every repo you have
+opened, marks the current one, and carries opening another and closing this one. In a
+window that only ever shows one repo, that is the control most worth being able to find.
+
+### A desktop app — 2026-08-07
+
+Lattice has a window. It lists the tasks each workspace can run and runs them, shows the
+dependency graph, edits `lattice.json`, and scaffolds a config for a repo that has none.
+It is a front end over the same engine, linked in process, so it cannot disagree with
+the CLI about what a task is or whether it needs to run.
+
+What it shows that a terminal cannot keep: which workspaces exist and what each one
+resolves to, the shape of the graph a task will run, and — when a task misses the cache
+— which of the ten key components actually moved.
+
+Run it with `npm run app` in `apps/desktop`. Installers are not part of this change.
+
+Four things moved to make room, none of which changes CLI behaviour:
+
+`TaskEvent` and the `Reporter` trait now live in a new `lattice-events` crate, which
+depends on `serde` and nothing else. `lattice-runner` no longer depends on
+`lattice-output`, so watching a run no longer means linking a terminal stack.
+
+A cache miss travels as data. It used to be collapsed into a sentence at the point it
+was detected, throwing away the component list behind it; it is now a typed
+`CacheMiss`, and the wording lives on it so both front ends say the same thing.
+
+The pipeline every front end runs — open a repo, plan, execute, interpret the result —
+moved out of the `run` subcommand into `lattice-project`. The subcommand had five
+`process::exit` calls in it, which is why nothing else could call it.
+
+`ExecuteOptions` gained `cancel`. `shutdown` reads like the way to stop a run but is
+only awaited once the graph has drained and persistent tasks are holding it open, so a
+graph of ordinary tasks never consulted it. A caller with no signal to send itself now
+has a way to stop a build.
+
+The JSON Schema moved from the binary to `lattice-config`, next to the types it
+describes.
+
 ### Cache entries live directly in the cache directory — 2026-08-07
 
 Entries were written under a subdirectory named for an on-disk cache format

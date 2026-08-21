@@ -41,8 +41,8 @@ mod tests {
 			.keys()
 			.collect();
 
-		let populated = lattice_config::Settings {
-			max_cache_size: Some(lattice_config::CacheSize::parse("1GB").unwrap()),
+		let populated = crate::Settings {
+			max_cache_size: Some(crate::CacheSize::parse("1GB").unwrap()),
 			cache_dir: Some(".lattice/cache".to_string()),
 			loquacious: true,
 			version_check: true,

@@ -1,0 +1,42 @@
+[package]
+name = "lattice-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Lattice desktop app"
+
+[lib]
+name = "lattice_desktop_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "lattice-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+dagger = { path = "../../../crates/dagger" }
+lattice-config = { path = "../../../crates/lattice-config" }
+lattice-events = { path = "../../../crates/lattice-events" }
+lattice-project = { path = "../../../crates/lattice-project" }
+lattice-runner = { path = "../../../crates/lattice-runner" }
+lattice-workspace = { path = "../../../crates/lattice-workspace" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tempfile = "3"

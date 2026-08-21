@@ -1,0 +1,66 @@
+// The terminal card, lifted from the website's codeSample component so a command
+// or a log reads the same in both places: a quiet surface shift, a header with
+// three dots and a filename, and DM Mono inside.
+
+.code-card {
+	background: var(--surface-2);
+	overflow: hidden;
+}
+
+.code-card__bar {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	background: transparent;
+}
+
+.code-card__dot {
+	width: 0.6rem;
+	height: 0.6rem;
+	border-radius: 50%;
+	background: var(--border);
+}
+
+.code-card__name {
+	margin-left: 0.5rem;
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.code-card__body {
+	padding: 1.1rem 1.25rem;
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.85rem;
+	line-height: 1.7;
+	color: var(--text);
+	overflow-x: auto;
+	white-space: pre;
+	tab-size: 2;
+}
+
+// A live log pane. Capped rather than unbounded: a compiler will happily emit more
+// lines than a window can hold, and the interesting ones are at the bottom.
+.code-card__body--log {
+	max-height: 18rem;
+	overflow-y: auto;
+	padding: 0.75rem 1rem;
+	font-size: 0.78rem;
+	line-height: 1.55;
+}
+
+.code-card__line {
+	display: block;
+}
+
+// stderr is dimmed rather than colored: it is not necessarily an error, and
+// spending the failure color on it would make the real one mean less.
+.code-card__line--err {
+	color: var(--text-muted);
+}
+
+.code-card__dropped {
+	display: block;
+	color: var(--text-muted);
+	font-style: italic;
+}

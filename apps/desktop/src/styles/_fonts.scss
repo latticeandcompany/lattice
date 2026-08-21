@@ -1,0 +1,38 @@
+// Self-hosted brand typefaces. Files live in /public/fonts and are served from
+// the site base; no CDN or external font service. DM Sans is the variable file
+// covering weights 400-700.
+
+@use './paths' as paths;
+
+@font-face {
+	font-family: 'DM Sans';
+	font-style: normal;
+	font-weight: 400 700;
+	font-display: swap;
+	src: url('#{paths.$base}/fonts/dm-sans.woff2') format('woff2');
+}
+
+// DM Serif Text is used only for the Lattice & Company parent lockup.
+@font-face {
+	font-family: 'DM Serif Text';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('#{paths.$base}/fonts/dm-serif-text.woff2') format('woff2');
+}
+
+@font-face {
+	font-family: 'DM Mono';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('#{paths.$base}/fonts/dm-mono-400.woff2') format('woff2');
+}
+
+@font-face {
+	font-family: 'DM Mono';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('#{paths.$base}/fonts/dm-mono-500.woff2') format('woff2');
+}

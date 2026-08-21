@@ -20,6 +20,7 @@ single assigned accent color, never through a different look.
 ```
 Lattice Build      →  "Lattice" in ink/paper, "Build" in teal
 Lattice Cloud      →  "Lattice" in ink/paper, "Cloud" in purple
+Lattice Desktop    →  "Lattice" in ink/paper, "Desktop" in crimson
 Lattice & Co.      →  fully neutral, no accent (the parent)
 ```
 
@@ -37,10 +38,14 @@ the brand.
 | **Lattice & Co.** | Parent company                | Neutral (none)    |
 | **Lattice Build** | The build system (this repo)  | Teal `#1B998B`    |
 | **Lattice Cloud** | Cloud platform                | Purple `#6622CC`  |
-| _Reserved_      | Future products               | Crimson `#CA2E55`, Orange `#FF6F00` |
+| **Lattice Desktop** | The desktop app (this repo) | Crimson `#CA2E55` |
+| _Reserved_      | Future products               | Orange `#FF6F00`  |
 
-A product keeps its color permanently. Crimson and orange are held in reserve;
-do not spend them on marketing moments or one-off surfaces.
+A product keeps its color permanently. Orange is held in reserve; do not spend it on
+marketing moments or one-off surfaces.
+
+Lattice Desktop is a front end for Lattice Build rather than a separate tool, so it
+takes the product word `desktop` beside the wordmark and never a mark of its own.
 
 ### Donated / independent projects
 
@@ -103,7 +108,7 @@ hover/active and light/dark contexts. Use `-500` as the canonical value.
 | `purple-500`   | `#6622CC` |
 | `purple-700`   | `#4A1795` |
 
-**Crimson — reserved**
+**Crimson — Lattice Desktop**
 | Token           | Hex       |
 | --------------- | --------- |
 | `crimson-300`   | `#E06A87` |
@@ -140,12 +145,39 @@ This is the only surface where color is a functional index rather than an
 accent. A parallel run interleaves lines from every task at once, and the color
 is the only thing that lets a reader follow one of them — there is no layout to
 do it with. Reusing teal would mean every label the same color, which indexes
-nothing; spending crimson and orange here would burn two reserved product
-accents on a log.
+nothing; spending crimson and orange here would burn two product accents on a log.
 
 It does not license a second palette anywhere else. Interactive mode, the site,
 the docs, and every other surface stay on §2 as written, and even here the rest
 of the line is unstyled: nothing but the label takes a color.
+
+### Amber for failure — the second exception
+
+Inside the desktop app, failure — failed tasks, and failed nodes in the graph — is
+amber: `#B45309` on light surfaces, `#F5A524` on dark, where the base shade is far too
+dark on ink.
+
+Amber is not a brand colour and never becomes one. It is deliberately *not* the
+reserved orange `#FF6F00`: orange is held for a future product, and spending it on a
+status would burn a product accent on a log. Amber has one job, in one app, and no
+licence to appear anywhere else.
+
+Failure gets its own hue because the app's accent is already crimson. Lattice Desktop
+spends crimson the way §1 expects — the `desktop` product word, primary actions, focus
+rings, the active nav rule — and a failed row in the same colour as the Run button
+would make the app's most legible signal ambiguous. So the accent means "press this"
+and amber means "this broke", and neither borrows the other's meaning.
+
+This is an amendment made by the brand owner, not an exception someone found. It
+exists because a build tool with no failure colour asks a developer to read a list of
+forty rows to find the one that broke, and no other channel scans as fast.
+
+Colour is still not the only carrier. A failed task shows a `bi-x-lg`, the word
+"failed", an amber left rule, and its output pane already open — four channels, so the
+list stays readable to someone who cannot distinguish the hues.
+
+The website has no failure state and the CLI has its own palette, so the amber tokens
+live in `apps/desktop/src/styles/_status.scss` rather than in the shared brand tokens.
 
 ### Accessibility
 
@@ -154,6 +186,13 @@ of the line is unstyled: nothing but the label takes a color.
 - Accent-on-base is for large text, CTAs, and non-text UI only. Do not set long
   body copy in an accent color. `teal-500`/`purple-500` on `--paper` pass AA for
   large/bold text; verify per-context.
+- Crimson is measured, so it does not have to be re-derived: `crimson-500` on
+  `--paper` is 4.95:1 and `crimson-300` on `--ink` is 6.18:1, both clearing AA for
+  body text. `crimson-500` on `--ink` is only 3.79:1, which is why dark surfaces take
+  the tint rather than the base shade. On a filled crimson button the label is
+  `--paper` at 4.95:1, over `--ink`'s 3.79:1.
+- The desktop app's failure amber is measured too: `#B45309` on `--paper` is 4.77:1
+  and `#F5A524` on `--ink` is 9.66:1, both clearing AA for body text.
 - Never rely on color alone to convey meaning.
 
 ---
@@ -436,8 +475,9 @@ For independent projects in the family (e.g. ArenaSwap), include in the footer:
 
 - `Lattice` = always ink or paper. Product name = the color.
 - Base: `--ink #020D0C`, `--paper #FBF8FF` — never pure black/white.
-- Build = teal `#1B998B` · Cloud = purple `#6622CC` · Co. = neutral · crimson &
-  orange reserved.
+- Build = teal `#1B998B` · Cloud = purple `#6622CC` · Desktop = crimson `#CA2E55` ·
+  Co. = neutral · orange reserved. The desktop app spends crimson on its accent
+  throughout; failure there is amber, which is not a brand colour (§2).
 - Type: **DM Sans** everywhere, **DM Mono** for code.
 - 60 · 25 · 10 · 5 — accent is the 5 %.
 - Voice: precise, confident, understated.

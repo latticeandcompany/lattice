@@ -3,14 +3,17 @@
   "latticeVersion": "1.0.0-beta-2",
   "workspaces": [
     { "name": "lattice-config", "path": "crates/lattice-config" },
-    { "name": "lattice-output", "path": "crates/lattice-output" },
+    { "name": "lattice-events", "path": "crates/lattice-events" },
+    { "name": "lattice-output", "path": "crates/lattice-output", "dependsOn": ["lattice-events"] },
     { "name": "lattice-workspace", "path": "crates/lattice-workspace", "dependsOn": ["lattice-config"] },
     { "name": "lattice-cache", "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
     { "name": "lattice-testkit", "path": "crates/lattice-testkit" },
     { "name": "dagger", "path": "crates/dagger", "dependsOn": ["lattice-config", "lattice-workspace"] },
-    { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
-    { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } }
+    { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["dagger", "lattice-cache", "lattice-events", "lattice-config", "lattice-workspace"] },
+    { "name": "lattice-project", "path": "crates/lattice-project", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-events", "lattice-config", "lattice-workspace"] },
+    { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-project", "lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
+    { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } },
+    { "name": "desktop", "path": "apps/desktop", "engines": { "node": ">=26" }, "dependsOn": ["lattice-project", "lattice-events"] }
   ],
   "engines": {
     "cargo": ">=1.86.0"
@@ -19,7 +22,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "tsconfig.json"]
+      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "vite.config.ts", "index.html", "tsconfig.json", "src-tauri/src/**/*", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "src-tauri/capabilities/**"]
     },
     "dev": {
       "persistent": true,
@@ -35,6 +38,10 @@
     "check": {
       "inputs": ["src/**/*", "Cargo.toml"]
     },
-    "clean": {}
+    "clean": {},
+    "bundle": {
+      "dependsOn": ["build", "^bundle"],
+      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "vite.config.ts", "index.html", "tsconfig.json", "src-tauri/src/**/*", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "src-tauri/capabilities/**"]
+    }
   }
 }

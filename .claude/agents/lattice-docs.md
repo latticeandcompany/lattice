@@ -53,13 +53,13 @@ sanctioned exception. Everything else derives from that file.
 
 ```
 crates/
-  lattice/              CLI: clap surface, subcommands, bundled JSON Schema
+  lattice/              CLI: clap surface, subcommands
     src/cli.rs          Cli/Commands, output-mode detection, version-drift nag
-    src/schema.rs       ensure_schema() — self-heals .lattice/schema.json
     src/commands/       run, setup, init, prune, completions, version
-    assets/schema.json  The canonical lattice.json JSON Schema (compiled in)
     tests/              e2e_run, e2e_init, e2e_toolchain, e2e_halves
   lattice-config/       lattice.json types, validation, find_root, load_config
+    src/schema.rs       ensure_schema() — self-heals .lattice/schema.json
+    assets/schema.json  The canonical lattice.json JSON Schema (compiled in)
   lattice-workspace/    Workspace discovery, driver detection (evidence ladder)
     src/toolchain.rs    The engine gradient: host / validate / provision
   dagger/               Builds the execution DAG + the in-degree Schedule
@@ -208,7 +208,7 @@ Config reference lives in `lattice-config/src/lib.rs`: `LatticeConfig`
 `WorkspaceConfig` (`name`, `path` — literal, never a glob — `auto`, `engines`,
 `dependsOn`, `scripts`), `PipelineTask` (`dependsOn`, `inputs`, `outputs`,
 `ignore`, `env`, `persistent`, `cache`), `Settings` (`maxCacheSize`, `cacheDir`,
-`loquacious`, `versionCheck`). `crates/lattice/assets/schema.json` is
+`loquacious`, `versionCheck`). `crates/lattice-config/assets/schema.json` is
 the compiled-in JSON Schema; keep it, the types, and the docs in agreement.
 
 ---

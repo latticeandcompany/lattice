@@ -1,0 +1,316 @@
+// The window chrome: a fixed rail beside one scrolling pane.
+//
+// A desktop tool's destinations do not compete for attention the way a marketing
+// navbar's do, so they sit in a persistent rail rather than a top bar. The rail is
+// the same 15rem the docs sidebar uses, with the same hairline separator.
+
+.app-shell {
+	display: grid;
+	grid-template-columns: 15rem minmax(0, 1fr);
+	height: 100vh;
+	overflow: hidden;
+}
+
+.app-rail {
+	display: flex;
+	flex-direction: column;
+	gap: 1.25rem;
+	padding: 1rem 0.85rem;
+	border-right: 1px solid var(--border-subtle);
+	background: var(--surface);
+	overflow-y: auto;
+}
+
+// macOS hides the title bar and keeps the traffic lights over our own surface, so
+// the rail head has to start below them. Every other platform keeps its native bar.
+:root[data-platform='macos'] .app-rail {
+	padding-top: 1.9rem;
+}
+
+.app-rail__head {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0 0.35rem;
+}
+
+.app-rail__wordmark {
+	font-size: 1.1rem;
+	font-weight: 500;
+	letter-spacing: var(--wordmark-tracking);
+	color: var(--text);
+}
+
+// The open repo, as the control that changes it. It reads as a field rather than a
+// button so it does not compete with the rail's destinations, and picks up an edge on
+// hover to say it can be pressed.
+.rail-project {
+	min-width: 0;
+}
+
+.rail-project__trigger {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	width: 100%;
+	padding: 0.4rem 0.5rem;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	text-align: left;
+
+	&:hover:not(:disabled),
+	&[aria-expanded='true'] {
+		border-color: var(--border);
+		background: var(--surface-2);
+	}
+
+	&:disabled {
+		opacity: 0.6;
+	}
+}
+
+.rail-project__caret {
+	flex: 0 0 auto;
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.rail-project__name {
+	display: block;
+	font-size: 0.9rem;
+	font-weight: 500;
+	color: var(--text);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+// The tail of a path is the part that identifies it, so overflow is cut from the front.
+.rail-project__path {
+	display: block;
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+
+.rail-project__current {
+	display: block;
+	font-size: 0.85rem;
+	font-weight: 500;
+	color: var(--text);
+}
+
+.rail-project__current .bi {
+	color: var(--focus);
+}
+
+// The rail scrolls, so a menu wider than it is clipped by the scroll container rather
+// than allowed to overflow — it would take a horizontal scrollbar with it. The menu
+// stays the rail's width and cuts its own text instead, and because a path is cut from
+// the front the part that identifies a repo is the part that survives.
+.rail-project__menu {
+	min-width: 100%;
+	max-width: 100%;
+}
+
+.rail-project__row {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+
+	// Without this the name sets the row's width and pushes the forget button out of
+	// the menu instead of being cut short itself.
+	.dropdown-item {
+		min-width: 0;
+	}
+}
+
+// Quiet enough that removing a repo from the list is never the obvious thing to click.
+.rail-project__forget {
+	flex: 0 0 auto;
+	margin-right: 0.35rem;
+	padding: 0.15rem 0.4rem;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-muted);
+	line-height: 1;
+
+	&:hover {
+		color: var(--text);
+		background: var(--surface-2);
+	}
+}
+
+.app-rail__group {
+	font-size: 0.7rem;
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+	padding: 0 0.35rem 0.35rem;
+}
+
+.app-rail__foot {
+	margin-top: auto;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0 0.15rem;
+}
+
+// The active destination carries a crimson left rule, the same marker the docs nav uses.
+// Only one destination is ever active, so the rail spends the accent once.
+.rail-link {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	width: 100%;
+	padding: 0.4rem 0.35rem 0.4rem 0.5rem;
+	border: 0;
+	border-left: 2px solid transparent;
+	border-radius: 0;
+	background: transparent;
+	font-size: 0.925rem;
+	text-align: left;
+	transition:
+		color 0.15s ease,
+		background 0.15s ease;
+
+	&.active {
+		border-left-color: var(--focus);
+		background: var(--surface-2);
+		font-weight: 500;
+	}
+}
+
+.app-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.app-main__scroll {
+	flex: 1;
+	overflow-y: auto;
+	padding: 1.5rem 1.75rem 3rem;
+}
+
+.app-main__inner {
+	max-width: 72rem;
+}
+
+// The run bar pins to the top of the pane so the controls stay reachable while a
+// long task list scrolls underneath.
+.run-bar {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+	padding: 0.85rem 1.75rem;
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface);
+}
+
+.run-bar__row {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	flex-wrap: wrap;
+}
+
+.run-bar__summary {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.78rem;
+	color: var(--text-muted);
+}
+
+// A hairline strip, used where the site would have had nothing: it has no .alert,
+// so a notice is a bordered surface shift rather than a tinted panel.
+.notice {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.6rem;
+	padding: 0.7rem 0.85rem;
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	background: var(--surface-2);
+	font-size: 0.9rem;
+}
+
+.notice--bad {
+	border-color: var(--fail);
+}
+
+.empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.85rem;
+	padding: 4rem 1rem;
+	text-align: center;
+	color: var(--text-muted);
+}
+
+// A version pin, an engine constraint, a driver name: mono metadata on a quiet
+// chip. Not Bootstrap's .badge — the site uses none, so this is the house form.
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3rem;
+	padding: 0.1rem 0.4rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 4px;
+	background: var(--surface-2);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+}
+
+// A language mark with no artwork: the driver's family in two letters, on the same
+// square as a wizard step number so it reads as deliberate rather than missing.
+.lang-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	flex: 0 0 auto;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--surface);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.68rem;
+	color: var(--text-muted);
+	overflow: hidden;
+}
+
+// Every logo is drawn for a light background, and several are ink or a deep purple
+// that would sink into a dark surface. A fixed paper plate — invisible in light mode,
+// a tile in dark — shows all thirteen in their own colours with no second file each.
+.lang-mark--art {
+	border-color: var(--border-subtle);
+	background: var(--paper);
+	padding: 2px;
+}
+
+.lang-mark img {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+}
+
+.lang-mark--none {
+	border-style: dashed;
+}

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Lattice</title>
+		<link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+		<!--
+			Resolve the theme before the first paint, the same way the website's layouts
+			do. It has to stay synchronous and inline: reading the choice from a Tauri
+			store is async, and the window would show a light frame first.
+		-->
+		<script>
+			(() => {
+				let theme;
+				try {
+					theme = localStorage.getItem('theme');
+				} catch {}
+				if (theme !== 'light' && theme !== 'dark') {
+					theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+				}
+				document.documentElement.setAttribute('data-bs-theme', theme);
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

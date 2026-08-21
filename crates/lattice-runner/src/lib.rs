@@ -4,8 +4,9 @@
 //! still watching them for an exit.
 //!
 //! The runner is deliberately I/O-only with respect to presentation: it emits
-//! typed [`lattice_output::TaskEvent`]s and calls the [`lattice_output::Reporter`]
-//! hooks. It never touches `console`, `indicatif`, or `println!` for task status.
+//! typed [`lattice_events::TaskEvent`]s and calls the [`lattice_events::Reporter`]
+//! hooks. It never touches `console`, `indicatif`, or `println!` for task status,
+//! and it does not depend on the crate that renders them.
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -27,9 +28,10 @@ use lattice_cache::{
 	KeyBreakdown, LocalStore,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
-use lattice_output::{Reporter, TaskEvent};
+use lattice_events::{CacheMiss, Reporter, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::Workspace;
+use serde::Serialize;
 
 /// Cap on how many child-output lines a single failing task retains for the
 /// expand-on-failure surface. Beyond this, lines are still streamed live but not
@@ -42,7 +44,8 @@ const MAX_CAPTURED_LINES: usize = 5000;
 #[cfg_attr(not(unix), allow(dead_code, reason = "the graceful step is unix-only"))]
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunResult {
 	pub total: usize,
 	pub cached: usize,
@@ -301,6 +304,15 @@ pub struct ExecuteOptions<'a> {
 	/// The CLI passes `ctrl_c()`; tests pass a short timer. `None` => if
 	/// persistent tasks remain, wait on `ctrl_c` internally.
 	pub shutdown: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+	/// Fires to abort the run the way Ctrl-C does: stop scheduling, terminate
+	/// every child, and finish as [`RunInterrupted`].
+	///
+	/// [`ExecuteOptions::shutdown`] cannot do this. It is only awaited once the
+	/// graph has drained and persistent tasks are holding the run open, so a graph
+	/// with no persistent task never consults it. A caller that is not a terminal
+	/// has no signal to send itself, so without this there is no way to stop a
+	/// build in progress.
+	pub cancel: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 /// A plain, `Send`-able description of one task to execute. Extracted from the
@@ -562,6 +574,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		reporter,
 		lattice_version,
 		shutdown,
+		cancel,
 	} = opts;
 
 	let global_start = Instant::now();
@@ -674,7 +687,17 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		let interrupted = interrupted.clone();
 		let children = children.clone();
 		tokio::spawn(async move {
-			interrupt_signal().await;
+			// A caller-supplied cancel is the same event as the signal, so it ends
+			// the run the same way and reports the same interruption.
+			match cancel {
+				Some(mut cancel) => {
+					tokio::select! {
+						_ = interrupt_signal() => {}
+						_ = &mut cancel => {}
+					}
+				}
+				None => interrupt_signal().await,
+			}
 			interrupted.store(true, Ordering::SeqCst);
 			abort.store(true, Ordering::SeqCst);
 			shutting_down.store(true, Ordering::SeqCst);
@@ -1010,11 +1033,11 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 				}
 			}
 			Ok(None) => {
-				let _ = ctx.tx.send(RunnerMsg::TaskNote {
+				let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::CacheMiss {
 					workspace: ws.clone(),
 					task: task.clone(),
-					msg: miss_reason(ctx.store.as_ref(), &ws, &task, &breakdown),
-				});
+					miss: cache_miss(ctx.store.as_ref(), &ws, &task, &breakdown),
+				}));
 			}
 			Err(e) => {
 				let _ = ctx.tx.send(RunnerMsg::TaskWarn {
@@ -1217,20 +1240,25 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 
 /// Why this task did not hit the cache, in the terms the config uses.
 ///
-/// A key is one hash: on its own it can say a task missed, never what moved. The
-/// components behind it can, measured against what this task resolved to the
-/// last time it ran.
-fn miss_reason(store: &dyn CacheStore, workspace: &str, task: &str, now: &KeyBreakdown) -> String {
+/// The component names travel as data rather than as a sentence: a front end
+/// wants to point at the inputs that moved, and [`CacheMiss::describe`] is what
+/// turns them back into the line a terminal prints.
+fn cache_miss(
+	store: &dyn CacheStore,
+	workspace: &str,
+	task: &str,
+	now: &KeyBreakdown,
+) -> CacheMiss {
 	let Some(previous) = store.last_fingerprint(workspace, task) else {
-		return "cache miss (nothing cached for this task yet)".to_string();
+		return CacheMiss::FirstRun;
 	};
 	let changed = now.changed_from(&previous);
 	if changed.is_empty() {
-		// The key matches what last ran, so the entry itself is gone: evicted by a
-		// prune, or dropped as corrupt on the way in.
-		return "cache miss (the entry for this key is no longer in the cache)".to_string();
+		return CacheMiss::EntryEvicted;
 	}
-	format!("cache miss: {} changed", changed.join(", "))
+	CacheMiss::Changed {
+		components: changed.into_iter().map(String::from).collect(),
+	}
 }
 
 /// Wait on one persistent child until either it ends on its own — reported back
@@ -1392,7 +1420,7 @@ mod tests {
 	use super::*;
 	use dagger::build_execution_graph;
 	use lattice_config::{EngineMap, PipelineTask};
-	use lattice_output::TaskEvent;
+	use lattice_events::TaskEvent;
 	use lattice_testkit as sh;
 	use std::sync::Mutex;
 	use std::time::Duration;
@@ -1421,6 +1449,11 @@ mod tests {
 						workspace, task, ..
 					} => {
 						format!("cachehit:{workspace}:{task}")
+					}
+					TaskEvent::CacheMiss {
+						workspace, task, ..
+					} => {
+						format!("cachemiss:{workspace}:{task}")
 					}
 					TaskEvent::Output {
 						workspace, task, ..
@@ -1693,6 +1726,7 @@ mod tests {
 			reporter,
 			lattice_version: "0.1.0-test",
 			shutdown: None,
+			cancel: None,
 		}
 	}
 
@@ -2426,14 +2460,68 @@ mod tests {
 		now.components
 			.insert("inputs".to_string(), "moved".to_string());
 
-		let reason = miss_reason(&store, "app", "build", &now);
+		// The components travel as data, so the assertion is on the data rather
+		// than on the sentence built from it.
+		assert_eq!(
+			cache_miss(&store, "app", "build", &now),
+			CacheMiss::Changed {
+				components: vec!["inputs".to_string()],
+			}
+		);
+		let reason = cache_miss(&store, "app", "build", &now).describe();
 		assert!(
 			reason.contains("inputs changed"),
 			"a miss should name the part that moved: {reason}"
 		);
 
 		// A task that has never run has nothing to be measured against.
-		let unseen = miss_reason(&store, "app", "lint", &now);
-		assert!(unseen.contains("nothing cached"), "{unseen}");
+		assert_eq!(cache_miss(&store, "app", "lint", &now), CacheMiss::FirstRun);
+	}
+	#[tokio::test]
+	async fn cancel_stops_a_graph_that_has_no_persistent_task() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		// A long, ordinary task. `shutdown` is never consulted for a graph like
+		// this one, so before `cancel` existed there was no way to stop it.
+		let workspaces = vec![ws("app", root, &[("build", &sh::sleep(30))])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
+		o.cancel = Some(shutdown_after(300));
+
+		let started = Instant::now();
+		let err = execute_tasks(o)
+			.await
+			.expect_err("a cancelled run does not complete");
+		let elapsed = started.elapsed();
+
+		assert!(
+			err.downcast_ref::<RunInterrupted>().is_some(),
+			"a cancel ends the run the way Ctrl-C does: {err:#}"
+		);
+		assert!(
+			elapsed < Duration::from_secs(15),
+			"the run waited {elapsed:?}, so the cancel did not reach the child"
+		);
+	}
+
+	#[tokio::test]
+	async fn a_run_with_no_cancel_still_finishes_on_its_own() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let marker = root.join("done.txt");
+		let workspaces = vec![ws("app", root, &[("build", &sh::touch(&marker))])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+
+		let reporter = RecordingReporter::new();
+		let o = opts(&graph, &workspaces, &config, root, &reporter);
+		let result = execute_tasks(o).await.unwrap();
+
+		assert_eq!(result.total, 1);
+		assert_eq!(result.failed, 0);
+		assert!(marker.exists());
 	}
 }

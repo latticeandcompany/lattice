@@ -27,7 +27,7 @@ impl PruneArgs {
                  run `lattice init` to create one"
 			)
 		})?;
-		crate::schema::ensure_schema(&root);
+		lattice_config::schema::ensure_schema(&root);
 		let config = lattice_config::load_config(&root)?;
 
 		let max = match &self.max_size {

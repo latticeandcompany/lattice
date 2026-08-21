@@ -1,0 +1,145 @@
+// The task list: one card per workspace, one row per task it can actually run.
+
+.ws-card__head {
+	display: flex;
+	align-items: center;
+	gap: 0.65rem;
+	padding: 0.85rem 1rem;
+	border-bottom: 1px solid var(--border-subtle);
+	background: transparent;
+}
+
+.ws-card__name {
+	font-size: 1.05rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+
+.ws-card__path {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+// A left rule marks the row a run is touching, the same device the docs nav and
+// the search palette use for "this one".
+.task-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.45rem 0.9rem 0.45rem 0.75rem;
+	border-left: 2px solid transparent;
+	border-bottom: 1px solid var(--border-subtle);
+
+	&:last-of-type {
+		border-bottom: 0;
+	}
+}
+
+.task-row--running {
+	border-left-color: var(--focus);
+	background: var(--surface-2);
+}
+
+.task-row--failed {
+	border-left-color: var(--fail);
+}
+
+.task-row__name {
+	font-size: 0.925rem;
+	font-weight: 500;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.task-row__command {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+// Status is an icon and a word together, so it never depends on color alone.
+.task-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.task-status--done,
+.task-status--exited {
+	color: var(--text);
+}
+
+.task-status--cached {
+	color: var(--text);
+
+	.bi {
+		color: var(--focus);
+	}
+}
+
+.task-status--failed {
+	color: var(--fail);
+}
+
+.task-row__actions {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+}
+
+.task-row__log {
+	grid-column: 1 / -1;
+	padding-top: 0.5rem;
+}
+
+// A quiet square icon button. Bootstrap's .btn-sm is still wider than a row of
+// them wants to be.
+.icon-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.9rem;
+	height: 1.9rem;
+	padding: 0;
+	border: 1px solid var(--border-subtle);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-muted);
+	line-height: 1;
+	transition:
+		color 0.15s ease,
+		border-color 0.15s ease,
+		background 0.15s ease;
+
+	&:hover:not(:disabled) {
+		color: var(--text);
+		border-color: var(--border);
+		background: var(--surface-2);
+	}
+
+	&:disabled {
+		opacity: 0.4;
+	}
+}
+
+// The components a cache miss came from, so an opaque key becomes a list of the
+// things that actually moved.
+.miss-chips {
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	flex-wrap: wrap;
+	grid-column: 1 / -1;
+	padding-top: 0.35rem;
+}

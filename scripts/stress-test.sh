@@ -148,6 +148,7 @@ t_hasE()  { if haveE "$2"; then pass "$1"; else fail "$1" "missing /$2/ | $(snip
 t_hasnt() { if have  "$2"; then fail "$1" "unexpected [$2] | $(snip)"; else pass "$1"; fi; }
 t_file()  { if [ -e "$1" ]; then pass "$2"; else fail "$2" "missing file $1"; fi; }
 t_nofile(){ if [ -e "$1" ]; then fail "$2" "unexpected file $1"; else pass "$2"; fi; }
+t_dir()   { if [ -d "$1" ]; then pass "$2"; else fail "$2" "missing directory $1"; fi; }
 t_grepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then pass "$3"; else fail "$3" "[$2] not in $1"; fi; }
 t_nogrepfile() { if grep -qF -- "$2" "$1" 2>/dev/null; then fail "$3" "unexpected [$2] in $1"; else pass "$3"; fi; }
 
@@ -501,21 +502,27 @@ late "STRESS_VAR=beta"  "$PROD" run envtask --filter core ; t_hasnt "changed env
 
 # The stored entry records the value its key was computed from, so an opaque key
 # stays explainable.
-if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*/*.meta.json 2>/dev/null; then
+if grep -qF '"STRESS_VAR": "alpha"' "$PROD"/.lattice/cache/*.meta.json 2>/dev/null; then
   pass "the cache entry records the env value it was keyed on"
 else
   fail "the cache entry records the env value it was keyed on" "no meta file names STRESS_VAR=alpha"
 fi
 
-# Entries are grouped by cache format, so changing what goes into a key retires
-# the old group instead of risking a read against keys that meant something else.
-# Matched by shape rather than by the current version, so a format bump does not
-# have to remember to come back here.
-FORMAT_DIRS="$(find "$PROD/.lattice/cache" -mindepth 1 -maxdepth 1 -type d -name 'v[0-9]*' 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$FORMAT_DIRS" -ge 1 ]; then
-  pass "cache entries live under a format directory"
+# Entries sit directly under cacheDir. The running version is already part of
+# every key, so a release that changes what a key covers moves every key on its
+# own and needs no second grouping mechanism to retire the old ones.
+ENTRIES="$(find "$PROD/.lattice/cache" -maxdepth 1 -name '*.meta.json' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$ENTRIES" -ge 1 ]; then
+  pass "cache entries sit directly under the cache directory"
 else
-  fail "cache entries live under a format directory" "no v<n> directory in $PROD/.lattice/cache"
+  fail "cache entries sit directly under the cache directory" "no *.meta.json at the top of $PROD/.lattice/cache"
+fi
+
+NESTED="$(find "$PROD/.lattice/cache" -mindepth 1 -maxdepth 1 -type d -name 'v[0-9]*' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$NESTED" -eq 0 ]; then
+  pass "no cache-format directory is created"
+else
+  fail "no cache-format directory is created" "found a v<n> directory in $PROD/.lattice/cache"
 fi
 
 # Full cache: a run where every scheduled task came back from cache is called
@@ -1210,7 +1217,10 @@ lat "$KEEP" run build  ; t_ok "run with cacheDir=.lattice exits 0"
 lat "$KEEP" prune      ; t_ok "prune with cacheDir=.lattice exits 0"
 t_file   "$KEEP/.lattice/toolchains/faketool/1.0.0-abcd/bin/faketool" "prune keeps the provisioned toolchains"
 t_file   "$KEEP/.lattice/bin/lattice-1.0.0" "prune keeps the installed binary"
-t_nofile "$KEEP/.lattice/v1" "prune still reclaims an earlier cache format"
+# Prune removes no directories at all, which is what keeps it from ever calling
+# remove_dir_all on a path the user chose as cacheDir. A leftover v1/ from an
+# older build is unreachable, and deleting it is the user's call, not prune's.
+t_dir    "$KEEP/.lattice/v1" "prune removes no directories, including an unreachable old format"
 
 # --- settings.maxCacheSize is enforced by the run --------------------------
 # The setting reads as a budget, so it has to be one: leaving enforcement to
@@ -1856,6 +1866,94 @@ t_ok "every fingerprint in the skill's driver table resolves a driver"
 while IFS=$'\t' read -r tool fp inv; do
   t_has "the skill's invoke template for $tool ($fp)" "$tool:build  ${inv/\{task\}/build}"
 done < "$DRVDIR/rows.tsv"
+
+# =========================================================================
+# The desktop app's wiring.
+#
+# The app itself needs a webview and a browser, neither of which belongs in a
+# hermetic suite. What is checkable here is the wiring around it: that its crate is
+# in the workspace, that its config says what the build depends on it saying, and
+# that it grants the webview no filesystem reach.
+# =========================================================================
+sect "the desktop app's wiring"
+
+DESKTOP="$REPO_ROOT/apps/desktop"
+CONF="$DESKTOP/src-tauri/tauri.conf.json"
+
+# A crate missing from the workspace only fails in the job that builds it, which is
+# not the job most changes run.
+META="$(cd "$REPO_ROOT" && cargo metadata --no-deps --format-version 1 2>/dev/null)"
+for crate in lattice-events lattice-project lattice-desktop; do
+  if printf '%s' "$META" | grep -q "\"name\":\"$crate\""; then
+    pass "cargo metadata lists $crate"
+  else
+    fail "cargo metadata lists $crate" "not a workspace member"
+  fi
+done
+
+t_file "$CONF" "the desktop app has a tauri.conf.json"
+
+# The version is deliberately absent so it falls back to Cargo.toml, which is why
+# check-versions.sh has nothing to assert about it. A version key here would drift.
+if grep -qE '^[[:space:]]*"version"[[:space:]]*:' "$CONF" 2>/dev/null; then
+  fail "tauri.conf.json declares no version of its own" "found a version key; it must fall back to Cargo.toml"
+else
+  pass "tauri.conf.json declares no version of its own"
+fi
+
+# devUrl and the dev server have to agree on a port, and frontendDist is what
+# generate_context! embeds.
+t_grepfile "$CONF" '"devUrl": "http://localhost:1420"' "tauri.conf.json points at the dev server port vite pins"
+t_grepfile "$CONF" '"frontendDist": "../dist"' "tauri.conf.json points at the frontend bundle"
+t_grepfile "$DESKTOP/vite.config.ts" 'port: 1420' "vite serves the port tauri.conf.json expects"
+t_grepfile "$DESKTOP/vite.config.ts" 'strictPort: true' "vite refuses another port rather than leaving the window pointed at nothing"
+
+CAPS="$DESKTOP/src-tauri/capabilities/default.json"
+t_grepfile "$CAPS" 'core:default' "the desktop app grants the core defaults"
+
+# A security invariant, not a preference: every filesystem access goes through a Rust
+# command, so the webview is never handed one of its own.
+if grep -q '"fs:' "$CAPS" 2>/dev/null; then
+  fail "the webview is granted no filesystem permission" "found an fs: permission in $CAPS"
+else
+  pass "the webview is granted no filesystem permission"
+fi
+
+# The brand token files are copies, so something has to notice when they diverge. The
+# script also pins the one setting they are allowed to disagree about, $primary.
+if (cd "$REPO_ROOT" && node scripts/checkBrandTokens.mjs >/dev/null 2>&1); then
+  pass "the desktop app's brand tokens match the website's"
+else
+  fail "the desktop app's brand tokens match the website's" "scripts/checkBrandTokens.mjs reported drift"
+fi
+
+# Crimson means two things in the app and no more: the product word, and failure. A
+# primary action in crimson would make it mean a third.
+t_grepfile "$DESKTOP/src/components/appShell.tsx" 'wordmark__product">desktop<' "the app's lockup carries the desktop product word"
+t_grepfile "$DESKTOP/src/globals.scss" '.wordmark__product' "the product word has a colour rule"
+t_nogrepfile "$DESKTOP/src/globals.scss" 'btn-contrast' "the app's primary action is btn-primary, not the site's ink CTA"
+
+# Bootstrap draws a spinner from currentColor, so without a rule of its own each one
+# takes the colour of whatever it sits in. Waiting is one state and reads as one colour.
+t_grepfile "$DESKTOP/src/globals.scss" '.spinner-border' "every spinner takes the accent rather than its surroundings"
+
+# Swapping repos is the thing a window that shows one repo at a time is most often asked
+# to do, so it lives on the repo itself rather than behind an icon in a corner.
+t_grepfile "$DESKTOP/src/components/appShell.tsx" '<ProjectSwitcher />' "the rail's repo block is the switcher"
+
+# The ecosystem a driver belongs to is chosen in Rust; the artwork for it lives in the
+# app. A new driver in a new ecosystem would otherwise ship an empty square, and only
+# somebody opening that kind of repo would ever see it.
+ART="$DESKTOP/src/assets/languages"
+MISSING_ART=""
+for lang in $(grep -o 'language: Some("[a-z]*")' "$REPO_ROOT/crates/lattice-workspace/src/lib.rs" | sed 's/.*Some("//; s/").*//' | sort -u); do
+  [ -f "$ART/$lang.svg" ] || MISSING_ART="$MISSING_ART $lang"
+done
+if [ -z "$MISSING_ART" ]; then
+  pass "every ecosystem a driver reports has artwork in the desktop app"
+else
+  fail "every ecosystem a driver reports has artwork in the desktop app" "no svg for:$MISSING_ART"
+fi
 
 # =========================================================================
 # Summary.

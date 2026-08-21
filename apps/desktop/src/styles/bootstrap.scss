@@ -1,0 +1,36 @@
+// Bootstrap, customized entirely through variable overrides (per .agents/CODESTYLE.md
+// styling priority: Bootstrap first, customize via variables). Structure is monochrome
+// and type is DM Sans / DM Mono; the one accent is crimson, Lattice Desktop's own
+// colour, which carries every primary action, focus ring, and the `desktop` product
+// word. Failure is amber (see _status.scss) so a broken row never looks pressable.
+//
+// $color-contrast-* are overridden so the label Bootstrap picks for a filled accent is
+// the brand's ink or paper rather than pure #000 / #fff. On crimson it resolves to
+// paper, at 4.95:1, over ink's 3.79:1.
+
+@use '../../node_modules/bootstrap/scss/bootstrap' as bs with (
+	$prefix: 'bs-',
+	$primary: #ca2e55,
+	$secondary: #6e7776,
+	$dark: #020d0c,
+	$light: #fbf8ff,
+	$body-bg: #fbf8ff,
+	$body-color: #020d0c,
+	$body-bg-dark: #020d0c,
+	$body-color-dark: #fbf8ff,
+	$border-color: #b6bcbb,
+	$color-contrast-dark: #020d0c,
+	$color-contrast-light: #fbf8ff,
+	$border-radius: 0.5rem,
+	$border-radius-sm: 0.375rem,
+	$border-radius-lg: 0.625rem,
+	$font-family-sans-serif: ('DM Sans', system-ui, -apple-system, sans-serif),
+	$font-family-monospace: ('DM Mono', ui-monospace, monospace),
+	$headings-font-weight: 700,
+	$enable-gradients: false,
+	$enable-shadows: false,
+	$btn-font-weight: 500,
+	$btn-padding-y: 0.6rem,
+	$btn-padding-x: 1.35rem,
+	$link-decoration: none
+);

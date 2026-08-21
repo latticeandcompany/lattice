@@ -1,0 +1,108 @@
+// The numbered rail from the website's get-started page. The connecting thread is
+// what makes a column of cards read as one sequence rather than five choices.
+
+.step {
+	display: grid;
+	grid-template-columns: 2.5rem 1fr;
+	column-gap: 1.25rem;
+	padding-bottom: 2.5rem;
+}
+
+.step__num {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.5rem;
+	height: 2.5rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--surface);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.95rem;
+	color: var(--focus);
+}
+
+.step:not(:last-child) .step__num::after {
+	content: '';
+	position: absolute;
+	top: 2.5rem;
+	bottom: -2.5rem;
+	left: 50%;
+	width: 1px;
+	background: var(--border-subtle);
+}
+
+// A finished step keeps its place in the thread but stops competing for attention.
+.step--done .step__num {
+	color: var(--text-muted);
+}
+
+.step__title {
+	margin: 0.25rem 0 0.75rem;
+	font-size: 1.375rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+
+.step__body {
+	min-width: 0;
+}
+
+.step__hint {
+	color: var(--text-subtle);
+	font-size: 0.9rem;
+	line-height: 1.6;
+}
+
+.step__code {
+	margin: 0 0 0.75rem;
+	padding: 0.85rem 1rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 6px;
+	background: var(--surface-2);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.82rem;
+	line-height: 1.7;
+	overflow-x: auto;
+}
+
+.step__code--file::before {
+	content: none;
+}
+
+@media (max-width: 575px) {
+	.step {
+		grid-template-columns: 2rem 1fr;
+		column-gap: 0.9rem;
+	}
+
+	.step__num {
+		width: 2rem;
+		height: 2rem;
+	}
+
+	.step:not(:last-child) .step__num::after {
+		top: 2rem;
+	}
+}
+
+// A scan result: a checkable row with a mark, a name, and where the evidence came
+// from. Hairlines only, per the site's table treatment.
+.scan-row {
+	display: flex;
+	align-items: center;
+	gap: 0.7rem;
+	padding: 0.5rem 0.15rem;
+	border-bottom: 1px solid var(--border-subtle);
+
+	&:last-child {
+		border-bottom: 0;
+	}
+}
+
+.scan-row__meta {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+}

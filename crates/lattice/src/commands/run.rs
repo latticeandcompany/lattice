@@ -1,16 +1,10 @@
-use std::collections::HashSet;
-
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::Args;
 use console::style;
 
-use dagger::{
-	build_execution_graph_selected, dry_run_order, includes_persistent_task, ExecutionGraph,
-};
-use lattice_config::find_root;
+use dagger::{dry_run_order, includes_persistent_task, ExecutionGraph};
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, OutputMode};
-use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure, RunInterrupted};
-use lattice_workspace::discover_workspaces;
+use lattice_project::{Plan, Project, RunOptions, RunRequest};
 
 use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag, BIN_VERSION};
 
@@ -65,34 +59,10 @@ pub struct RunArgs {
 impl RunArgs {
 	pub async fn execute(&self, flag_loq: bool, no_version_check: bool) -> Result<()> {
 		let cwd = std::env::current_dir()?;
-		let root = find_root(&cwd).ok_or_else(|| {
-			anyhow::anyhow!(
-				"no lattice.json found in this directory or any parent; \
-                 run `lattice init` to create one"
-			)
-		})?;
+		let project = Project::open(&cwd)?;
+		project.require_known_tasks(&self.tasks)?;
 
-		crate::schema::ensure_schema(&root);
-		let config = lattice_config::load_config(&root)?;
-
-		for task in &self.tasks {
-			if !config.tasks.contains_key(task.as_str()) {
-				let mut available: Vec<&str> = config.tasks.keys().map(|s| s.as_str()).collect();
-				available.sort_unstable();
-				let listed = if available.is_empty() {
-					"(none defined)".to_string()
-				} else {
-					available.join(", ")
-				};
-				bail!(
-					"task '{}' is not defined in lattice.json; available tasks: {}",
-					task,
-					listed
-				);
-			}
-		}
-
-		let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
+		let effective_loq = effective_loquacious(flag_loq, project.config.settings.loquacious);
 		let mut mode = detect_output_mode(effective_loq);
 
 		// Persistent tasks (dev servers, watchers) stream output indefinitely,
@@ -100,7 +70,7 @@ impl RunArgs {
 		// line output so that streaming output stays visible.
 		if mode == OutputMode::Interactive {
 			let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
-			if includes_persistent_task(&task_refs, &config) {
+			if includes_persistent_task(&task_refs, &project.config) {
 				mode = OutputMode::Raw;
 			}
 		}
@@ -108,167 +78,104 @@ impl RunArgs {
 		// The mode is final here, and nothing has printed yet.
 		apply_color_policy(mode);
 
-		let workspaces = discover_workspaces(&root, &config)?;
-
-		// A filter picks the workspaces the run is *for*. The graph builder then
-		// pulls in whatever they depend on, so the full set stays available here
-		// for the runner to resolve those dependencies against.
-		let selected: Option<HashSet<String>> = match &self.filter {
-			Some(filter) => {
-				let matched: HashSet<String> = workspaces
-					.iter()
-					.filter(|ws| ws.name.contains(filter.as_str()))
-					.map(|ws| ws.name.clone())
-					.collect();
-				if matched.is_empty() {
-					// A filtered no-op is not a failure; report and exit cleanly.
-					println!("lattice: no workspaces matched filter '{}'.", filter);
-					return Ok(());
-				}
-				Some(matched)
-			}
-			None => None,
-		};
-		let selected = selected.as_ref();
-
-		if workspaces.is_empty() {
-			// A freshly-scaffolded repo has an empty `workspaces` array; exit 0
-			// rather than erroring.
-			println!(
-				"lattice: no workspaces declared. Add them to the \
-                 `workspaces` array in lattice.json to run `{}`.",
-				self.tasks.join(" ")
-			);
-			return Ok(());
-		}
-
-		// Both skip lookups; only --no-cache also skips writing. --force exists to
-		// replace a bad entry, which it cannot do if it never stores one.
-		let no_cache = self.no_cache || self.force;
-		let no_store = self.no_cache;
+		let request = self.request();
 
 		if self.dry_run {
-			if self.sequentially {
-				// Each phase is its own graph; list them in order.
-				for task in &self.tasks {
-					let graph = build_execution_graph_selected(
-						&workspaces,
-						&[task.as_str()],
-						&config,
-						selected,
-					)?;
-					print_dry_run(&format!("dry run · {} (phase)", task), &graph);
-				}
-			} else {
-				let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
-				let graph =
-					build_execution_graph_selected(&workspaces, &task_refs, &config, selected)?;
-				print_dry_run(&format!("dry run · {}", self.tasks.join(" ")), &graph);
+			return self.print_plan(&project, &request);
+		}
+
+		match project.plan(&request.plan)? {
+			Plan::NoWorkspaces => {
+				// A freshly-scaffolded repo has an empty `workspaces` array; exit 0
+				// rather than erroring.
+				println!(
+					"lattice: no workspaces declared. Add them to the \
+                     `workspaces` array in lattice.json to run `{}`.",
+					self.tasks.join(" ")
+				);
+				return Ok(());
 			}
-			return Ok(());
+			Plan::NoMatch { filter } => {
+				// A filtered no-op is not a failure; report and exit cleanly.
+				println!("lattice: no workspaces matched filter '{}'.", filter);
+				return Ok(());
+			}
+			Plan::Phases(_) => {}
 		}
 
 		// Advisory version-drift nag, before the run and only in interactive mode.
-		maybe_emit_version_nag(mode, &config, no_version_check);
+		maybe_emit_version_nag(mode, &project.config, no_version_check);
 
 		let reporter = make_reporter(mode, effective_loq);
 
-		// A fresh ctrl-c future for each run: the runner consumes it to tear down
-		// still-running persistent tasks after its graph drains.
-		let make_shutdown = || {
-			Some(Box::pin(async {
-				let _ = tokio::signal::ctrl_c().await;
-			})
-				as std::pin::Pin<
-					Box<dyn std::future::Future<Output = ()> + Send>,
-				>)
-		};
-
-		if self.sequentially {
-			// Run each task's full graph to completion, in order, before the next.
-			let mut failed_any = false;
-			for task in &self.tasks {
-				let graph = build_execution_graph_selected(
-					&workspaces,
-					&[task.as_str()],
-					&config,
-					selected,
-				)?;
-				let opts = ExecuteOptions {
-					graph: &graph,
-					workspaces: &workspaces,
-					config: &config,
-					root: &root,
-					no_cache,
-					no_store,
-					concurrency: self.concurrency,
-					keep_going: self.keep_going,
-					reporter: reporter.as_ref(),
-					lattice_version: BIN_VERSION,
-					shutdown: make_shutdown(),
-				};
-				if let Err(err) = execute_tasks(opts).await {
-					// An interrupt ends the whole run, not just this phase: the
-					// person who pressed Ctrl-C did not mean "skip to the next one".
-					if err.downcast_ref::<RunInterrupted>().is_some() {
-						std::process::exit(INTERRUPTED_EXIT);
-					}
-					if self.keep_going {
-						// A phase failed; carry on through the remaining phases.
-						failed_any = true;
-						continue;
-					}
-					// Fail-fast: stop at the first failed phase.
-					if err.downcast_ref::<RunFailure>().is_some() {
-						std::process::exit(1);
-					}
-					return Err(err);
-				}
-			}
-			if failed_any {
-				std::process::exit(1);
-			}
-			return Ok(());
-		}
-
-		// Default: merge every stacked task into one combined graph.
-		let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
-		let graph = build_execution_graph_selected(&workspaces, &task_refs, &config, selected)?;
-		let opts = ExecuteOptions {
-			graph: &graph,
-			workspaces: &workspaces,
-			config: &config,
-			root: &root,
-			no_cache,
-			no_store,
-			concurrency: self.concurrency,
-			keep_going: self.keep_going,
+		let outcome = lattice_project::run(RunOptions {
+			project: &project,
+			request: &request,
 			reporter: reporter.as_ref(),
 			lattice_version: BIN_VERSION,
-			shutdown: make_shutdown(),
-		};
+			// A fresh ctrl-c future per phase: the runner consumes it to tear down
+			// still-running persistent tasks after its graph drains.
+			shutdown: Some(Box::new(|| {
+				Box::pin(async {
+					let _ = tokio::signal::ctrl_c().await;
+				})
+			})),
+			// The terminal's own signal is the cancel here, and the runner already
+			// watches for it.
+			cancel: None,
+		})
+		.await?;
 
-		match execute_tasks(opts).await {
-			Ok(_) => Ok(()),
-			Err(err) => {
-				if err.downcast_ref::<RunInterrupted>().is_some() {
-					std::process::exit(INTERRUPTED_EXIT);
-				}
-				// The runner already printed the run summary (including for a
-				// keep-going RunFailure); just propagate a non-zero exit.
-				if err.downcast_ref::<RunFailure>().is_some() {
-					std::process::exit(1);
-				}
-				Err(err)
-			}
+		match outcome.exit_code() {
+			0 => Ok(()),
+			// The runner already printed the run summary, including for a
+			// keep-going failure; just carry the status out.
+			code => std::process::exit(code),
 		}
 	}
-}
 
-/// Exit status for a run stopped by Ctrl-C or `SIGTERM`. The shell convention is
-/// 128 + the signal number, and 2 is `SIGINT`; a CI runner that cancelled the job
-/// can tell that apart from a build that genuinely failed.
-const INTERRUPTED_EXIT: i32 = 130;
+	fn request(&self) -> RunRequest {
+		RunRequest {
+			plan: lattice_project::PlanRequest {
+				tasks: self.tasks.clone(),
+				filter: self.filter.clone(),
+				sequentially: self.sequentially,
+			},
+			no_cache: self.no_cache,
+			force: self.force,
+			concurrency: self.concurrency,
+			keep_going: self.keep_going,
+		}
+	}
+
+	fn print_plan(&self, project: &Project, request: &RunRequest) -> Result<()> {
+		match project.plan(&request.plan)? {
+			Plan::NoWorkspaces => {
+				println!(
+					"lattice: no workspaces declared. Add them to the \
+                     `workspaces` array in lattice.json to run `{}`.",
+					self.tasks.join(" ")
+				);
+			}
+			Plan::NoMatch { filter } => {
+				println!("lattice: no workspaces matched filter '{}'.", filter);
+			}
+			Plan::Phases(phases) => {
+				if self.sequentially {
+					// Each phase is its own graph; list them in order.
+					for (task, graph) in self.tasks.iter().zip(&phases) {
+						print_dry_run(&format!("dry run · {} (phase)", task), graph);
+					}
+				} else {
+					for graph in &phases {
+						print_dry_run(&format!("dry run · {}", self.tasks.join(" ")), graph);
+					}
+				}
+			}
+		}
+		Ok(())
+	}
+}
 
 /// Print a task graph's topological order under a banner (used by `--dry-run`).
 fn print_dry_run(banner: &str, graph: &ExecutionGraph) {
@@ -288,5 +195,32 @@ fn print_dry_run(banner: &str, graph: &ExecutionGraph) {
 			tag,
 			style(&node.command).dim()
 		);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn the_cli_flags_reach_the_request_unchanged() {
+		let args = RunArgs {
+			tasks: vec!["build".to_string(), "test".to_string()],
+			sequentially: true,
+			filter: Some("api".to_string()),
+			concurrency: Some(4),
+			keep_going: true,
+			no_cache: false,
+			force: true,
+			dry_run: false,
+		};
+		let request = args.request();
+		assert_eq!(request.plan.tasks, vec!["build", "test"]);
+		assert_eq!(request.plan.filter.as_deref(), Some("api"));
+		assert!(request.plan.sequentially);
+		assert_eq!(request.concurrency, Some(4));
+		assert!(request.keep_going);
+		// --force re-runs and refreshes; it does not stop the run from storing.
+		assert_eq!(request.cache_flags(), (true, false));
 	}
 }
