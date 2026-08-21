@@ -30,22 +30,18 @@ Interop exists (`turbo` is a recognized driver) and it is plumbing, not a pitch.
 real command inside a config example is fine; a sentence naming the tool is not.
 
 The same goes for local execution, tool-choice agnosticism, and zero global
-footprint. Per `marketing/BRAND.md` §4 these are *expected*, not bragged about.
-State the fact where a reader needs it; never write a heading, value prop, or
-feature bullet named after one. The banned phrasings are listed in that section,
-along with the slop patterns — bolded-lead-in bullet lists, rhythmic triads,
-unmeasurable comparatives, invented numbers — that keep reappearing in this repo.
+footprint. These are *expected*, not bragged about. State the fact where a reader
+needs it; never write a heading, value prop, or feature bullet named after one.
 
 "polyglot" is a banned word. Say "any language", or name the languages.
 
-The tagline, pitch, and terminology are fixed in `marketing/MESSAGING.md`. There is
-exactly one tagline:
+There is exactly one tagline:
 
 **A high-performance, local toolchain for managing monorepos.**
 
 Use it verbatim. Do not invent parallel phrasings, and do not rewrite it to satisfy
 the two rules above — it names local execution and uses a performance adjective as a
-sanctioned exception. Everything else derives from that file.
+sanctioned exception.
 
 ---
 
@@ -67,8 +63,7 @@ crates/
   lattice-runner/       The scheduler: spawns tasks, wires cache, persistent tasks
   lattice-output/       OutputMode, TaskEvent, Reporter (interactive + CI), brand
 apps/web/               Astro marketing site + docs (the published docs)
-marketing/BRAND.md      Visual identity + voice (§4)
-marketing/MESSAGING.md  Canonical product language
+marketing/              Logos, favicons, ascii art
 scripts/stress-test.sh  ~700-line hermetic E2E over every command and flag
 examples/polyglot/      Sample multi-language monorepo
 .lattice/               cache/ (gitignored), toolchains/ (gitignored), schema.json (committed)
@@ -296,10 +291,10 @@ the product.
 **Name the failure mode.** Ambiguity halts. A constraint on an unknown tool is an
 error. Say so where the reader is deciding, not in a trailing caveats section.
 
-**Voice** (`marketing/BRAND.md` §4): precise, confident, understated. Short
-sentences. Claims measurable, never superlative. No hype, no exclamation marks,
-no "we're excited to", no "in today's fast-paced world", no hedging. Second
-person for instructions. Present tense for behavior.
+**Voice:** precise, confident, understated. Short sentences. Claims measurable,
+never superlative. No hype, no exclamation marks, no "we're excited to", no "in
+today's fast-paced world", no hedging. Second person for instructions. Present
+tense for behavior.
 
 **Formatting:** Markdown wrapped at ~80 columns to match existing files.
 Backtick every filename, flag, field, and command. Fenced blocks always carry a
