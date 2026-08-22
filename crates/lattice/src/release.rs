@@ -85,7 +85,7 @@ pub fn normalize_version(raw: &str) -> Result<String> {
 	let trimmed = raw.trim();
 	let stripped = trimmed.strip_prefix('v').unwrap_or(trimmed);
 	semver::Version::parse(stripped)
-		.with_context(|| format!("'{raw}' is not a version (expected something like 0.2.0)"))?;
+		.with_context(|| format!("'{raw}' is not a version. Write it like 0.2.0"))?;
 	Ok(stripped.to_string())
 }
 
@@ -195,7 +195,7 @@ fn install_from_release(
 	let checksums = fetch_text(&asset_url(urls, version, &checksums_name(version)))?;
 	let expected = digest_for(&checksums, asset).ok_or_else(|| {
 		anyhow!(
-			"{} does not list {asset}; this platform may not be published for {version}",
+			"{} does not list {asset}. This platform may have no published build for {version}",
 			checksums_name(version)
 		)
 	})?;
@@ -203,7 +203,7 @@ fn install_from_release(
 	if !actual.eq_ignore_ascii_case(expected) {
 		bail!(
 			"checksum mismatch for {asset}\n  expected {expected}\n  actual   {actual}\n\
-			 refusing to install a binary that does not match the published release"
+			 Lattice installs only a binary whose checksum matches the published release"
 		);
 	}
 
@@ -289,7 +289,7 @@ pub fn resolve_latest(urls: &ReleaseUrls) -> Result<Latest> {
 	let list_url = urls.list();
 	let body = fetch_text(&list_url).context("failed to ask GitHub for the newest release")?;
 	let (tag, prerelease) = parse_first_release(&body)
-		.ok_or_else(|| anyhow!("no release to install; tried {latest_url} and {list_url}"))?;
+		.ok_or_else(|| anyhow!("no release to install. Tried {latest_url} and {list_url}"))?;
 	Ok(Latest {
 		version: normalize_version(&tag)?,
 		prerelease,
@@ -389,8 +389,8 @@ fn have(tool: &str) -> bool {
 		.is_ok()
 }
 
-const NO_FETCHER: &str = "neither `curl` nor `wget` is on PATH; install one, or download the \
-release archive by hand into .lattice/bin";
+const NO_FETCHER: &str = "neither `curl` nor `wget` is on PATH. Install one of them, or \
+download the release archive into .lattice/bin by hand";
 
 fn download(url: &str, dest: &Path) -> Result<()> {
 	let output = if have("curl") {

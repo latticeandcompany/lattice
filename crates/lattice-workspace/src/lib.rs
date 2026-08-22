@@ -1,16 +1,24 @@
 //! Workspace discovery and task-driver resolution.
 //!
 //! Lattice resolves the task *driver* (the tool that runs tasks) for each
-//! workspace by walking an evidence ladder and stopping at the first tier that
-//! gives an unambiguous answer:
+//! workspace from three kinds of evidence:
 //!
-//! * (a) a declaration in `lattice.json` `engines`, which always wins;
+//! * (a) a declaration in `lattice.json` `engines`;
 //! * (b) a dev-authored native declaration file (`packageManager`,
 //!   `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`, `./gradlew`, …);
 //! * (c) a tool-unique lockfile or artifact (`bun.lockb`, `pnpm-lock.yaml`,
-//!   `Cargo.lock`, `poetry.lock`, …);
-//! * (d) otherwise, stop and ask ([`AmbiguityError`]). A bare generic ecosystem
-//!   marker (a lone `package.json`, `pom.xml`, …) is not enough on its own.
+//!   `Cargo.lock`, `poetry.lock`, …).
+//!
+//! Role rank decides first, and the kind of evidence only breaks a tie. Every
+//! candidate's [`Role`] is ranked, the candidates below the highest rank are
+//! dropped, and a declaration then picks the winner among what is left. So a
+//! declaration does not beat a higher-ranked tool: a workspace that declares
+//! `pnpm` and holds a `turbo.json` resolves to `turbo`.
+//!
+//! With no candidate left, or several of equal rank and no single declaration
+//! among them, resolution stops and asks ([`AmbiguityError`]). A bare generic
+//! ecosystem marker (a lone `package.json`, `pom.xml`, …) is not enough on its
+//! own, and neither is a pure runtime, which cannot drive a named task.
 //!
 //! Tools carry one or more [`Role`]s. Tools with *different* driving roles
 //! compose into a stack (a node runtime plus a pnpm package-manager); only tools
@@ -445,22 +453,21 @@ impl std::fmt::Display for AmbiguityError {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		writeln!(
 			f,
-			"workspace '{}' has an ambiguous or undeclared task driver.",
+			"workspace '{}' has an ambiguous or undeclared driver.",
 			self.workspace
 		)?;
 		if self.candidates.is_empty() {
 			writeln!(
 				f,
-				"No task driver could be detected (no lockfile, wrapper, or \
-                 native declaration)."
+				"Lattice detected no driver. The directory holds no lockfile, no \
+                 wrapper, and no native declaration."
 			)?;
 		} else {
-			writeln!(f, "Candidate tools seen: {}", self.candidates.join(", "))?;
+			writeln!(f, "Candidate drivers: {}", self.candidates.join(", "))?;
 		}
 		write!(
 			f,
-			"Declare the task driver explicitly by adding to this workspace \
-             in lattice.json:\n  {}",
+			"Declare the driver in lattice.json, under this workspace:\n  {}",
 			self.suggested_fix
 		)
 	}
@@ -868,8 +875,8 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 
 		if !path.is_dir() {
 			bail!(
-				"workspace path '{}' does not point to a directory; workspace \
-                 paths are literal directories, not globs",
+				"workspace path '{}' does not point to a directory. A workspace \
+                 path is one literal directory, not a glob",
 				ws_cfg.path
 			);
 		}
@@ -1353,7 +1360,7 @@ mod tests {
 		let tmp = TempDir::new().unwrap();
 		write(tmp.path(), ".tool-versions", "kotlin 2.0.0\n");
 		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(format!("{err}").contains("No task driver could be detected"));
+		assert!(format!("{err}").contains("Lattice detected no driver"));
 
 		// Under gradle it composes: gradle drives, kotlin stays a pinned engine.
 		write(tmp.path(), "gradlew", "");

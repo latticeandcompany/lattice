@@ -83,7 +83,7 @@ const ConfigView = () => {
 						</button>
 					</div>
 					<span className="command-tab__hint">
-						{dirty ? 'Not saved yet' : 'Everything is saved'}
+						{dirty ? 'Unsaved changes' : 'Saved'}
 					</span>
 					<button
 						type="button"
@@ -138,19 +138,19 @@ const ConfigView = () => {
 					<div className="notice">
 						<i className="bi bi-braces" aria-hidden="true" />
 						<div>
-							The file is not valid JSON right now, so the form cannot show it. Fix it in the JSON
-							tab.
+							lattice.json is not valid JSON, so the form cannot show it. Fix it in the JSON tab.
 						</div>
 					</div>
 				) : (
 					<>
 						<section className="mb-4">
-							<h2 className="h5 fw-bold mb-3">This repo</h2>
+							<h2 className="h5 fw-bold mb-3">Project</h2>
+							<p className="step__hint mb-2">Settings for the whole project, not for one workspace.</p>
 							<div className="row g-3">
 								<div className="col-12 col-md-6">
 									<Label
 										htmlFor="lattice-version"
-										text="Version of Lattice to expect"
+										text="Lattice version"
 										jsonKey="latticeVersion"
 									/>
 									<input
@@ -163,14 +163,14 @@ const ConfigView = () => {
 										}
 									/>
 									<div className="form-text">
-										Anyone on an older Lattice is told to upgrade, instead of hitting a confusing
-										error later on.
+										A Lattice that installed itself switches to this version. Any other install
+										warns and runs anyway.
 									</div>
 								</div>
 								<div className="col-12 col-md-6">
 									<Label
 										htmlFor="cache-dir"
-										text="Where results are kept"
+										text="Cache directory"
 										jsonKey="settings.cacheDir"
 									/>
 									<input
@@ -183,13 +183,13 @@ const ConfigView = () => {
 										}
 									/>
 									<div className="form-text">
-										A folder in this repo. Leave it empty to use the default.
+										A path inside the project. Leave it empty to use .lattice/cache.
 									</div>
 								</div>
 								<div className="col-12 col-md-6">
 									<Label
 										htmlFor="max-cache"
-										text="How much of the disk it may use"
+										text="Cache size limit"
 										jsonKey="settings.maxCacheSize"
 									/>
 									<input
@@ -204,23 +204,23 @@ const ConfigView = () => {
 										}
 									/>
 									<div className="form-text">
-										Past this, the results nobody has needed in the longest go first.
+										After a run, Lattice deletes the least recently used entries to get back under
+										this.
 									</div>
 								</div>
 							</div>
 						</section>
 
 						<section className="mb-4">
-							<h2 className="h5 fw-bold mb-3">Tool versions</h2>
+							<h2 className="h5 fw-bold mb-3">Engines</h2>
 							<p className="step__hint mb-2">
-								Pin a version here and everyone working in this repo — and CI — gets that one,
-								rather than whatever happens to be on the machine. Lattice can fetch the tools it
-								already knows; anything else has to be told how to report its own version, which
-								the JSON tab can do.
+								Tool versions this project pins. A run fails before any task starts if the tool on
+								PATH does not match. To have Lattice install the tool instead, give the engine an
+								installCmd in the JSON tab.
 							</p>
 							{pinned.length === 0 ? (
 								<p className="form-text">
-									Nothing is pinned, so every tool comes from the machine running it.
+									Nothing is pinned, so every task uses the tools already on the machine.
 								</p>
 							) : (
 								pinned.map(([name, spec]) => (
@@ -241,10 +241,10 @@ const ConfigView = () => {
 													),
 												)
 											}
-											aria-label={`Which version of ${name} to use`}
+											aria-label={`${name} version`}
 										/>
 										{!engineNames.includes(name) && typeof spec === 'string' && (
-											<span className="scan-row__meta">Lattice does not know this tool yet</span>
+											<span className="scan-row__meta">Not one of the engines Lattice knows by name</span>
 										)}
 										<button
 											type="button"
@@ -263,8 +263,7 @@ const ConfigView = () => {
 						<section className="mb-4">
 							<h2 className="h5 fw-bold mb-3">Workspaces</h2>
 							<p className="step__hint mb-2">
-								A folder Lattice can run something in — usually one with a manifest of its own, like
-								a package.json, a Cargo.toml, or a go.mod.
+								Every directory with its own manifest. Lattice runs tasks in each one listed here.
 							</p>
 							{(parsed.workspaces ?? []).map((workspace, index) => {
 								const resolved = project.workspaces.find(
@@ -281,21 +280,21 @@ const ConfigView = () => {
 												<input
 													className="form-control form-control-sm"
 													style={{ maxWidth: '12rem' }}
-													placeholder="What to call it"
+													placeholder="Workspace name"
 													value={workspace.name}
 													onChange={(event) =>
 														edit(setValue(text, ['workspaces', index, 'name'], event.target.value))
 													}
-													aria-label={`What to call workspace ${index + 1}`}
+													aria-label={`Workspace ${index + 1} name`}
 												/>
 												<input
 													className="form-control form-control-sm"
-													placeholder="Folder, from the top of the repo"
+													placeholder="Path from the project root"
 													value={workspace.path}
 													onChange={(event) =>
 														edit(setValue(text, ['workspaces', index, 'path'], event.target.value))
 													}
-													aria-label={`Folder for workspace ${index + 1}`}
+													aria-label={`Workspace ${index + 1} path`}
 												/>
 												<button
 													type="button"
@@ -324,9 +323,12 @@ const ConfigView = () => {
 													}
 												/>
 												<label className="form-check-label small" htmlFor={`auto-${index}`}>
-													Work out how to run things here from what is in the folder{' '}
-													<span className="form-key">auto</span>
+													Driver detection <span className="form-key">auto</span>
 												</label>
+												<div className="form-text mt-0">
+													Lattice picks the tool from the files in the directory. Turn it off to
+													declare scripts and engines yourself.
+												</div>
 											</div>
 										</div>
 									</div>
@@ -347,7 +349,7 @@ const ConfigView = () => {
 						<section className="mb-4">
 							<h2 className="h5 fw-bold mb-3">Tasks</h2>
 							<p className="step__hint mb-2">
-								One name — build, test, lint — that every workspace runs its own way.
+								One name, such as build or test, that each workspace runs its own way.
 							</p>
 							{Object.entries(parsed.tasks ?? {}).map(([name, task]) => (
 								<div className="card mb-2" key={name}>
@@ -355,24 +357,26 @@ const ConfigView = () => {
 										<div className="d-flex align-items-start gap-3 mb-3 flex-wrap">
 											<strong className="me-auto">{name}</strong>
 											<TriState
-												label="Keeps running until stopped"
+												label="Persistent"
 												jsonKey="persistent"
+												hint="Runs until stopped. Never cached, and nothing can depend on it."
 												value={task.persistent}
 												onChange={(next) =>
 													edit(setValue(text, ['tasks', name, 'persistent'], next))
 												}
 											/>
 											<TriState
-												label="Reuse the result when nothing changed"
+												label="Cache"
 												jsonKey="cache"
+												hint="A cache hit restores the stored outputs instead of running the command."
 												value={task.cache}
 												onChange={(next) => edit(setValue(text, ['tasks', name, 'cache'], next))}
 											/>
 										</div>
 										<StringList
-											label="Waits for"
+											label="Dependencies"
 											jsonKey="dependsOn"
-											hint="Tasks that have to finish first. A ^ in front means the same task, in everything this workspace depends on."
+											hint="Tasks that must finish first. A ^ prefix means the same task in every workspace this one depends on."
 											values={task.dependsOn ?? []}
 											onChange={(next) =>
 												edit(
@@ -385,9 +389,9 @@ const ConfigView = () => {
 											}
 										/>
 										<StringList
-											label="Files it reads"
+											label="Inputs"
 											jsonKey="inputs"
-											hint="Change one of these and the task runs again instead of coming back from the cache. Leave it empty and every tracked file in the workspace counts."
+											hint="Files the task reads. A change to any of them misses the cache. With none listed, every file in the workspace counts."
 											values={task.inputs ?? []}
 											onChange={(next) =>
 												edit(
@@ -400,9 +404,9 @@ const ConfigView = () => {
 											}
 										/>
 										<StringList
-											label="Files it produces"
+											label="Outputs"
 											jsonKey="outputs"
-											hint="What gets saved, and what gets put back in place when the result is reused."
+											hint="Files a successful run saves into the cache. A cache hit restores them."
 											values={task.outputs ?? []}
 											onChange={(next) =>
 												edit(
@@ -438,18 +442,21 @@ const Label = ({ htmlFor, text, jsonKey }: { htmlFor: string; text: string; json
 const TriState = ({
 	label,
 	jsonKey,
+	hint,
 	value,
 	onChange,
 }: {
 	label: string;
 	jsonKey: string;
+	hint?: string;
 	value: boolean | undefined;
 	onChange: (next: boolean | undefined) => void;
 }) => (
-	<label className="small">
+	<label className="small" style={{ maxWidth: '13rem' }}>
 		<span className="d-block" style={{ color: 'var(--text-subtle)' }}>
 			{label} <span className="form-key">{jsonKey}</span>
 		</span>
+		{hint && <span className="form-text d-block mt-0">{hint}</span>}
 		<select
 			className="form-select form-select-sm mt-1"
 			style={{ width: '13rem' }}
@@ -459,7 +466,7 @@ const TriState = ({
 			}
 			aria-label={label}
 		>
-			<option value="unset">Leave it to Lattice</option>
+			<option value="unset">Not set</option>
 			<option value="true">Yes</option>
 			<option value="false">No</option>
 		</select>

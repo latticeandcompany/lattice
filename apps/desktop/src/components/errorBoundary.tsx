@@ -40,7 +40,7 @@ class ErrorBoundary extends Component<Props, State> {
 					<div className="notice notice--bad mb-3">
 						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 						<div>
-							<strong className="d-block mb-1">Something in the window failed to draw.</strong>
+							<strong className="d-block mb-1">Lattice could not draw this view.</strong>
 							<span className="selectable">{error.message}</span>
 						</div>
 					</div>

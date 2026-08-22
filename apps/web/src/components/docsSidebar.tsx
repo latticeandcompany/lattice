@@ -16,14 +16,14 @@ const DocsSidebar = ({ nav, path }: DocsSidebarProps) => {
 	const [open, setOpen] = useState(false);
 
 	return (
-		<nav aria-label="Documentation">
+		<nav aria-label="Docs">
 			<button
 				type="button"
 				className="btn btn-outline-secondary btn-sm d-lg-none w-100 d-flex align-items-center justify-content-between mb-3"
 				aria-expanded={open}
 				onClick={() => setOpen((v) => !v)}
 			>
-				<span>Documentation menu</span>
+				<span>Docs menu</span>
 				<i className={`bi ${open ? 'bi-chevron-up' : 'bi-chevron-down'}`} aria-hidden="true" />
 			</button>
 

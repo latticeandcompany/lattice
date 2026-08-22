@@ -1,61 +1,73 @@
 ---
 title: Task graph
-description: How Lattice expands a task across workspaces and orders the result.
+description: Why one task name becomes many nodes, how the two dependsOn tokens differ, and why the whole graph is built before anything runs.
 group: Concepts
 order: 2
 ---
 
 # Task graph
 
-`lattice run build` does not run `build` once. It expands `build` into one node
-per workspace that defines it, links those nodes by dependency, and runs the
-independent ones in parallel.
+`lattice run build` does not run a command called `build`. There is no such
+command. `build` is a name you chose, and running it means asking every
+workspace in the repo what `build` means to it, linking the answers by
+dependency, and running the independent ones at the same time.
 
-## From a task name to nodes
+A four-workspace repo turns one word into four processes. A forty-workspace repo
+turns it into forty. Understanding how that expansion happens is most of
+understanding what Lattice does.
 
-The keys under `tasks` in `lattice.json` are names you choose, not commands. For
-each requested task, Lattice asks every workspace whether it has a command for
-that name. An `auto` workspace answers from its detected driver; an
-`"auto": false` workspace answers only from its `scripts` map (see
-[Workspaces](/lattice/docs/workspaces) and
-[Driver detection](/lattice/docs/drivers) for how a command is resolved).
+## A task name is a question, not a command
 
-A workspace with a command becomes one node — `workspace:task`, holding the
-resolved command. An `auto` workspace without one is skipped silently. An
-`"auto": false` workspace without one halts the run:
+The keys under `tasks` in `lattice.json` are names. For each one you request,
+Lattice asks every resolved workspace whether it has a command for that name. An
+`auto` workspace answers from its detected driver, so `build` in a pnpm
+workspace becomes `pnpm run build`. An `auto: false` workspace answers from its
+`scripts` map and nowhere else.
 
-```text
-Error: workspace 'docs' is "auto": false but declares no command for task
-'test'; add it under this workspace's "scripts" map in lattice.json
-```
+A workspace with an answer becomes one node, written `workspace:task`, holding
+the resolved command. A workspace without one is either skipped or an error,
+depending on which kind it is. An `auto` workspace is skipped silently, because
+"my driver has no `test` script" is a normal thing for a workspace to say. An
+`auto: false` workspace halts the run, because it promised to declare everything
+and a missing declaration is a mistake rather than an absence. See
+[Workspaces](/lattice/docs/workspaces) for both cases.
 
-## The two `dependsOn` tokens
+This is why a task name means something slightly different in every workspace
+and the same thing across the repo. `lattice run test` means "test everything
+that has tests" without you maintaining a list of which workspaces those are.
 
-A *workspace*'s `dependsOn` names other workspaces. A *task*'s `dependsOn` names
-other tasks, in one of two forms:
+## The two `dependsOn` tokens answer different questions
+
+Two fields in `lattice.json` are called `dependsOn` and they do not mean the same
+thing. A *workspace*'s `dependsOn` names other workspaces. A *task*'s
+`dependsOn` names other tasks, in one of two forms:
 
 | Token | Reads as | Edge it creates |
 | --- | --- | --- |
-| `task` (bare) | "that task, in this same workspace" | `workspace:task` → `workspace:this-task`, for every workspace that has both |
-| `^task` | "that task, in each workspace this one depends on" | `depWorkspace:task` → `workspace:this-task`, following that workspace's own `dependsOn` list |
+| `task` (bare) | that task, in this same workspace | `workspace:task` to `workspace:this-task`, for every workspace that has both |
+| `^task` | that task, in each workspace this one depends on | `depWorkspace:task` to `workspace:this-task`, following the workspace's own `dependsOn` |
 
-These are the only two forms the graph builder understands: there is no glob and
-no `workspace#task` addressing. The token after `^` need not repeat the current
-task's name, though in practice it almost always does: a `build` task depending
-on `^build` means "build every dependency first." A task with an empty or absent
-`dependsOn` has no incoming edges, so every workspace's node for it is a graph
-root.
+Those are the only two forms. There is no glob and no `workspace#task`
+addressing, which means you cannot write a dependency that names one specific
+workspace's task. That looks like a gap until you try to use it. A rule that
+names a workspace only holds until someone renames the workspace, and a
+`tasks` map full of them stops being a description of how work fits together and
+becomes a hand-maintained schedule. The two tokens say "after my own X" and
+"after my dependencies' X", and between them they express the shape almost every
+repo actually has.
 
-A workspace with no `dependsOn` contributes no `^`-edges anywhere. Narrowing a
-run with `--filter` (see [Selecting what runs](/lattice/docs/filtering)) does not
-change how these edges resolve: the matched workspaces become the roots, and a
-`^`-edge pointing at a workspace outside the pattern still resolves to that
-workspace's task and brings it into the run.
+The token after `^` does not have to repeat the current task's name, though it
+nearly always does. `"build": { "dependsOn": ["^build"] }` reads as "build every
+dependency first", which is the rule you want for a compiled language and the
+rule you usually do not want for `lint`.
+
+A task with no `dependsOn` has no incoming edges, so every workspace's node for
+it is a root and they all start at once.
 
 ## Worked example
 
-Four workspaces: `core` has no dependencies; `api` depends on `core`; `web`
-depends on `api`; `docs` stands alone.
+Four workspaces. `core` depends on nothing, `api` depends on `core`, `web`
+depends on `api`, and `docs` stands alone:
 
 ```json
 {
@@ -76,8 +88,7 @@ depends on `api`; `docs` stands alone.
 }
 ```
 
-`lattice run build --dry-run` lists every node in one valid dependency order
-without running anything:
+`--dry-run` prints every node in one valid dependency order and runs nothing:
 
 ```text
 ❖ lattice  dry run · build
@@ -87,29 +98,24 @@ without running anything:
   → web:build  echo build web
 ```
 
-Running it for real (`lattice run build -l --no-cache`) shows what that order
-means. `docs:build` and `core:build` have no prerequisites, so they start
-together; `api:build` waits on `core:build`; `web:build` waits on `api:build`:
+Running it shows what that order buys. `docs:build` and `core:build` have no
+prerequisites, so they start together and finish together. `api:build` waits on
+`core:build`, and `web:build` waits on `api:build`:
 
 ```text
-lattice: running `build` across 4 workspace(s)
-docs:build: running
 core:build: running
-core:build: build core
-docs:build: build docs
-docs:build: done (0.00s)
-core:build: done (0.00s)
+docs:build: running
+docs:build: done (0.01s)
+core:build: done (0.01s)
 api:build: running
-api:build: build api
 api:build: done (0.00s)
 web:build: running
-web:build: build web
 web:build: done (0.00s)
-lattice: 4 tasks, 0 cached, 0 failed, 0.01s
+lattice: 4 tasks, 0 cached, 0 failed, 0.02s
 ```
 
-`lattice run test --dry-run` pulls in `build` transitively, so the same four
-`build` nodes appear ahead of the four `test` nodes:
+Ask for `test` instead and the four `build` nodes come along, because `test`
+depends on the bare `build` and every workspace has both:
 
 ```text
 ❖ lattice  dry run · test
@@ -123,23 +129,24 @@ lattice: 4 tasks, 0 cached, 0 failed, 0.01s
   → core:test  echo test core
 ```
 
-## Stacked tasks share one graph
+You asked for one task in a four-workspace repo and got eight nodes. That is the
+expansion doing its job.
 
-`lattice run lint test build` builds one combined graph, not three back to back.
-Every requested task's transitive task-name closure is collected first, then all
-of it — every task, every workspace that defines it — becomes a single
-`DiGraph`. A dependency two stacked tasks have in common is one node: `test`
-depends on `build` and `build` is also requested directly, so each workspace's
-`build` node appears exactly once, and `lint` parallelizes around it wherever
-the graph allows.
+## Naming several tasks builds one graph, not several runs
 
-## `--sequentially`: one graph per task, in order
+`lattice run lint test build` collects the transitive closure of all three task
+names first, then builds a single graph from the whole thing. A node that two of
+the requested tasks both need exists once. Here `test` depends on `build` and
+`build` is also requested directly, so each workspace's `build` node appears
+exactly once and `lint` parallelizes around it wherever the graph has room.
 
-`--sequentially` builds a separate full graph per requested task and runs each
-start-to-finish before the next begins. Within a phase, tasks still run in
-dependency order and in parallel; only the phases no longer overlap. Each
-phase's graph is built fresh from that one task's transitive `dependsOn`, so a
-later phase can reintroduce nodes an earlier phase already ran:
+The alternative would be three runs back to back, which is what `--sequentially`
+gives you when you want it. That builds a separate full graph per requested task
+and finishes each before starting the next. Inside a phase, tasks still run in
+dependency order and in parallel. Only the phases stop overlapping.
+
+Each phase's graph is built fresh, so a later phase can reintroduce a node an
+earlier phase already ran:
 
 ```text
 ❖ lattice  dry run · lint (phase)
@@ -158,95 +165,60 @@ later phase can reintroduce nodes an earlier phase already ran:
   → core:test  echo test core
 ```
 
-Reintroduced nodes come back as cache hits in a real run rather than repeated
-work (see [Caching](/lattice/docs/caching)). A failing phase stops the run
-before the next phase starts, unless you pass `--continue`, which records the
-failure, moves on to the next phase, and exits non-zero at the end.
+In a real run those reintroduced nodes come back as cache hits rather than
+repeated work, which is the reason `--sequentially` costs less than it looks
+like it should. Reach for it when phase order matters for a reason outside the
+graph: a lint gate you want to fail before anything compiles, or a CI log you
+want readable one stage at a time.
 
-## Bounding how long a task runs
+## Parallelism comes from a semaphore, not from the graph
 
-A task with no limit runs until it exits. Set `timeout` on the ones that can
-hang:
+The graph says what *may* run at once. It does not say how much does. Lattice
+keeps a set of nodes whose prerequisites have all finished and spawns them all,
+bounded by a semaphore that defaults to the number of logical CPUs.
 
-```json
-{
-  "tasks": {
-    "test": { "timeout": "10m" }
-  }
-}
-```
+Separating the two is what keeps the bound adjustable without touching your
+config. `--concurrency N` caps it at `N`, which is the flag you want on a CI box
+where the reported CPU count is the host's rather than your container's, or on a
+laptop where you would like to keep a browser responsive.
+`--concurrency 0` is ignored rather than treated as unbounded, because a run
+with no bound at all is a fork bomb with a friendly name. The default takes over
+instead.
 
-Accepts `"90s"`, `"10m"`, `"1h"`, or a bare number of seconds. On overrun the
-task's whole process group is sent `SIGTERM`, given five seconds, then killed,
-and the task counts as failed — so the run behaves the way it does for any other
-failure, stopping the pipeline or carrying on under `--continue`.
-
-The output the task produced before the overrun is kept and surfaced with the
-failure, followed by the reason:
-
-```text
-timed out after 10m and was stopped
-```
-
-A `timeout` on a [persistent](/lattice/docs/persistent-tasks) task is ignored: a
-dev server is asked to keep running, so a limit would only cut short the thing
-it exists to hold open. Timeouts are not part of the cache key — how long a task
-may run does not change what it produces.
-
-## Parallel execution and its bound
-
-`build_schedule` flattens the graph into an in-degree count per node plus each
-node's prerequisites and dependents. The runner keeps a ready set of nodes whose
-in-degree has reached zero and spawns all of them at once, bounded by a
-semaphore. That bound, not the graph, is what limits parallelism: it defaults to
-the number of logical CPUs (`std::thread::available_parallelism`), and
-`--concurrency N` caps it at `N`. `--concurrency 0` is ignored rather than
-treated as unbounded, so the default takes over. Flag syntax for
-`--concurrency`, `--filter`, and `--continue` is in
+As each node finishes, its dependents get closer to ready, and any that reach
+zero outstanding prerequisites join the next pass. On a failure, Lattice spawns
+nothing further and reports the first failure. Under `--continue` it marks every
+transitive dependent of the failed node as skipped and keeps going with the rest,
+then exits non-zero. Flag syntax is in
 [Selecting what runs](/lattice/docs/filtering).
 
-As each node finishes, its dependents' in-degree drops by one, and a dependent
-reaching zero joins the ready set on the next pass. When a task fails outside
-`--continue` mode, no further nodes are spawned and the first failure is
-reported. In `--continue` mode, every transitive dependent of the failed node is
-marked skipped instead of run.
+## The whole graph is validated before anything starts
 
-## Cycles and other graph-construction errors
+Lattice builds and topologically sorts the entire graph before it spawns a
+single process. Every structural problem is therefore found while nothing has
+run and nothing has been written:
 
-Lattice topologically sorts the whole graph once before anything runs, so a
-cycle — two tasks depending on each other, directly or through a chain — is
-rejected before a single command starts:
+- A cycle, direct or through a chain, is rejected.
+- A requested task with no entry under `tasks` fails, and the error lists the
+  tasks that do exist.
+- A `dependsOn` naming a task the `tasks` map never defines fails, with a
+  suggestion when the name is close to a real one. The `^` form is checked
+  against the same map, so `^build` still requires `build` to be defined.
+- A [persistent](/lattice/docs/persistent-tasks) task with a dependent is
+  rejected, because nothing can be scheduled after a process that never exits.
 
-```text
-Error: cycle detected in task dependency graph
-```
+The last three are worth the up-front check for the same reason. A dependency
+Lattice cannot resolve would build no edge, and a missing edge does not announce
+itself: the run succeeds, in the wrong order, until something downstream fails
+for a reason that has nothing to do with the typo that caused it. Failing at
+graph construction turns a mystery into a message.
 
-A requested task with no entry under `tasks` also fails immediately, listing the
-tasks that do exist:
+Every one of those messages, with its exact text and its cause, is in
+[Errors](/lattice/docs/errors).
 
-```text
-Error: task 'nope' is not defined in lattice.json; available tasks: a, b
-```
+## Where to look next
 
-So does a `dependsOn` entry that names a task the `tasks` map never defines. A
-dependency Lattice cannot resolve builds no edge, so the prerequisite would
-simply not run and the ordering the config was written to guarantee would be
-missing with nothing to show for it:
-
-```text
-Error: task 'build' depends on 'codegen', but 'codegen' is not defined in `tasks`
-Did you mean `codegin`?
-Defined tasks: build, test, codegin
-```
-
-The `^` form is checked the same way, against the same map: `^build` resolves to
-the `build` task in dependency workspaces, so `build` still has to be defined.
-
-And a [persistent](/lattice/docs/persistent-tasks) task can never be a
-prerequisite, since it streams until stopped and never reaches "done" for a
-dependent to wait on:
-
-```text
-Error: persistent task 'dev' in workspace 'app' cannot be depended on by
-other tasks
-```
+Narrowing a run to part of the graph is
+[Selecting what runs](/lattice/docs/filtering). The fields on a task, including
+`timeout`, are in [Configuration](/lattice/docs/configuration). What happens to
+a node once it is scheduled is [Caching](/lattice/docs/caching).

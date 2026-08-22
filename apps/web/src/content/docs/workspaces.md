@@ -1,17 +1,19 @@
 ---
 title: Workspaces
-description: The project directory Lattice runs and caches tasks in, and what you declare about it.
+description: Why Lattice makes you list the directories it runs tasks in, and what it can work out for itself once you have.
 group: Concepts
 order: 1
 ---
 
 # Workspaces
 
-A workspace is one project directory — a JavaScript app, a Rust crate, a Python
-package, a Go service — and it is the unit of task running and caching.
-`lattice.json` lists them all under `workspaces`, and every root task is
-expanded across all of them into one execution graph
-(see [Task graph](/lattice/docs/task-graph)).
+A workspace is a directory with its own manifest. A JavaScript app with a
+`package.json`, a Rust crate with a `Cargo.toml`, a Python package with a
+`pyproject.toml`. Lattice runs tasks per workspace and caches results per
+workspace, so the workspace is the unit that everything else in the tool is
+counted in.
+
+You list them under `workspaces` in the repo's `lattice.json`:
 
 ```json
 {
@@ -22,53 +24,97 @@ expanded across all of them into one execution graph
 }
 ```
 
-`name` and `path` are required. `auto`, `engines`, `dependsOn`, and `scripts`
-each have a default.
+That is the whole declaration for most workspaces. Everything else about them is
+optional, and much of it Lattice can work out on its own.
 
-## Finding the root
+## The list is explicit because a glob is a guess
 
-Every command walks up from the current directory looking for `lattice.json`, so
-you can run `lattice` from anywhere inside the repo. The config is parsed and
-validated before anything else runs — duplicate workspace names and empty paths
-are rejected there — and every workspace `path` resolves relative to the root,
-not to the directory you ran from.
+`path` names one directory and is checked for existence exactly as written.
+`packages/*` is read as a directory whose name is literally `packages/*`, and it
+fails. There is no globbing and no filesystem crawl looking for manifests.
 
-## `path` is a literal directory
+That is a real cost. A repo with forty packages under `packages/` gets forty
+entries, and a new package means a new entry. The alternative costs more.
+A crawl has to decide what counts as a package, and every repo has directories
+that look like one and are not: a fixtures tree with its own `package.json`, a
+vendored dependency, an example app nobody builds in CI. A tool that discovers
+those runs tasks in them, caches results for them, and reports failures from
+them. A tool that reads a list runs what the list says.
 
-A `path` names one directory and is checked for existence as written, so a
-wildcard is read as a directory whose name contains `*` and fails:
+The list is also the thing you can read. `lattice.json` tells you what the repo
+consists of without you running anything, and a diff to it is a reviewable
+change rather than a side effect of adding a file.
+
+## The workspace directory is a boundary, not a hint
+
+Almost everything Lattice does to a task is scoped to that task's workspace
+directory. The input walk stops there. `outputs` globs are resolved from there.
+A cache hit clears what those globs match inside that directory before it
+unpacks the stored artifact.
+
+So a `path` has to stay inside the repo. An absolute path, or one that climbs
+out with `..`, is rejected during validation rather than at the moment a task
+would have written somewhere unexpected. Two workspaces also cannot share a
+name or resolve to the same directory, because a name is a cache identity and a
+directory is a blast radius, and sharing either would mean two tasks quietly
+overwriting each other's results.
+
+The one thing that does not respect the boundary is a file above it. A base
+`tsconfig.json` at the repo root is read by tasks in several workspaces and can
+be named by no workspace-relative pattern. `globalDependencies` covers that case
+at the repo level. See [Caching](/lattice/docs/caching).
+
+## An `auto` workspace still has to show evidence
+
+`auto` defaults to `true`, which means Lattice works out which tool runs the
+workspace's tasks by looking at what is in the directory. Find `pnpm-lock.yaml`
+and `pnpm run build` is the `build` command. Find `Cargo.lock` and it is
+`cargo build`. You write no commands for either.
+
+What `auto` does not mean is that Lattice will produce an answer no matter what
+it finds. An empty directory stops the run before any task starts:
 
 ```text
-workspace path 'packages/*' does not point to a directory; workspace paths
-are literal directories, not globs
+Error: workspace 'empty' has an ambiguous or undeclared task driver.
+No task driver could be detected (no lockfile, wrapper, or native declaration).
+Declare the task driver explicitly by adding to this workspace in lattice.json:
+  "auto": false, "scripts": { "build": "<command>" }
 ```
 
-Two workspaces cannot share a name or resolve to the same directory; either is a
-duplicate error, not a merge. List one entry per project directory.
-
-A `path` also has to stay inside the repo. An absolute path, or one that climbs
-out with `..`, is rejected:
+A directory holding nothing but a bare `package.json` stops it too, and says
+what it saw:
 
 ```text
-workspace 'esc' has a path '../outside' that points outside the repo root;
-workspace paths must stay inside the repo
+Error: workspace 'bare' has an ambiguous or undeclared task driver.
+Candidate tools seen: pnpm, npm, yarn, bun
+Declare the task driver explicitly by adding to this workspace in lattice.json:
+  "engines": { "pnpm": ">=0.0.0" }
 ```
 
-The workspace directory is the boundary for everything downstream — which files
-are hashed, which the `outputs` globs match, and which a cache hit clears before
-unpacking — so a path that leaves the repo would put all three somewhere Lattice
-has no business writing.
+This is the decision worth understanding about Lattice, because it is the one
+that will interrupt you. A `package.json` proves the workspace is JavaScript. It
+does not say whether `build` means `pnpm run build`, `yarn build`, or
+`npm run build`, and those three are not interchangeable: they resolve different
+dependency trees and read different lockfiles. Lattice could pick one. Picking
+one means every repo that never chose a package manager silently gets whichever
+Lattice's authors preferred, and the day it guesses wrong the failure looks like
+a bug in your build rather than a decision in ours.
 
-## `auto`: inferred or explicit
+So a bare ecosystem marker is deliberately not enough. Lattice needs a file that
+only one tool produces, or a file a developer wrote on purpose to name one:
+`pnpm-lock.yaml`, `bun.lockb`, `Cargo.lock`, a `packageManager` field, a
+`.tool-versions`, a checked-in `gradlew`. Any of those settles it. Nothing does
+not. [Driver detection](/lattice/docs/drivers) has the full ladder and what
+happens when two tools both have a claim.
 
-`auto` defaults to `true`. An auto workspace has its task driver — the tool that
-runs its tasks — resolved from evidence in the directory: a lockfile, a
-`packageManager` field, a `Cargo.lock`. Lattice then infers a command for every
-root task that driver or its manifest supports (`pnpm run build`, `cargo test`),
-so you write none of them. See [Driver detection](/lattice/docs/drivers) for the
-evidence ladder.
+An auto workspace that resolves a driver is allowed to have no command for a
+given task. Lattice skips it rather than failing, so a `test` task can exist in
+the repo and cover only the workspaces that have tests.
 
-`auto: false` turns all of that off:
+## `auto: false` is the way out
+
+Set `auto: false` and nothing is detected and nothing is inferred. You declare
+`scripts` for every task the workspace should run:
 
 ```json
 {
@@ -77,31 +123,44 @@ evidence ladder.
   "auto": false,
   "scripts": {
     "build": "python3 build.py",
-    "test": "python3 -m pytest",
-    "lint": "python3 -m py_compile src/*.py",
-    "clean": "rm -rf dist"
+    "test": "python3 -m pytest"
   }
 }
 ```
 
-Nothing is detected and nothing is inferred. Declare `scripts` for every root
-task the workspace should run, and `engines` for any toolchain constraint it
-needs. Requesting a root task the workspace has no `scripts` entry for fails the
-run:
+The trade you are making is precision for maintenance. An `auto: false`
+workspace cannot be wrong about its driver, because it has none, and it cannot
+be surprised by a lockfile someone adds later. It also cannot pick up a new task
+for free: ask for a task it has no `scripts` entry for and the run fails rather
+than skipping it, which is the correct behavior for a workspace that told you it
+would declare everything.
 
-```text
-workspace 'utils' is "auto": false but declares no command for task 'build';
-add it under this workspace's "scripts" map in lattice.json
+Use it for a workspace whose build is a script rather than a tool, for a
+workspace whose tool Lattice has never heard of, and for the case where
+detection is ambiguous and you would rather write two lines than reason about
+evidence rungs.
+
+`scripts` also works without `auto: false`. An entry there always beats what
+detection would infer, so an otherwise-auto workspace can name the one task no
+driver could ever produce:
+
+```json
+{
+  "name": "api",
+  "path": "services/api",
+  "scripts": { "deploy": "./deploy.sh" }
+}
 ```
 
-An auto workspace instead sits out a task its driver has no command for. It is
-not required to cover every task in the pipeline.
+`build`, `test`, and `lint` still come from the detected driver. Only `deploy` is
+declared.
 
-## `engines`: per-workspace toolchain constraints
+## Per-workspace `engines` exist so one workspace can be different
 
-A workspace's `engines` map merges with the root `engines`, and the workspace's
-entries win per key, so a workspace can tighten or replace a root constraint
-without touching the rest of the repo:
+A workspace's `engines` map merges over the root one, key by key. That is there
+for the repo where one workspace genuinely needs a different tool version than
+the rest, and where the honest fix is to say so in one place rather than raise
+the floor for everything:
 
 ```json
 {
@@ -112,13 +171,15 @@ without touching the rest of the repo:
 }
 ```
 
-Every workspace but `web` validates against Node ≥20; `web` requires ≥26. What a
-constraint's shape does — trust `PATH`, validate a version, or provision a
-pinned install — is [Engines and provisioning](/lattice/docs/engines).
+Every workspace but `web` is checked against Node 20 or newer. `web` needs 26.
+Whether a constraint checks the host tool, installs one, or does neither depends
+on the constraint's shape rather than its name, which is
+[Engines and provisioning](/lattice/docs/engines).
 
-## `dependsOn`: ordering workspaces
+## Workspace `dependsOn` does nothing by itself
 
-A workspace's `dependsOn` names other workspaces, by `name`:
+This is the field people expect to order their build, and on its own it orders
+nothing.
 
 ```json
 {
@@ -132,43 +193,29 @@ A workspace's `dependsOn` names other workspaces, by `name`:
 }
 ```
 
-On its own it changes no ordering. It takes effect only where a task's own
-`dependsOn` uses a `^`-prefixed name. Here `build` depends on `^build`, which
-resolves through `api`'s `dependsOn: ["core"]` to `core`'s `build`, so `core`
-builds before `api`. With no task naming `^build`, the workspace `dependsOn` has
-no scheduling effect at all. Bare versus `^`-prefixed task names are covered in
-[Task graph](/lattice/docs/task-graph).
+A workspace's `dependsOn` declares a fact about the repo: `api` uses `core`. It
+does not declare a schedule. The schedule comes from the task, and only when the
+task asks for it. Here `build` depends on `^build`, and the `^` means "in each
+workspace this one depends on", so it reads `api`'s `dependsOn` and orders
+`core:build` before `api:build`. Delete the `^build` and the two build in
+whatever order the scheduler picks.
 
-Every name has to match a declared workspace. A name that matches nothing builds
-no edge, which would leave the two workspaces building in whatever order the
-scheduler picked — so it is rejected instead:
+The separation is deliberate. Not every task should follow the dependency graph.
+`lint` usually should not, because linting `core` has nothing to do with linting
+`api`, and making every task inherit the workspace graph would serialize work
+that has no reason to be serial. Declaring the relationship once and opting each
+task into it is what lets `build` be ordered and `lint` be parallel in the same
+repo. [Task graph](/lattice/docs/task-graph) covers both tokens.
 
-```text
-Error: workspace 'api' depends on 'cor', which is not a declared workspace
-Did you mean `core`?
-Declared workspaces: core, api
-```
+A `dependsOn` name that matches no declared workspace is an error rather than a
+no-op, because an unresolvable name builds no edge, and a missing edge is
+invisible: the build still runs, in the wrong order, until it fails somewhere
+unrelated.
 
-## `scripts`: declaring commands directly
+## Where to look next
 
-`scripts` maps a task name to a shell command, and an entry there always wins
-over anything an auto workspace would infer:
-
-```json
-{
-  "name": "api",
-  "path": "services/api",
-  "dependsOn": ["core"],
-  "scripts": {
-    "deploy": "./deploy.sh"
-  }
-}
-```
-
-`api` is still `auto: true`, so `build`, `test`, and `lint` still come from its
-detected driver; only `deploy` — which no driver could infer — is the declared
-command. Name just the tasks you want to override or supply. Under
-`auto: false`, `scripts` is the only source of commands.
-
-Field-by-field types and defaults for every `lattice.json` key are in
-[Configuration](/lattice/docs/configuration).
+Types, defaults, and validation rules for every field on the workspace object
+are in [Configuration](/lattice/docs/configuration). The full list of what
+counts as driver evidence is in [Driver detection](/lattice/docs/drivers). Every
+error message this page mentions is reproduced with its cause in
+[Errors](/lattice/docs/errors).

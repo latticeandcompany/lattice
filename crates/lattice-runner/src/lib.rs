@@ -58,7 +58,7 @@ pub struct RunResult {
 #[derive(Debug)]
 pub struct RunFailure {
 	pub result: RunResult,
-	/// Downstream tasks skipped because a prerequisite failed.
+	/// Downstream tasks skipped because a dependency failed.
 	pub skipped: usize,
 }
 
@@ -74,7 +74,7 @@ impl std::fmt::Display for RunFailure {
 		if self.skipped > 0 {
 			write!(
 				f,
-				"; {} downstream task{} skipped",
+				". {} downstream task{} skipped",
 				self.skipped,
 				if self.skipped == 1 { "" } else { "s" }
 			)?;
@@ -95,7 +95,7 @@ pub struct RunInterrupted {
 
 impl std::fmt::Display for RunInterrupted {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "interrupted — running tasks were stopped")
+		write!(f, "interrupted. Lattice stopped the tasks that were still running")
 	}
 }
 
@@ -838,7 +838,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 							abort.store(true, Ordering::SeqCst);
 							if first_failure.is_none() {
 								first_failure = Some(format!(
-									"task '{workspace}:{task}' failed, stopping pipeline"
+									"task '{workspace}:{task}' failed, stopping the run"
 								));
 							}
 						}
@@ -1845,7 +1845,7 @@ mod tests {
 
 		let msg = err.to_string();
 		assert!(
-			msg.contains("wa:build") && msg.contains("stopping pipeline"),
+			msg.contains("wa:build") && msg.contains("stopping the run"),
 			"unexpected error: {msg}"
 		);
 		assert!(!marker.exists(), "downstream task ran despite failure");

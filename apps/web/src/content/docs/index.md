@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: What Lattice is, the shape of a config, and where to go next.
+description: What Lattice is, and where to go for tutorials, guides, concepts, and reference.
 group: Overview
 order: 1
 ---
@@ -9,96 +9,78 @@ order: 1
 
 **A high-performance, local toolchain for managing monorepos.**
 
-Lattice is one CLI that does two things, usable together or apart.
+Lattice is one CLI that runs tasks across the workspaces of a monorepo and pins
+the tool versions those tasks run with. Both halves read one `lattice.json` at
+the repo root, and either half works without the other. A workspace with no
+`engines` still runs and caches tasks. A workspace with no tasks of its own can
+still pin a tool version.
 
-As a task runner, it reads workspaces and a task graph from a root
-`lattice.json` and runs tasks across workspaces in dependency order, in
-parallel, caching every result by content so unchanged work is skipped. As a
-toolchain manager, it pins and provisions versioned tools (compilers, package
-managers, linters) per workspace or per task, without touching your global
-environment.
+## Start here
 
-Either half stands alone. The task runner needs no `engine` declared, and a
-workspace with no tasks of its own can still pin a version.
+These pages get you from an empty repo to a cached run.
 
-## A `lattice.json`
+- [Installation](/lattice/docs/installation) gets the `lattice` binary onto
+  your machine and shows what a pinned version does.
+- [Getting started](/lattice/docs/getting-started) runs `lattice init`, then
+  `lattice run build` twice, so the second run comes back from cache.
+- [Upgrading](/lattice/docs/upgrading) covers moving a repo to a new Lattice
+  version.
 
-Everything Lattice knows about your repo comes from one file at the root. Here
-is an excerpt from the one this project uses to build itself, cut down to three
-workspaces and three tasks.
+## Do one thing in your own repo
 
-```json
-{
-  "$schema": ".lattice/schema.json",
-  "workspaces": [
-    { "name": "lattice-config", "path": "crates/lattice-config" },
-    {
-      "name": "lattice-workspace",
-      "path": "crates/lattice-workspace",
-      "dependsOn": ["lattice-config"]
-    },
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } }
-  ],
-  "engines": {
-    "cargo": ">=1.86.0"
-  },
-  "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "Cargo.toml", "package.json"],
-      "outputs": ["dist/**"]
-    },
-    "test": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*", "tests/**/*"]
-    },
-    "dev": {
-      "persistent": true,
-      "cache": false
-    }
-  }
-}
-```
+Each guide solves one problem and assumes you already have a repo.
 
-Each `workspaces` entry is a directory declared by a literal `path` (never a
-glob), and its `dependsOn` orders workspaces relative to each other. `engines`
-are version constraints on tools such as `cargo` and `node`, checked or
-provisioned per workspace. `tasks` is the pipeline: `build`, `test`, and `dev`
-are names you choose. `^build` means "the `build` task of each dependency"; a
-bare `test` means "the `test` task in this same workspace." `dev` is a dev
-server that runs until you stop it, so it is `persistent` and uncached.
+- [Adopting Lattice](/lattice/docs/adopting-lattice) declares an existing
+  monorepo one workspace at a time.
+- [A multi-language monorepo](/lattice/docs/multi-language-monorepo) wires
+  JavaScript, Rust, and Python workspaces into one task graph.
+- [Nested repos](/lattice/docs/nested-repos) covers a repo that contains
+  another repo with its own `lattice.json`.
+- [Pinning tool versions](/lattice/docs/pinning-tool-versions) constrains and
+  provisions a compiler, linter, or package manager.
+- [Dev servers and watchers](/lattice/docs/dev-servers) runs processes that
+  never exit.
+- [Continuous integration](/lattice/docs/continuous-integration) wires
+  `lattice run` into a CI job and shares the cache.
+- [Troubleshooting](/lattice/docs/troubleshooting) works backward from a
+  symptom.
+- [The desktop app](/lattice/docs/desktop-app) opens a project in a window
+  instead of a terminal.
 
-Each workspace runs its own real command underneath: `cargo test`,
-`npm run build`, whatever that project already uses. Lattice reads that from
-the workspace, or you set it explicitly with `scripts`.
+## Understand how it decides
 
-## What `lattice run build` does
+These pages explain the models behind the behavior. Read them when the output
+surprises you.
 
-1. Reads `lattice.json`, resolves the workspaces, and expands `build` across
-   every one that defines it into a dependency graph.
-2. Walks that graph in order, running independent workspaces in parallel.
-3. Before running each task, computes a hash over its command, its `inputs`,
-   its resolved environment, and any lockfiles. It skips the task if that exact
-   hash already has a cached result.
-4. Runs the ones that miss, using whichever tool version the task's `engines`
-   resolved to, then stores the result under that hash for next time.
+- [Workspaces](/lattice/docs/workspaces) is the unit everything else is scoped
+  to.
+- [Task graph](/lattice/docs/task-graph) covers `dependsOn`, the `^` prefix,
+  and what runs in parallel.
+- [Caching](/lattice/docs/caching) covers what makes a task hit or miss.
+- [Driver detection](/lattice/docs/drivers) covers how Lattice picks the tool
+  that runs a workspace's tasks, and when it stops to ask.
+- [Engines and provisioning](/lattice/docs/engines) covers the three things a
+  version constraint can mean.
+- [Selecting what runs](/lattice/docs/filtering) covers `--filter` and stacked
+  tasks.
+- [Persistent tasks](/lattice/docs/persistent-tasks) covers tasks that run
+  until you stop them.
+- [Output and logging](/lattice/docs/output-modes) covers the interactive
+  display and the raw stream.
 
-Run it again with nothing changed and every task comes back from cache. Change
-one file and everything that depends on it runs again; everything else stays
-cached.
+## Look something up
 
-## Where to go next
-
-- New to Lattice: [Installation](/lattice/docs/installation) and then
-  [Getting started](/lattice/docs/getting-started) walk through `lattice init`
-  to a first cached run.
-- Adding it to a real repo: [Adopting Lattice](/lattice/docs/adopting-lattice)
-  and [A multi-language monorepo](/lattice/docs/multi-language-monorepo).
-- How tasks are ordered and cached:
-  [Task graph](/lattice/docs/task-graph) and [Caching](/lattice/docs/caching).
-- How tools are detected and pinned:
-  [Driver detection](/lattice/docs/drivers) and
-  [Engines and provisioning](/lattice/docs/engines).
-- Every field, flag, and command:
-  [Configuration](/lattice/docs/configuration) and
-  [CLI reference](/lattice/docs/cli).
+- [Configuration](/lattice/docs/configuration) is the field reference for
+  `lattice.json`.
+- [CLI reference](/lattice/docs/cli) is every command, flag, and exit code.
+- [Toolchains](/lattice/docs/toolchains) is the built-in driver table and the
+  well-known engine list.
+- [Environment variables](/lattice/docs/environment-variables) is what Lattice
+  reads from the environment and what it sets for a task.
+- [Errors](/lattice/docs/errors) is every error message and what causes it.
+- [Cache internals](/lattice/docs/cache-internals) is the exact key
+  composition and on-disk layout.
+- [Architecture](/lattice/docs/architecture) is the crate layout, for
+  contributors.
+- [Glossary](/lattice/docs/glossary) defines every term these pages use.
+- [Changelog](/lattice/docs/changelog) is what changed in each release.

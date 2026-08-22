@@ -262,20 +262,21 @@ pub fn provision_and_resolve(
 					match parse_version(&out) {
 						Some(v) => v,
 						None => bail!(
-							"engine '{name}': could not parse version from `{vc}` output: {}",
+							"engine '{name}': could not read a version from the output of `{vc}`:\n{}",
 							out.trim()
 						),
 					}
 				} else {
 					bail!(
-						"engine '{name}' has a version constraint but no way to check it \
-                         (not a well-known engine and no `versionCmd`)"
+						"engine '{name}' has a version constraint but no way to check the \
+                         installed version. '{name}' is not a well-known engine, so add a \
+                         `versionCmd` to it"
 					);
 				};
 				if let Some(cons) = &constraint {
 					if !satisfies(&version, cons) {
 						bail!(
-                            "engine '{name}' {version} on PATH does not satisfy constraint '{cons}'"
+                            "engine '{name}' on PATH is {version}, which does not satisfy the constraint '{cons}'"
                         );
 					}
 				}
@@ -342,7 +343,7 @@ pub fn provision_and_resolve(
 							if let Some(cons) = &constraint {
 								if !satisfies(&v, cons) {
 									bail!(
-										"engine '{name}' provisioned {v} does not satisfy '{cons}'"
+										"engine '{name}' provisioned {v}, which does not satisfy the constraint '{cons}'"
 									);
 								}
 							}

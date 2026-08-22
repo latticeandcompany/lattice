@@ -62,13 +62,13 @@ test('a pulled-in node is dashed', () => {
 	assert.equal(s.data.find((n) => n.id === 'api:build').itemStyle.borderType, 'solid');
 });
 
-test('a cached node recedes and says so in its label', () => {
+test('a cache-hit node recedes and says so in its label', () => {
 	const s = series(
 		option({ states: new Map([['api:build', { state: 'cached', cacheKey: 'abcdef12' }]]) }),
 	);
 	const node = s.data.find((n) => n.id === 'api:build');
 	assert.ok(node.itemStyle.opacity < 1);
-	assert.ok(node.label.formatter.includes('cached'));
+	assert.ok(node.label.formatter.includes('cache hit'));
 });
 
 test('failure is the only place amber appears', () => {
@@ -135,7 +135,7 @@ test('every encoding the graph uses is in the legend', () => {
 	// A shape or an opacity needs a key as much as a hue would.
 	assert.ok(LEGEND.length >= 6);
 	const text = LEGEND.map((entry) => entry.label).join(' ');
-	for (const word of ['cache', 'until stopped', 'dependency', 'failed']) {
+	for (const word of ['cache hit', 'persistent', 'dependency', 'failed']) {
 		assert.ok(text.includes(word), `the legend never mentions ${word}`);
 	}
 });

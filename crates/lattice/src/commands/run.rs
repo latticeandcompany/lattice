@@ -10,10 +10,10 @@ use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_na
 
 #[derive(Args, Debug)]
 #[command(long_about = "Run one or more tasks across your workspaces.\n\n\
-Lattice resolves each task's dependency graph from the `tasks` map in lattice.json \
-and runs it in dependency order. Stacked tasks are merged into one graph, so a \
-dependency they share runs once. Pass --sequentially to run each task's graph to \
-completion before starting the next.\n\n\
+Lattice builds each task's dependency graph from the `tasks` map in lattice.json, \
+then runs that graph in dependency order. Naming several tasks at once merges them \
+into one graph, so a dependency they share runs once. To run each task's graph to \
+completion before the next one starts, pass --sequentially.\n\n\
 Examples:\n  \
 lattice run build\n  \
 lattice run lint test build\n  \
@@ -21,12 +21,12 @@ lattice run lint test build --sequentially\n  \
 lattice run test --filter api\n  \
 lattice run lint --concurrency 4 --continue")]
 pub struct RunArgs {
-	/// One or more tasks to run across workspaces (e.g. lint test build).
+	/// One or more task names, separated by spaces.
 	#[arg(required = true, num_args = 1..)]
 	pub tasks: Vec<String>,
 
-	/// Run the given tasks one at a time, each graph to completion, in order —
-	/// instead of merging them into one combined graph.
+	/// Run each task's graph to completion in turn, instead of merging them
+	/// into one combined graph.
 	#[arg(short = 's', long = "sequentially")]
 	pub sequentially: bool,
 
@@ -35,7 +35,7 @@ pub struct RunArgs {
 	#[arg(short, long, value_name = "PATTERN")]
 	pub filter: Option<String>,
 
-	/// Cap how many tasks run at once (default: number of CPUs).
+	/// Cap how many tasks run at once. The default is the number of CPUs.
 	#[arg(long, value_name = "N")]
 	pub concurrency: Option<usize>,
 
@@ -43,11 +43,11 @@ pub struct RunArgs {
 	#[arg(long = "continue")]
 	pub keep_going: bool,
 
-	/// Neither read nor write the cache: re-run every task and store nothing.
+	/// Neither read nor write the cache. Lattice re-runs every task and stores nothing.
 	#[arg(long)]
 	pub no_cache: bool,
 
-	/// Re-run every task and write fresh cache entries, replacing what is there.
+	/// Re-run every task and write fresh cache entries, replacing any already stored.
 	#[arg(long)]
 	pub force: bool,
 
@@ -89,8 +89,8 @@ impl RunArgs {
 				// A freshly-scaffolded repo has an empty `workspaces` array; exit 0
 				// rather than erroring.
 				println!(
-					"lattice: no workspaces declared. Add them to the \
-                     `workspaces` array in lattice.json to run `{}`.",
+					"lattice: no workspaces declared. Add one to the \
+                     `workspaces` array in lattice.json, then run `{}`.",
 					self.tasks.join(" ")
 				);
 				return Ok(());
@@ -152,8 +152,8 @@ impl RunArgs {
 		match project.plan(&request.plan)? {
 			Plan::NoWorkspaces => {
 				println!(
-					"lattice: no workspaces declared. Add them to the \
-                     `workspaces` array in lattice.json to run `{}`.",
+					"lattice: no workspaces declared. Add one to the \
+                     `workspaces` array in lattice.json, then run `{}`.",
 					self.tasks.join(" ")
 				);
 			}

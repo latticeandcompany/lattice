@@ -10,7 +10,8 @@ import { getStartedUrl, githubUrl, installCommand } from '../lib/nav';
 				Install and run
 			</h2>
 			<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 34rem;">
-				Run this in your repo, then <code>./.lattice/bin/lattice init</code> and a task.
+				Run this in the root of your repo. Then <code>./.lattice/bin/lattice init</code> writes a config,
+				and <code>lattice run build</code> builds every workspace in it.
 			</p>
 			<div class="d-flex justify-content-center mb-4">
 				<CopyCommand client:visible command={installCommand} />

@@ -441,8 +441,10 @@ impl Reporter for CiReporter {
 	fn run_start(&self, task: &str, workspaces: usize) {
 		if self.loquacious {
 			println!(
-				"lattice: running `{}` across {} workspace(s)",
-				task, workspaces
+				"lattice: running `{}` across {} workspace{}",
+				task,
+				workspaces,
+				if workspaces == 1 { "" } else { "s" }
 			);
 		}
 	}
@@ -548,7 +550,7 @@ impl Reporter for CiReporter {
 			fmt_secs(elapsed_ms)
 		);
 		if is_full_cache(total, cached, failed) {
-			println!("lattice: full cache — nothing to run");
+			println!("lattice: full cache, nothing to run");
 		}
 	}
 

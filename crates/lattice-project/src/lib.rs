@@ -40,8 +40,8 @@ impl Project {
 	pub fn open(start: &Path) -> Result<Self> {
 		let root = lattice_config::find_root(start).ok_or_else(|| {
 			anyhow::anyhow!(
-				"no lattice.json found in this directory or any parent; \
-				 run `lattice init` to create one"
+				"no lattice.json found in this directory or any parent. \
+				 Run `lattice init` to create one"
 			)
 		})?;
 		Self::open_root(&root)
@@ -76,12 +76,12 @@ impl Project {
 					self.config.tasks.keys().map(|s| s.as_str()).collect();
 				available.sort_unstable();
 				let listed = if available.is_empty() {
-					"(none defined)".to_string()
+					"lattice.json defines no tasks".to_string()
 				} else {
-					available.join(", ")
+					format!("Defined tasks: {}", available.join(", "))
 				};
 				bail!(
-					"task '{}' is not defined in lattice.json; available tasks: {}",
+					"task '{}' is not defined in the `tasks` map in lattice.json. {}",
 					task,
 					listed
 				);

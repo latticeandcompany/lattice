@@ -1,21 +1,22 @@
 # Nested repo
 
-A repo whose frontend is its own monorepo with its own task runner, wired into the
-Lattice graph as a single workspace. Lattice schedules and caches that workspace,
-and the runner inside it still resolves the packages beneath it.
+This example's frontend is its own monorepo with its own task runner, wired into
+the Lattice graph as a single workspace. Lattice schedules and caches the
+`frontend` workspace as one unit. The runner inside `frontend` still resolves the
+packages under it.
 
-```
+```text
 lattice.json          two workspaces: frontend, api
-frontend/             an inner monorepo — turbo.json, npm workspaces
+frontend/             an inner monorepo with its own turbo.json and package tree
   packages/ui/        built first (inner dependency)
   packages/site/      depends on ui, emits dist/bundle.js
-services/api/         a plain workspace; serves site's bundle
+services/api/         a plain workspace, serving site's bundle
 ```
 
-`frontend` is a manual workspace (`"auto": false`) whose scripts shell out to
-`node_modules/.bin/turbo run <task>`. Nothing in `lattice.json` mentions the inner
-packages, and the repo declares no `engines`: the runner comes from the inner
-repo's own `node_modules`.
+`frontend` sets `"auto": false`, and its scripts call
+`node_modules/.bin/turbo run <task>`. Nothing in `lattice.json` names the inner
+packages. The repo declares no `engines`, so the inner runner comes from the
+inner repo's own `node_modules`.
 
 ## Run it
 
@@ -37,39 +38,45 @@ lattice run clean
 ```
 
 `serve` is filtered to `api` because a manual workspace must declare a script for
-any task you invoke directly, and `frontend` has nothing to serve. The filter picks
-the workspace the run is for, not the whole of it: `serve` depends on `build`, so
-`frontend:build` still runs first (from cache, if the bundle is current).
+any task you invoke directly, and `frontend` has nothing to serve. A filter names
+the workspaces a run is for, and the run still includes what those workspaces
+depend on. `serve` depends on `build`, so `frontend:build` runs first, from cache
+if the bundle is current.
 
 ## Behavior
 
 `api` declares `"dependsOn": ["frontend"]`, so `frontend:build` completes before
-`api:build` starts. Lattice never sees the `ui → site` edge; the inner runner
+`api:build` starts. Lattice never sees the `ui` to `site` edge. The inner runner
 resolves that inside the workspace.
 
-`frontend` is cached as one unit. A hit restores every package's `dist/` in one
-step and skips the inner runner entirely. A miss hands the whole workspace back to
-it, and it applies its own caching per package.
+`frontend` is cached as one unit. A cache hit restores every package's `dist/` in
+one step and skips the inner runner entirely. A miss hands the whole workspace
+back to the inner runner, which applies its own caching per package.
 
-`build` uses broad `inputs` (`**/*`), because the nested repo owns its own layout,
-so the `ignore` set is what keeps the key correct. Three things have to stay out of
-it:
+`build` declares broad `inputs` (`**/*`), because the nested repo owns its own
+layout, so the `ignore` set is what keeps the cache key useful:
 
-- `**/node_modules/**` — the installed tree (`package-lock.json` is hashed instead)
-- `**/.turbo/**` — the inner runner's own cache, which changes on every run
-- `**/dist/**` — outputs; an output inside `inputs` invalidates the key that
-  produced it
+- `**/node_modules/**`, the installed tree. `package-lock.json` is hashed
+  instead.
+- `**/.turbo/**`, the inner runner's own cache, which changes on every run.
+- `**/dist/**`, the built bundles. Lattice already keeps a task's own `outputs`
+  out of its key, so this entry only restates that.
 
-## Caveat: don't copy an upstream artifact at build time
+## Cache keys reach across the graph
 
-A workspace's cache key covers its own declared inputs. It does not include the
-keys of the workspaces it depends on, and `inputs` globs cannot reach outside the
-workspace directory. So if `api:build` copied `frontend`'s bundle into its own
-`dist/`, then a frontend-only edit would rebuild `frontend` and still serve `api`
-a cache hit — leaving the copy stale.
+A task's cache key includes the resolved keys of the tasks it depends on. So a
+frontend-only edit changes `api:build`'s key as well as `frontend:build`'s, and
+`api:build` runs again instead of restoring a result built against code that no
+longer exists.
 
-That is why `api` builds only from its own `src/`, and reads the frontend bundle
-at run time in the uncached `serve` task.
+The rule is deliberately coarse: a workspace is one node, so `api:build` re-runs
+whenever `frontend:build`'s key moves, even when nothing `api` reads actually
+changed.
 
-See [Nested repos](https://latticeandcompany.github.io/lattice/docs/nested-repos) for the pattern in
-full.
+`api` still builds only from its own `src/` and reads the frontend bundle at run
+time, in the uncached `serve` task. An `inputs` glob cannot reach outside the
+workspace directory, so `services/api/` could not declare that bundle as an input
+even if it wanted to.
+
+See [Nested repos](https://latticeandcompany.github.io/lattice/docs/nested-repos)
+for the pattern in full.

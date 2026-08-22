@@ -145,7 +145,7 @@ const DocsSearch = () => {
 				onClick={show}
 			>
 				<i className="bi bi-search" aria-hidden="true" />
-				<span className="tw:flex-1 tw:text-left">Search docs</span>
+				<span className="tw:flex-1 tw:text-left">Search the docs</span>
 				<kbd className="doc-search-kbd">⌘K</kbd>
 			</button>
 
@@ -155,7 +155,7 @@ const DocsSearch = () => {
 						className="doc-search-panel"
 						role="dialog"
 						aria-modal="true"
-						aria-label="Search documentation"
+						aria-label="Search the docs"
 						onMouseDown={(event) => event.stopPropagation()}
 					>
 						<div className="d-flex align-items-center gap-2 px-3 doc-search-field">
@@ -164,8 +164,8 @@ const DocsSearch = () => {
 								ref={inputRef}
 								type="search"
 								className="form-control border-0 shadow-none px-0"
-								placeholder="Search documentation"
-								aria-label="Search documentation"
+								placeholder="Search the docs"
+								aria-label="Search the docs"
 								autoComplete="off"
 								value={query}
 								onChange={(event) => setQuery(event.target.value)}
@@ -180,13 +180,13 @@ const DocsSearch = () => {
 						<div className="doc-search-results">
 							{status === 'unavailable' && (
 								<p className="doc-search-note">
-									The search index is missing. It is generated at build time — run{' '}
-									<code>npm run build</code>, then <code>npm run preview</code>.
+									The search index is missing. Run <code>npm run build</code> to generate it, then{' '}
+									<code>npm run preview</code>.
 								</p>
 							)}
 							{status === 'searching' && hits.length === 0 && <p className="doc-search-note">Searching…</p>}
 							{status === 'ready' && hits.length === 0 && (
-								<p className="doc-search-note">No results for “{query.trim()}”.</p>
+								<p className="doc-search-note">No results for "{query.trim()}".</p>
 							)}
 							{status === 'idle' && (
 								<p className="doc-search-note">Type to search. ↑↓ to move, ↵ to open, Esc to close.</p>

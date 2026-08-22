@@ -8,12 +8,12 @@ use lattice_output::{paint_teal, ROSETTE};
 
 #[derive(Args, Debug)]
 #[command(
-	long_about = "Evict cache artifacts (oldest first) until the local cache is under a \
-size limit.\n\nThe limit comes from --max-size, or falls back to settings.maxCacheSize in \
-lattice.json."
+	long_about = "Evict cache artifacts, oldest first, until the local cache is under a \
+size limit.\n\nThe limit comes from --max-size. Without that flag, Lattice uses \
+settings.maxCacheSize in lattice.json."
 )]
 pub struct PruneArgs {
-	/// Upper bound on the cache size (e.g. "10GB"). Defaults to settings.maxCacheSize.
+	/// Upper bound on the cache size, such as 10GB. Defaults to settings.maxCacheSize.
 	#[arg(long, value_name = "SIZE")]
 	pub max_size: Option<String>,
 }
@@ -23,8 +23,8 @@ impl PruneArgs {
 		let cwd = std::env::current_dir()?;
 		let root = find_root(&cwd).ok_or_else(|| {
 			anyhow::anyhow!(
-				"no lattice.json found in this directory or any parent; \
-                 run `lattice init` to create one"
+				"no lattice.json found in this directory or any parent. \
+                 Run `lattice init` to create one"
 			)
 		})?;
 		lattice_config::schema::ensure_schema(&root);
@@ -35,7 +35,7 @@ impl PruneArgs {
             None => match config.settings.max_cache_size {
                 Some(cs) => cs,
                 None => bail!(
-                    "no max cache size set (pass --max-size or set settings.maxCacheSize in lattice.json)"
+                    "no cache size limit set. Pass --max-size, or set settings.maxCacheSize in lattice.json"
                 ),
             },
         };

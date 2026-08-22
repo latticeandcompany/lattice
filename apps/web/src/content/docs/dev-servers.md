@@ -1,26 +1,25 @@
 ---
-title: Dev servers and watchers
-description: The daily workflow for running dev servers and watchers across workspaces.
+title: Run dev servers
+description: Start every dev server the repo declares, read their output, and stop them.
 group: Guides
 order: 5
 ---
 
-# Dev servers and watchers
+# Run dev servers
 
-Start every dev server the repo declares in one command, read their interleaved
-output, start just one, and stop everything when you're done. For the mechanics
-behind it — what `persistent: true` changes, and how the output mode is chosen —
-see [Persistent tasks](/lattice/docs/persistent-tasks) and [Output and
-logging](/lattice/docs/output-modes). For the full matching rules behind
-`--filter`, see [Selecting what runs](/lattice/docs/filtering).
+A dev server is a task with `persistent: true` on it. This guide covers starting
+every one the repo declares, starting just one, making a server wait for a
+build, and stopping everything.
 
-## Declaring a `dev` task
+For what `persistent` changes elsewhere, see [Persistent
+tasks](/lattice/docs/persistent-tasks). For how the output mode is picked, see
+[Output and logging](/lattice/docs/output-modes).
 
-A dev server or watcher is a task like any other, with two fields set on it in
-the root `tasks` map: `persistent: true` (it never exits, and its output streams
-live) and, usually, `cache: false`. A persistent task is never cacheable
-regardless, so `cache: false` only documents the intent. This is the actual
-`dev` task from this repo's own `lattice.json`:
+## Declare a `dev` task
+
+Set two fields on the task in the root `tasks` map. `persistent: true` says it
+never exits and its output streams live. `cache: false` documents the intent; a
+persistent task is never cached whatever `cache` says.
 
 ```json
 {
@@ -33,32 +32,16 @@ regardless, so `cache: false` only documents the intent. This is the actual
 }
 ```
 
-Only one workspace here — `web` (`apps/web`) — has anything to run for it: its
-`package.json` declares `"dev": "astro dev"`. The seven Rust crates have no
-`dev` script and no driver-inferred equivalent, so they're absent from the
-graph:
-
-```text
-$ lattice run dev --dry-run
-❖ lattice  dry run · dev
-  → web:dev  npm run dev
-```
-
-An `auto` workspace with no command for a task is skipped silently, not an
-error. A workspace declared `"auto": false` is stricter: asked to run `dev`
-directly with no matching entry in its own `scripts` map, the run fails with a
-named fix.
-
-Declaring `dev` across several workspaces looks like this — a shared package
-built once, a web app whose dev server needs it built first, and a Rust service
-with its own watch command:
+The examples below use this three-workspace repo: a shared package built once, a
+web app whose dev server needs it built first, and a service with its own watch
+command.
 
 ```json
 {
   "workspaces": [
     { "name": "ui-kit", "path": "packages/ui-kit" },
     { "name": "web", "path": "apps/web", "dependsOn": ["ui-kit"] },
-    { "name": "api", "path": "services/api", "scripts": { "dev": "cargo watch -x run" } }
+    { "name": "api", "path": "services/api", "auto": false, "scripts": { "dev": "cargo watch -x run" } }
   ],
   "tasks": {
     "build": {
@@ -74,73 +57,90 @@ with its own watch command:
 }
 ```
 
-`web` and `ui-kit` are ordinary JavaScript workspaces, where an npm/pnpm/yarn
-driver infers `build` and `dev` from `package.json` scripts. `api`'s Rust driver
-has no notion of a watch mode, so its `dev` command is declared explicitly. An
-explicit `scripts` entry always wins over what a driver would have inferred.
+`web` and `ui-kit` are ordinary JavaScript workspaces, so their `build` and
+`dev` commands come from `package.json` scripts. A Rust driver has no notion of
+a watch mode, so `api` declares its `dev` command explicitly. A `scripts` entry
+always beats what a driver would have inferred.
 
-## Running every dev server at once
+Check what resolves before you start anything:
+
+```text
+$ lattice run dev --dry-run
+❖ lattice  dry run · dev
+  → ui-kit:build  npm run build
+  → web:build  npm run build
+  → api:dev  cargo watch -x run
+  → web:dev  npm run dev
+```
+
+`ui-kit` has no `dev` script, so it contributes no `dev` node. An `auto`
+workspace with no command for a task is skipped silently. A workspace declared
+`"auto": false` is stricter: with no matching entry in its own `scripts` map, the
+run fails and names the fix.
+
+## Start every dev server at once
 
 ```sh
 lattice run dev
 ```
 
-The closure of this run includes a `persistent` task, so Lattice uses raw,
-line-by-line output for the entire run, even at a real terminal (see [Output and
-logging](/lattice/docs/output-modes)). Every line is prefixed
-`workspace:task:`, and with several dev servers up their output interleaves in
-arrival order. For the three-workspace example above:
+Because the run pulls in a persistent task, Lattice uses raw line-by-line output
+for the whole run, even at a terminal. The live display repaints in place and
+cannot render a process that streams indefinitely. Every line is prefixed
+`workspace:task:`, and with several servers up their output interleaves in
+arrival order:
 
 ```text
-ui-kit:build: running
-ui-kit:build: done (0.41s)
-web:build: running
-web:build: done (1.02s)
-web:dev: running
 api:dev: running
-web:dev: Local:   http://localhost:4321/
-api:dev:    Compiling api v0.1.0
-web:dev: Network: use --host to expose
-api:dev:     Finished dev [unoptimized] target(s) in 1.8s
-api:dev:      Running `target/debug/api`
+ui-kit:build: running
 api:dev: listening on 0.0.0.0:8080
+ui-kit:build: done (0.23s)
+web:build: running
+web:build: done (0.19s)
+web:dev: running
+web:dev: 
+web:dev: > web@1.0.0 dev
+web:dev: > echo 'Local:   http://localhost:4321/' && sleep 30
+web:dev: 
+web:dev: Local:   http://localhost:4321/
+lattice: 4 tasks, 0 cached, 0 failed, 4.00s
 ```
 
-`ui-kit:build` and `web:build` finish first because `web:dev` and `api:dev` both
-`dependsOn` a `build`. Once those are done, both dev servers start and run side
-by side. Neither `dev` task settles into a `done` line; a persistent task gets a
-line only if it exits, which is the one thing it isn't supposed to do. As long as
-both stay up the invocation doesn't terminate. See [Stopping
-everything](#stopping-everything).
+`api:dev` starts immediately because `api` has no `build` to wait on.
+`web:dev` waits for `ui-kit:build` and `web:build`. Neither `dev` task settles
+into a `done` line: a persistent task gets a line only if it exits.
 
-## Running one dev server only
+## Start one dev server only
 
-Add `--filter` to keep just the workspace you're working on:
+```sh
+lattice run dev --filter web
+```
+
+`--filter` matches a workspace's `name` as a substring, and its matches are the
+roots of the run. Everything they depend on comes along, tagged
+`(dependency)`. Everything else is dropped, not started and not waited on:
 
 ```text
 $ lattice run dev --filter web --dry-run
 ❖ lattice  dry run · dev
+  → ui-kit:build (dependency)  npm run build
+  → web:build  npm run build
   → web:dev  npm run dev
 ```
 
-`--filter` matches a workspace's `name` as a substring, before the dependency
-graph is built. `ui-kit`'s `build` still runs if `web`'s `dev` depends on it,
-but `api` is dropped entirely — not started, not waited on. A pattern that
-matches nothing is a no-op, not a failure:
+A pattern that matches nothing is a no-op, not a failure:
 
 ```text
 $ lattice run dev --filter zzz
 lattice: no workspaces matched filter 'zzz'.
 ```
 
-See [Selecting what runs](/lattice/docs/filtering) for how filtering interacts
-with a workspace's dependencies.
+See [Selecting what runs](/lattice/docs/filtering).
 
-## Making a watcher wait for a build
+## Make a server wait for a build
 
-A dev server that imports a shared package's build output, or that needs its own
-codegen step to have run, declares that with `dependsOn` on the `dev` task
-itself:
+To make a dev server wait on a shared package's build output, or on its own
+codegen step, put `dependsOn` on the `dev` task:
 
 ```json
 {
@@ -152,90 +152,87 @@ itself:
 }
 ```
 
-`^build` runs `build` in every workspace this one `dependsOn`; the bare `build`
-runs this workspace's own `build` first. Both are ordinary dependency edges and
-have to finish (or restore from cache) before the dev server starts (see [Task
-graph](/lattice/docs/task-graph) for `^task` versus `task`).
+`^build` runs `build` in every workspace this one `dependsOn`. The bare `build`
+runs this workspace's own. Both are ordinary edges and must finish, or restore
+from cache, before the dev server starts. See [Task
+graph](/lattice/docs/task-graph).
 
-The edge only runs in this direction. A persistent task must be a leaf, so
+The edge only runs in that direction. A persistent task must be a leaf, so
 nothing may depend on it:
 
 ```text
-persistent task 'dev' in workspace 'web' cannot be depended on by other tasks
+Error: task 'dev' in workspace 'web' is persistent, so no other task may depend on it
 ```
 
 If another task needs what a dev server produces, depend on the build step that
-produces it.
+produces it instead.
 
-## Stopping everything
+## Stop everything
 
-Once every other task in the run has finished and the dev servers are up,
-`lattice run` waits for `Ctrl-C`, streaming their output while it waits. One
-`Ctrl-C` tears every still-running dev server down: on Unix, Lattice sends
-`SIGKILL` to each one's whole process group, so a server launched through a shell
-(and anything it spawned) dies with it. A server killed this way is not reported
-as having exited. If nothing else in the run failed, this exits `0` and prints
-the same run summary line as any other run.
+Once the rest of the graph has drained and the servers are up, `lattice run`
+waits, streaming their output. One `Ctrl-C` takes every still-running server
+down. On Unix, Lattice sends `SIGTERM` to each one's whole process group, waits
+up to five seconds, then sends `SIGKILL` to whatever is left. A server launched
+through a shell dies with everything it spawned.
 
-The run also ends on its own once every dev server in it has exited. There is
-nothing left to wait for, so it prints the summary without needing a `Ctrl-C`.
+An interrupted run exits `130`, the shell's convention for `SIGINT`, so a CI
+runner can tell a cancelled run from a failed one. The summary line still
+prints, and a server killed this way is not reported as having exited.
 
-## A dev server that exits
+The run also ends on its own once every persistent task in it has exited. There
+is nothing left to wait for, so it prints the summary without a `Ctrl-C`.
 
-Lattice watches each dev server it starts. One that quits gets a line saying so,
-and a non-zero exit counts as a failed task. A server that refuses to start
-because something is already listening on its port ends the run in about the time
-it takes to print the reason:
+## Read a server that exits
 
-```text
-$ lattice run dev --filter web
-web:dev: running
-web:dev:
-web:dev: > @lattice/web@1.0.0-beta-2 dev
-web:dev: > astro dev
-web:dev:
-web:dev: {"message":"Dev server already running at
-http://localhost:4321 (pid 13616)","label":"SKIP_FORMAT","level":"info"}
-web:dev: EXITED (code 1) after 1.09s
-lattice: 1 tasks, 0 cached, 1 failed, 1.14s
-```
-
-`npm run dev` printed that message and exited, so the run reported it, counted a
-failure, and exited non-zero instead of sitting there as if the server were up.
-
-An exit code of `0` is reported the same way in lowercase and doesn't fail the
-run. It still ends that dev server's part of the run, which is usually the sign
-that a command marked `persistent: true` was never a server to begin with:
+Lattice watches each server it starts. One that quits gets a line saying so, and
+a non-zero exit counts as a failed task:
 
 ```text
-web:dev: exited (code 0) after 0.28s
-lattice: 1 tasks, 0 cached, 0 failed, 0.31s
+$ lattice run dev --filter api
+api:dev: running
+api:dev: port 8080 already in use
+api:dev: EXITED (code 1) after 0.01s
+lattice: 1 tasks, 0 cached, 1 failed, 0.01s
 ```
 
-With more than one dev server up, one exiting doesn't disturb the others. Their
-output keeps streaming and the run keeps waiting; the failure shows up in the
-summary at the end. See [Persistent
-tasks](/lattice/docs/persistent-tasks).
+The run reported it and exited non-zero instead of sitting there as if the
+server were up.
 
-## It behaves like a server, but isn't marked persistent
+An exit code of `0` is reported the same way in lowercase and does not fail the
+run:
 
-If you leave `persistent: true` off a task whose command doesn't exit — a dev
-server, a `--watch` build — Lattice treats it as an ordinary task and waits on
-the process's exit code, which never comes. The run prints `workspace:task:
-running` and then nothing else, indefinitely. Two consequences:
+```text
+api:dev: running
+api:dev: done
+api:dev: exited (code 0) after 0.01s
+lattice: 1 tasks, 0 cached, 0 failed, 0.01s
+```
 
-The task holds its concurrency permit for as long as the process runs; the permit
-is only released when the task finishes, which it never does. With a small
-`--concurrency`, one forgotten dev-server task can starve everything waiting for
-a slot.
+That is usually the sign that a command marked `persistent: true` was never a
+server to begin with.
 
-`Ctrl-C` doesn't get the teardown described above. Lattice only starts listening
-for it once a task has registered as persistent, and this one never does. No
-signal handler is installed while `lattice run` waits on an ordinary child, so
-`Ctrl-C` falls through to the OS default and kills the `lattice run` process
-itself with no chance to run the process-group cleanup. The server it spawned is
-orphaned — still running, still bound to its port — until you kill it by hand.
+With more than one server up, one exiting does not disturb the others. Their
+output keeps streaming and the run keeps waiting. The failure shows up in the
+summary at the end.
 
-If a task's command is meant to keep running, mark it `persistent: true`. If
-it's meant to exit, leave `persistent` unset. The scheduler treats every task as
-one or the other.
+## A command that never exits without `persistent: true`
+
+Leave `persistent: true` off a task whose command does not exit, such as a dev
+server or a `--watch` build, and Lattice treats it as an ordinary task and waits
+on an exit code that never comes. The run prints `workspace:task: running` and
+then nothing, indefinitely. That costs you two things.
+
+The task holds its concurrency permit for as long as the process runs, because
+the permit is released when the task finishes. With a small `--concurrency`, one
+forgotten dev-server task can starve everything waiting for a slot.
+
+`Ctrl-C` does not get the teardown described above. Lattice starts listening for
+it once a task registers as persistent, and this one never does. No signal
+handler is installed while `lattice run` waits on an ordinary child, so `Ctrl-C`
+falls through to the OS default and kills the `lattice run` process itself with
+no chance to clean up the process group. The server it spawned is orphaned,
+still running and still bound to its port, until you kill it by hand.
+
+If a command is meant to keep running, mark it `persistent: true`. If it is
+meant to exit, leave `persistent` unset. The scheduler treats every task as one
+or the other.

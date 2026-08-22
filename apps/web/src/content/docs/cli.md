@@ -7,28 +7,37 @@ order: 2
 
 # CLI reference
 
-Every subcommand, every flag, every default. Where this page and `lattice
-<command> --help` disagree, `--help` is right and this page is a docs bug.
+Every subcommand, every argument, every flag, and every exit code. The
+descriptions in the tables below are the text `lattice <command> --help` prints.
+Where this page and `--help` disagree, `--help` is right and this page is a docs
+bug.
 
-For *why* a flag behaves the way it does, see [Selecting what
+Sections appear in the order the commands appear in `lattice --help`. For the
+reasoning behind a flag rather than its definition, see [Selecting what
 runs](/lattice/docs/filtering), [Caching](/lattice/docs/caching), [Engines and
 provisioning](/lattice/docs/engines), and [Upgrading](/lattice/docs/upgrading).
 
 ## Bare `lattice`
 
-Running `lattice` with no subcommand prints the same branded splash as
-`lattice version` (an ASCII mark, the version line, and the tagline), then a
-line pointing at `--help`. It exits `0`; there is no "missing subcommand"
+`lattice` with no subcommand prints the same splash as `lattice version`, then a
+line pointing at `--help`, then exits `0`. There is no "missing subcommand"
 error.
 
 ```sh
 lattice
 ```
 
+The splash is the ASCII rosette, then a version line and the tagline. Without
+the rosette art, those two lines are:
+
 ```text
 ❖ lattice  1.0.0-beta-2  (aarch64)
 A high-performance, local toolchain for managing monorepos.
+```
 
+Then a blank line and:
+
+```text
 Run lattice --help to see available commands.
 ```
 
@@ -38,28 +47,33 @@ Run lattice --help to see available commands.
 lattice run [OPTIONS] <TASKS>...
 ```
 
-Runs one or more tasks across your workspaces, in dependency order. Each task
-name must exist in the `tasks` map of the nearest `lattice.json`. Stacked task
-names are merged into a single execution graph, so a dependency they share
-runs once.
+Runs one or more tasks across your workspaces, in dependency order. Lattice
+builds each task's dependency graph from the `tasks` map in `lattice.json`, then
+runs that graph in dependency order. Naming several tasks at once merges them
+into one graph, so a dependency they share runs once.
+
+Every name in `<TASKS>` must be a key of the `tasks` map. Lattice checks all of
+them before it builds a graph, provisions a toolchain, or spawns a process.
 
 **Arguments**
 
 | Argument | Description |
 | --- | --- |
-| `<TASKS>...` | One or more tasks to run across workspaces (e.g. `lint test build`). Required — at least one. |
+| `<TASKS>...` | One or more task names, separated by spaces. Required; at least one. |
 
 **Flags**
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--sequentially` | `-s` | — | off | Run the given tasks one at a time, each graph to completion, in order — instead of merging them into one combined graph |
+| `--sequentially` | `-s` | — | off | Run each task's graph to completion in turn, instead of merging them into one combined graph |
 | `--filter` | `-f` | `<PATTERN>` | none | Run in the workspaces whose name contains this pattern, plus what they depend on |
-| `--concurrency` | — | `<N>` | number of CPUs | Cap how many tasks run at once |
+| `--concurrency` | — | `<N>` | number of CPUs | Cap how many tasks run at once. The default is the number of CPUs |
 | `--continue` | — | — | off | Keep running independent tasks after a failure instead of stopping |
-| `--no-cache` | — | — | off | Ignore the cache and re-run every task |
-| `--force` | — | — | off | Skip the lookup but still store, replacing the entry |
+| `--no-cache` | — | — | off | Neither read nor write the cache. Lattice re-runs every task and stores nothing |
+| `--force` | — | — | off | Re-run every task and write fresh cache entries, replacing any already stored |
 | `--dry-run` | — | — | off | List the tasks that would run, then exit without running them |
+
+`--concurrency` has no short alias.
 
 Plus the [global flags](#global-flags) below.
 
@@ -71,12 +85,53 @@ lattice run test --filter api
 lattice run lint --concurrency 4 --continue
 ```
 
-A filter that matches no workspace, or a repo with an empty `workspaces`
-array, prints a message and exits `0` — it is not a failure. An unrecognized
-task name is an error naming the tasks that do exist. See [Selecting what
-runs](/lattice/docs/filtering) for how `--filter` and `--dry-run` interact with
-the task graph, and [Persistent tasks](/lattice/docs/persistent-tasks) for how
-a persistent task in the closure forces raw output regardless of `-l`.
+`--no-cache` and `--force` both skip the lookup. They differ in what they leave
+behind: `--no-cache` writes nothing, and `--force` writes a fresh entry over
+whatever was stored at that key.
+
+`--dry-run` prints one line per task in the graph, each with the command that
+task would run:
+
+```text
+❖ lattice  dry run · build
+  → core:build  cargo build
+  → api:build  go build
+  → web:build  pnpm run build
+```
+
+A task that is in the graph only because a selected workspace depends on it
+carries a `(dependency)` tag:
+
+```text
+❖ lattice  dry run · build
+  → core:build (dependency)  cargo build
+  → web:build  pnpm run build
+```
+
+With `--sequentially`, the banner names the task whose graph follows and ends in
+`(phase)`:
+
+```text
+❖ lattice  dry run · build (phase)
+```
+
+A `--filter` that matches no workspace prints a message and exits `0`:
+
+```text
+lattice: no workspaces matched filter 'zzz'.
+```
+
+So does a repo whose `workspaces` array is empty:
+
+```text
+lattice: no workspaces declared. Add one to the `workspaces` array in lattice.json, then run `build`.
+```
+
+In that message, the backticks at the end hold the task names you passed, joined
+by spaces. Neither message is a failure. See [Selecting what
+runs](/lattice/docs/filtering) for how `--filter` and `--dry-run` shape the
+graph, and [Persistent tasks](/lattice/docs/persistent-tasks) for why a
+persistent task in the graph forces raw output whatever `-l` says.
 
 ## `lattice setup`
 
@@ -84,17 +139,21 @@ a persistent task in the closure forces raw output regardless of `-l`.
 lattice setup [OPTIONS] [WORKSPACES]...
 ```
 
-Provisions the toolchains declared under `engines` (root first, so dependency
-installers see the pinned `PATH`), then runs each workspace's native
-dependency installer — `pnpm install`, `cargo fetch`, `poetry install`, and so
-on, one per detected driver. A repo with no workspaces still has its root
-`engines` provisioned.
+Provisions pinned toolchains, then installs each workspace's dependencies.
+Lattice provisions the toolchains declared under `engines` first, into
+`.lattice/toolchains`, so every dependency installer runs with the pinned
+`PATH`. Each workspace's package manager then installs that workspace's
+dependencies. A repo that declares no workspaces still gets its `engines`
+provisioned.
+
+Each workspace's install command comes from its detected driver: `pnpm install`,
+`cargo fetch`, `poetry install`, and so on.
 
 **Arguments**
 
 | Argument | Description |
 | --- | --- |
-| `[WORKSPACES]...` | Only set up specific workspaces, by name. Omit to set up all of them. |
+| `[WORKSPACES]...` | Set up only the workspaces named here. Omit to set up all of them. |
 
 **Flags**
 
@@ -110,10 +169,19 @@ lattice setup api web
 lattice setup --force
 ```
 
-Setup skips a workspace's install step when its lockfile is not newer than the
-last successful install (tracked by a `.lattice-setup-marker` file in the
-workspace); `--force` reinstalls regardless. A workspace with no recognized
-driver and no `engines` is skipped silently.
+Setup skips a workspace's install step when no lockfile in it is newer than
+`.lattice-setup-marker`, the empty file Lattice writes there after a successful
+install. `--force` reinstalls regardless. A workspace with no detected driver
+and no `engines` is skipped without a message. One with `engines` but no package
+manager reports that under `-l`:
+
+```text
+lattice: web: toolchains ready. This workspace has no package manager to install
+```
+
+A failed install is a per-workspace warning, and the remaining workspaces still
+run. The command then fails as a whole. See [`lattice setup`
+failures](/lattice/docs/errors#lattice-setup-failures).
 
 ## `lattice init`
 
@@ -121,17 +189,30 @@ driver and no `engines` is skipped silently.
 lattice init [OPTIONS]
 ```
 
-Scaffolds a `lattice.json` in the current directory, along with a committed
-`.lattice/schema.json` and the `.gitignore` lines that keep the cache and
-provisioned toolchains out of version control.
+Creates a `lattice.json` and a `.lattice/schema.json` in the current directory.
+Commit the schema file. `init` also adds three lines to `.gitignore`, which keep
+Lattice's per-machine artifacts out of version control:
 
-`init` reads the repo before it writes anything. It walks the tree for
-directories holding a manifest it recognizes — `package.json`, `Cargo.toml`,
-`go.mod`, `pyproject.toml`, `Gemfile`, `pom.xml`, `build.gradle`,
-`composer.json`, `mix.exs`, a `.csproj`, and the rest of the
-[driver](/lattice/docs/drivers) markers — and proposes each one as a workspace.
-It also reads the tool versions the repo already records and proposes them as
-[engines](/lattice/docs/engines):
+```text
+.lattice/cache/
+.lattice/toolchains/
+.lattice/bin/
+```
+
+`init` reads the repo before it writes anything. Every directory holding one of
+these manifests becomes a proposed workspace:
+
+```text
+package.json      pyproject.toml     pom.xml            pubspec.yaml
+Cargo.toml        requirements.txt   build.gradle       Package.swift
+go.mod            setup.py           build.gradle.kts   stack.yaml
+Gemfile           composer.json      mix.exs            cabal.project
+```
+
+A directory holding a `.sln`, `.csproj`, `.fsproj`, or `.vbproj` file counts
+too. Those are matched by extension, because their filenames vary. Every tool
+version the repo already pins becomes a proposed
+[engine](/lattice/docs/engines):
 
 | File | Engine |
 | --- | --- |
@@ -141,20 +222,13 @@ It also reads the tool versions the repo already records and proposes them as
 | `.python-version` | `python` |
 | `.ruby-version` | `ruby` |
 | `.java-version` | `java` |
-| `package.json` `packageManager` and `engines` | the tool named there |
-| `go.mod` `toolchain` | `go` |
+| `package.json` `packageManager` | the tool named there |
+| `package.json` `engines` | each tool named there |
+| `go.mod`, its `toolchain` line or its `go` directive | `go` |
 
-The walk skips hidden directories, dependency and output trees
-(`node_modules`, `target`, `dist`, `build`, `out`, `vendor`, …), and anything
-your `.gitignore` covers.
-
-On an interactive terminal it shows the two lists with everything pre-checked
-and lets you uncheck whatever is wrong. A repo root that holds only a workspace
-declaration — a `Cargo.toml` with `[workspace]`, a `package.json` with
-`workspaces` — is offered alongside its members but starts unchecked. If the
-scan finds nothing, or you uncheck everything, `init` asks you to declare at
-least one workspace or one engine: it will not write a config that does
-nothing.
+The walk skips hidden directories, anything `.gitignore` covers, and these
+directory names: `node_modules`, `target`, `dist`, `build`, `out`, `vendor`,
+`venv`, `__pycache__`, `coverage`, `testdata`, `fixtures`.
 
 **Flags**
 
@@ -171,17 +245,25 @@ lattice init --yes
 lattice init --force
 ```
 
-Without a TTY (a script, CI), `init` behaves as though `--yes` were passed, so
-it never blocks waiting on prompts. There is no one to ask in that case, so a
-scan that finds nothing writes the bare skeleton rather than failing. Running
-`init` against an existing `lattice.json` without `--force` is an error.
+On a terminal, `init` shows the two lists with everything pre-checked and lets
+you uncheck what is wrong. A repo root that holds only a workspace declaration,
+such as a `Cargo.toml` with `[workspace]` or a `package.json` with
+`workspaces`, is offered alongside its members but starts unchecked. So is a
+directory whose driver stays ambiguous, because declaring it would halt the next
+run on the [ambiguity](/lattice/docs/drivers#when-lattice-halts). `init` names
+those directories on the way out:
 
-A directory whose task driver stays ambiguous — a bare `Cargo.toml` whose
-lockfile lives at the repo root, say — is offered but starts unchecked, because
-declaring it would halt the very next run on the
-[ambiguity](/lattice/docs/drivers#when-lattice-halts). `init` names those
-directories on the way out so you can add them once you've declared a driver in
-their `engines`.
+```text
+· left out apps/legacy. No driver resolved there. Declare one in engines to add it.
+```
+
+With `--yes`, or with no terminal attached, `init` writes what the scan found and
+prompts for nothing. A scan that finds nothing then writes the bare skeleton. On
+a terminal, unchecking everything makes `init` ask for at least one workspace or
+one engine rather than writing a config that does nothing.
+
+Running `init` where a `lattice.json` already exists is an error unless you pass
+`--force`.
 
 ## `lattice prune`
 
@@ -189,14 +271,15 @@ their `engines`.
 lattice prune [OPTIONS]
 ```
 
-Evicts cache artifacts, oldest-used first, until the local cache is at or
-under a size limit.
+Evicts cache artifacts, oldest first, until the local cache is under a size
+limit. The limit comes from `--max-size`. Without that flag, Lattice uses
+`settings.maxCacheSize` in `lattice.json`.
 
 **Flags**
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--max-size` | — | `<SIZE>` | `settings.maxCacheSize` | Upper bound on the cache size (e.g. `10GB`) |
+| `--max-size` | — | `<SIZE>` | `settings.maxCacheSize` | Upper bound on the cache size, such as 10GB. Defaults to settings.maxCacheSize |
 
 Plus the [global flags](#global-flags) below.
 
@@ -205,16 +288,20 @@ lattice prune
 lattice prune --max-size 5GB
 ```
 
-A size accepts `B`, `KB`, `MB`, `GB`, or `TB` (case-insensitive, base 1024) or
-a bare integer of bytes. If neither `--max-size` nor
-`settings.maxCacheSize` is set, `prune` errors rather than guessing a limit.
-See [Cache internals](/lattice/docs/cache-internals) for eviction order and
-on-disk layout.
+A size is a number and one of `B`, `KB`, `MB`, `GB`, or `TB`, case-insensitive
+and base 1024, or a bare integer of bytes. With neither `--max-size` nor
+`settings.maxCacheSize`, `prune` fails rather than guessing a limit.
 
-With `settings.maxCacheSize` set, every run already holds the cache to it, so
-`prune` is for sweeping by hand or for enforcing a different limit than the one
-in the config. It also reclaims what nothing can read: artifacts left behind
-without metadata by an interrupted run, and the staging files beside them.
+```text
+❖ removed 0 artifacts, freed 0B
+```
+
+`prune` also reclaims what nothing can read: artifacts left without metadata by
+an interrupted run, metadata that no longer parses, and the staging files beside
+them. With `settings.maxCacheSize` set, every run already holds the cache to it,
+so `prune` covers sweeping by hand and enforcing a limit other than the one in
+the config. See [Cache internals](/lattice/docs/cache-internals) for eviction
+order and the on-disk layout.
 
 ## `lattice upgrade`
 
@@ -222,27 +309,28 @@ without metadata by an interrupted run, and the staging files beside them.
 lattice upgrade [OPTIONS] <VERSION>
 ```
 
-Moves this repo to another version of Lattice: installs it under
-`.lattice/bin`, points `.lattice/bin/lattice` at it, and writes it to
-`latticeVersion` in `lattice.json`. Every later invocation reads that pin, so
-commit the change and everyone on the repo moves together.
+Moves this repo to another version of Lattice and pins it. Lattice installs that
+version into `.lattice/bin` and points `.lattice/bin/lattice` at the new binary.
+It also writes the version to `latticeVersion` in `lattice.json`. Every later
+invocation reads that pin.
 
 **Arguments**
 
 | Argument | Description |
 | --- | --- |
-| `<VERSION>` | Version to move to (e.g. `0.2.0`), or `latest` for the newest release. Required. |
+| `<VERSION>` | Version to move to, such as 0.2.0, or `latest` for the newest release. Required. |
 
 **Flags**
 
-| Flag | Argument | Default | Description |
-| --- | --- | --- | --- |
-| `--release-latest-url` | `<URL>` | GitHub API | Endpoint that names the newest stable release, for `upgrade latest` |
-| `--release-list-url` | `<URL>` | GitHub API | Endpoint listing every release, used when no release is stable yet |
+| Flag | Short | Argument | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--release-latest-url` | — | `<URL>` | GitHub API | Endpoint that names the newest stable release, for `upgrade latest` |
+| `--release-list-url` | — | `<URL>` | GitHub API | Endpoint listing every release, used when no release is stable yet |
 
-Both are consulted only by `upgrade latest`; `upgrade 0.2.0` asks neither. The
-archive itself comes from the global `--release-base-url`. Plus the [global
-flags](#global-flags) below.
+Only `upgrade latest` reads either URL. `upgrade 0.2.0` reads neither. The
+archive itself comes from the global `--release-base-url`.
+
+Plus the [global flags](#global-flags) below.
 
 ```sh
 lattice upgrade 0.2.0
@@ -250,10 +338,10 @@ lattice upgrade latest
 lattice --release-base-url file:///srv/lattice-mirror upgrade 0.2.0
 ```
 
-If the binary running `upgrade` is not the version it just pinned, it prints
-the command to run next rather than switching for you. See
-[Upgrading](/lattice/docs/upgrading) for the version-drift nag this pin
-suppresses and how the pin is honored on every other command.
+When the binary running `upgrade` is not the version it just pinned, `upgrade`
+prints the command to run next instead of switching for you. See
+[Upgrading](/lattice/docs/upgrading) for the drift nag this pin suppresses and
+how every other command honors the pin.
 
 ## `lattice completions`
 
@@ -269,7 +357,8 @@ Prints a shell completion script to stdout.
 | --- | --- |
 | `<SHELL>` | Shell to generate completions for. One of `bash`, `elvish`, `fish`, `powershell`, `zsh`. Required. |
 
-Plus the [global flags](#global-flags) below (`completions` has no flags of its own).
+`completions` has no flags of its own. The [global flags](#global-flags) below
+still parse.
 
 ```sh
 lattice completions zsh > ~/.zsh/completions/_lattice
@@ -282,8 +371,8 @@ lattice completions bash
 lattice version [OPTIONS]
 ```
 
-Prints version information: the branded splash by default, or a single-line
-JSON object with `--json`.
+Prints version information. Without `--json` it prints the splash. With `--json`
+it prints one line of JSON.
 
 **Flags**
 
@@ -304,76 +393,97 @@ lattice version --json
 
 ## Global flags
 
-These parse on `lattice` itself and on every subcommand: put them before or
+These parse on `lattice` itself and on every subcommand. Put them before or
 after the subcommand name.
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--loquacious` | `-l` | — | off | Stream the plain line-by-line log instead of the interactive UI |
+| `--loquacious` | `-l` | — | off | Print raw `workspace:task:` lines instead of the live display |
 | `--verbose` | `-v` | — | off | Hidden alias for `--loquacious` |
 | `--no-version-check` | — | — | off | Run this binary even when the repo pins another version |
-| `--theme` | — | `light` \| `dark` | detected | Tune the splash art's teal shade for a light or dark terminal |
+| `--theme` | — | `light` \| `dark` | detected | Shade the logo for a light or dark terminal |
 | `--release-base-url` | — | `<URL>` | GitHub releases | Base URL to download release archives from. A `file://` base works offline |
 
-`--theme` takes `light` or `dark` and nothing else; a third value is a parse
-error, not a fall-back to detection. With no flag, Lattice reads
-`LATTICE_THEME`, then the terminal's own `COLORFGBG`.
+`--theme` takes `light` or `dark` and nothing else. A third value is a parse
+error rather than a fall-back to detection. Without the flag, Lattice reads
+`LATTICE_THEME`, then the terminal's own `COLORFGBG`, and treats a background of
+ANSI `7` or `15` as light. With no signal at all it uses the dark shade.
 
 `--release-base-url` is global because `upgrade` is not the only command that
-downloads: an invocation in a repo pinning a version that isn't installed
+downloads. An invocation in a repo pinning a version that is not installed
 fetches it too, under whatever command you typed.
 
-`--verbose`/`-v` is a hidden alias for `--loquacious` and does not appear in
-`--help`.
+`--verbose` and `-v` spell one hidden alias for `--loquacious`. Neither appears
+in any `--help` output.
 
-`-h`/`--help` works on `lattice` and on every subcommand. `-V`/`--version`
-prints the compiled-in binary version (e.g. `1.0.0-beta-2`) and exists only on
-`lattice` itself — `lattice run -V` is a parse error.
+`-h` and `--help` work on `lattice` and on every subcommand. `-V` and
+`--version` print the compiled-in binary version and exist only on `lattice`
+itself, so `lattice run -V` is a parse error.
 
 ## Option precedence
 
-Wherever a setting can come from more than one place, Lattice resolves it in
-this order, highest first:
+Where a setting can come from more than one place, Lattice resolves it in this
+order, highest first.
 
 | Source | Examples |
 | --- | --- |
-| CLI flag | `-l`, `--no-version-check`, `--theme`, `--release-base-url` |
+| CLI flag | `-l`, `--no-version-check`, `--theme`, `--release-base-url`, `--max-size` |
 | Environment variable | `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL` |
-| `settings` in `lattice.json` | `settings.loquacious`, `settings.versionCheck` |
+| `settings` in `lattice.json` | `settings.loquacious`, `settings.versionCheck`, `settings.maxCacheSize`, `settings.cacheDir` |
 | Built-in default | — |
 
-This holds everywhere in this reference. See [Environment
-variables](/lattice/docs/environment-variables) for the full list of variables
-Lattice reads.
+Not every setting has all four sources. `--loquacious` has a flag and
+`settings.loquacious`, and no variable of its own. `--theme` has a flag and
+`LATTICE_THEME`, and no `settings` entry.
+
+Raw output has three triggers outside this order, each sufficient on its own:
+`CI` set to any value, stdout that is not a terminal, and a persistent task in
+the graph. See [Environment
+variables](/lattice/docs/environment-variables) for every variable Lattice
+reads.
 
 ## Exit codes
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | Success — including a `run` whose filter matched no workspace, and a `run` against an empty `workspaces` array |
-| `1` | Any error Lattice itself raises: a missing `lattice.json`, an unrecognized task name, a failed task, an unset cache limit on `prune`, or any other failure |
-| `2` | The command line itself was rejected before Lattice ran anything: an unknown subcommand, an unrecognized flag, or a missing required argument |
-| `130` | The run was interrupted by Ctrl-C or `SIGTERM`. Running tasks were stopped on the way out; they did not fail |
+| `0` | Success. Also a `run` whose filter matched no workspace, and a `run` against an empty `workspaces` array |
+| `1` | Any error Lattice raises: a missing `lattice.json`, an unknown task name, a failed task, an unset cache limit on `prune`, or any other failure |
+| `2` | The command line was rejected before Lattice ran anything: an unknown subcommand, an unrecognized flag, a bad value for `--theme` or `<SHELL>`, or a missing required argument |
+| `130` | A `lattice run` was interrupted by Ctrl-C or `SIGTERM` |
 
 A failing task exits `1` whether the run stopped at the first failure or kept
-going with `--continue`.
+going under `--continue`.
 
-`130` is the shell convention for a process ended by `SIGINT` (128 + 2), and it
-is distinct from `1` on purpose: a CI runner cancelling a job should not read as
-a build that broke.
+Without `--continue`, the first failing task is the process's error and no
+further tasks start, though any already in flight run to completion:
+
+```text
+Error: task 'app:build' failed, stopping the run
+```
+
+With `--continue`, independent branches keep running and anything downstream of
+a failure is skipped rather than started. No separate error line prints in that
+case. The run summary reports the counts and the process exits `1`:
+
+```text
+lattice: 2 tasks, 0 cached, 2 failed, 0.01s
+```
+
+`--sequentially` applies the same rule per phase. A failing phase stops the
+remaining phases unless `--continue` is also set, in which case every phase runs
+and the process exits `1` if any task failed.
+
+`130` is the shell's convention for a process ended by `SIGINT`, 128 + 2. It is
+distinct from `1` on purpose, so that a CI runner cancelling a job does not read
+as a build that broke. An interrupted run prints its summary and exits `130`
+with no error line.
 
 On unix, every running task's process group is sent `SIGTERM` on the way out,
 given five seconds, and then killed, so a task that shelled out to a compiler or
 a server takes the whole tree with it. Each task is spawned into its own process
 group, which is what makes that possible and is also why the terminal's own
-Ctrl-C never reaches it. On Windows tasks stay attached to the console, which
-delivers the event to them directly.
+Ctrl-C never reaches it directly. On Windows tasks stay attached to the console,
+which delivers the event to them.
 
-Without `--continue`, the first failing task is printed as the error (`task
-'<workspace>:<task>' failed, stopping pipeline`) and no further tasks start,
-though any already in flight run to completion. With `--continue`, the run
-summary line reports it instead — task, cache, and fail counts, plus any
-downstream tasks skipped because a prerequisite failed — with no separate error
-line. `--sequentially` applies the same rule per phase: a failing phase stops
-the remaining phases unless `--continue` is also set, in which case every phase
-runs and the process exits `1` if any failed.
+For the full text of every message a non-zero exit prints, see
+[Errors](/lattice/docs/errors).

@@ -3,17 +3,18 @@ import Layout from '../layouts/Layout.astro';
 import { withBase } from '../lib/base';
 ---
 
-<Layout title="Not found · Lattice" description="This page could not be found.">
+<Layout title="Page not found · Lattice" description="No page on this site matches this address.">
 	<section class="px-3 d-flex flex-column align-items-center justify-content-center text-center" style="min-height: 60vh;">
 		<p class="mb-2" style="font-family: 'DM Mono', monospace; color: var(--text-muted);">404</p>
 		<h1 class="fw-bold mb-3" style="font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -0.02em;">
 			Page not found
 		</h1>
 		<p class="fs-5 mb-4" style="color: var(--text-muted); max-width: 32rem;">
-			Check the URL, or head back to the start.
+			This address doesn't match a page on the site. Check it for a typo, or start again from the
+			docs.
 		</p>
 		<div class="d-flex flex-wrap gap-2 justify-content-center">
-			<a href={withBase('/')} class="btn btn-contrast px-4">Back home</a>
+			<a href={withBase('/')} class="btn btn-contrast px-4">Home page</a>
 			<a href={withBase('/docs')} class="btn btn-secondary px-4">Read the docs</a>
 		</div>
 	</section>

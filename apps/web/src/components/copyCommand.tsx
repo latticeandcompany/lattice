@@ -37,8 +37,8 @@ const CopyCommand = ({ command, size = 'md' }: CopyCommandProps) => {
 			<span className="input-group-text" style={mono} aria-hidden="true">
 				$
 			</span>
-			<input type="text" className="form-control" style={mono} value={command} readOnly aria-label="Install command" />
-			<button type="button" className="btn btn-outline-secondary" onClick={copy} aria-label={copied ? 'Copied' : 'Copy command'}>
+			<input type="text" className="form-control" style={mono} value={command} readOnly aria-label="Command to copy" />
+			<button type="button" className="btn btn-outline-secondary" onClick={copy} aria-label={copied ? 'Command copied' : 'Copy command'}>
 				<i className={`bi ${copied ? 'bi-check-lg lattice-accent' : 'bi-clipboard'}`} aria-hidden="true" />
 			</button>
 		</div>

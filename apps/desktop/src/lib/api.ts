@@ -44,7 +44,11 @@ export const catalog = () => call<Catalog>('catalog');
 
 export const pickDirectory = async (): Promise<string | null> => {
 	// The dialog plugin has a frontend API, so this needs no command of its own.
-	const picked = await open({ directory: true, multiple: false, title: 'Open a Lattice repo' });
+	const picked = await open({
+		directory: true,
+		multiple: false,
+		title: 'Open a Lattice project',
+	});
 	return typeof picked === 'string' ? picked : null;
 };
 

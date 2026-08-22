@@ -53,13 +53,13 @@ pub async fn pick_directory(app: AppHandle) -> Result<Option<String>, String> {
 	let (tx, rx) = tokio::sync::oneshot::channel();
 	app.dialog()
 		.file()
-		.set_title("Open a Lattice repo")
+		.set_title("Open a Lattice project")
 		.pick_folder(move |picked| {
 			let _ = tx.send(picked);
 		});
 	let picked = rx
 		.await
-		.map_err(|_| "the folder picker closed unexpectedly".to_string())?;
+		.map_err(|_| "the directory picker closed unexpectedly".to_string())?;
 	Ok(picked
 		.and_then(|path| path.into_path().ok())
 		.map(|path| path.display().to_string()))

@@ -49,8 +49,8 @@ export const statusView = (
 			const key = snapshot.cacheKey ? ` [${shortKey(snapshot.cacheKey)}]` : '';
 			return {
 				icon: 'bi-lightning-charge',
-				label: `cached${key}`,
-				announcement: `${label} came back from cache`,
+				label: `cache hit${key}`,
+				announcement: `${label} cache hit`,
 			};
 		}
 		case 'done': {
@@ -66,7 +66,7 @@ export const statusView = (
 		case 'skipped':
 			return {
 				icon: 'bi-slash-circle',
-				label: snapshot.reason ? `skipped — ${snapshot.reason}` : 'skipped',
+				label: snapshot.reason ? `skipped (${snapshot.reason})` : 'skipped',
 				announcement: `${label} skipped`,
 			};
 		case 'exited': {
@@ -74,8 +74,12 @@ export const statusView = (
 			const how =
 				snapshot.exitCode === null || snapshot.exitCode === undefined
 					? 'killed by signal'
-					: `exited code ${snapshot.exitCode}`;
-			return { icon: 'bi-exclamation-triangle', label: how, announcement: `${label} ${how}` };
+					: `code ${snapshot.exitCode}`;
+			return {
+				icon: 'bi-exclamation-triangle',
+				label: `exited (${how})`,
+				announcement: `${label} exited (${how})`,
+			};
 		}
 		default:
 			return { icon: 'bi-dash-circle', label: 'idle', announcement: '' };

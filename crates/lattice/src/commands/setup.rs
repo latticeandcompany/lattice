@@ -15,13 +15,14 @@ use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_na
 
 #[derive(Args, Debug)]
 #[command(
-	long_about = "Provision pinned toolchains and install native dependencies.\n\n\
-Toolchains declared under `engines` are provisioned first (into .lattice/toolchains), so \
-dependency installers see the pinned PATH. Then each workspace's package manager installs \
-its dependencies. A repo with no workspaces still has its `engines` provisioned."
+	long_about = "Provision pinned toolchains, then install each workspace's dependencies.\n\n\
+Lattice provisions the toolchains declared under `engines` first, into .lattice/toolchains, \
+so every dependency installer runs with the pinned PATH. Each workspace's package manager \
+then installs that workspace's dependencies. A repo that declares no workspaces still gets \
+its `engines` provisioned."
 )]
 pub struct SetupArgs {
-	/// Only set up specific workspaces (by name).
+	/// Set up only the workspaces named here.
 	pub workspaces: Vec<String>,
 
 	/// Reinstall dependencies even if the lockfile has not changed.
@@ -34,8 +35,8 @@ impl SetupArgs {
 		let cwd = std::env::current_dir()?;
 		let root = find_root(&cwd).ok_or_else(|| {
 			anyhow::anyhow!(
-				"no lattice.json found in this directory or any parent; \
-                 run `lattice init` to create one"
+				"no lattice.json found in this directory or any parent. \
+                 Run `lattice init` to create one"
 			)
 		})?;
 
@@ -94,7 +95,7 @@ impl SetupArgs {
 					continue;
 				}
 				reporter.note(&format!(
-					"{}: toolchains ready (no package manager to install)",
+					"{}: toolchains ready. This workspace has no package manager to install",
 					ws.name
 				));
 				continue;
@@ -110,7 +111,7 @@ impl SetupArgs {
 				Some(cmd) => cmd,
 				None => {
 					reporter.note(&format!(
-						"{}: no known dependency installer for '{}'; skipping",
+						"{}: no dependency installer known for '{}'. Skipping this workspace",
 						ws.name, driver.tool
 					));
 					continue;
@@ -153,7 +154,7 @@ impl SetupArgs {
 		}
 
 		if any_failed {
-			bail!("one or more workspaces failed setup");
+			bail!("setup failed in one or more workspaces");
 		}
 
 		let _ = installed_any;

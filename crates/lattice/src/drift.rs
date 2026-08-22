@@ -131,8 +131,9 @@ pub fn honor_pin(root: &Path, no_version_check_flag: bool, urls: &ReleaseUrls) -
 	let pinned = release::ensure_installed(root, &version, urls, &mut |line| eprintln!("  {line}"))
 		.with_context(|| {
 			format!(
-				"this repo pins lattice {version}, which is not installed and could not be \
-				 fetched.\nRun with --no-version-check to use lattice {BIN_VERSION} anyway"
+				"this repo pins lattice {version}. That version is not installed, and \
+				 Lattice could not download it.\nRun with --no-version-check to use \
+				 lattice {BIN_VERSION} instead"
 			)
 		})?;
 	release::link_stable(root, &version)?;

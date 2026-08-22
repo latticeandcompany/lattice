@@ -16,23 +16,23 @@ interface Capability {
 const capabilities: Capability[] = [
 	{
 		icon: 'bi-list-task',
-		title: 'Run anything, see everything',
-		body: 'Every workspace and every task it can actually run, in one list. Start one, watch its output arrive, and see at a glance which results came from cache.',
+		title: 'Every task in one list',
+		body: 'Every workspace in the repo, with the tasks it can run. Start a task, watch its output stream in, and see which results came from cache.',
 	},
 	{
 		icon: 'bi-diagram-3',
-		title: 'The graph, laid out',
-		body: 'What runs before what, drawn in dependency order and filling in as the build moves through it. Click a task to see everything it affects.',
+		title: 'Watch the graph fill in',
+		body: 'The task graph is drawn in dependency order and fills in as the build moves through it. Click a task to isolate it with everything it depends on and everything that depends on it.',
 	},
 	{
 		icon: 'bi-braces',
 		title: 'Edit the config without editing JSON',
-		body: 'Workspaces, tasks, and tool versions as a form, validated by the same parser a run uses. A repo with no config gets walked through making one.',
+		body: 'Workspaces, tasks, and tool versions as a form. The same parser a run uses checks every edit as you type, and a repo with no lattice.json gets a four-step walkthrough.',
 	},
 	{
 		icon: 'bi-search',
 		title: 'Find out why a task re-ran',
-		body: 'When something misses the cache, the app names which inputs moved — the command, the files, the toolchain — instead of leaving you with a hash.',
+		body: 'When a task misses the cache because something changed, the app names what changed. You get the command, the inputs, the toolchain, or a task it depends on, instead of a bare hash.',
 	},
 ];
 ---
@@ -47,11 +47,11 @@ const capabilities: Capability[] = [
 				</span>
 			</div>
 			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
-				Run, explore, and edit your tasks in a single app.
+				Run and inspect your repo in a desktop app
 			</h2>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
-				Everything the CLI does, plus the things a terminal cannot keep on screen: what your
-				repo is made of, what a task depends on, and why it ran again.
+				Lattice Desktop runs the same tasks the CLI runs. It also draws the task graph, edits
+				lattice.json as a form, and tells you why a task ran again.
 			</p>
 		</div>
 
@@ -77,7 +77,7 @@ const capabilities: Capability[] = [
 
 		<div class="text-center">
 			<a class="btn btn-desktop px-4" href={withBase('/docs/desktop-app')}>
-				Read the guide
+				Read the desktop app guide
 				<i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
 			</a>
 		</div>

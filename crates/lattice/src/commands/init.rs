@@ -13,12 +13,13 @@ use crate::cli::BIN_VERSION;
 use lattice_project::scaffold;
 
 #[derive(Args, Debug)]
-#[command(long_about = "Scaffold a lattice.json in the current directory.\n\n\
-Reads the repo first: every directory holding a manifest becomes a proposed \
-workspace, and every tool version the repo already pins becomes a proposed \
-engine. On a terminal you confirm the two lists; with --yes (or no TTY) it \
-writes what it found. Also writes a committed .lattice/schema.json and ensures \
-.gitignore covers local artifacts.")]
+#[command(long_about = "Create a lattice.json in the current directory.\n\n\
+Lattice reads the repo first. Every directory that holds a manifest becomes a \
+proposed workspace, and every tool version the repo already pins becomes a \
+proposed engine. On a terminal you confirm both lists. With --yes, or with no \
+terminal attached, Lattice writes what it found. It also writes a \
+.lattice/schema.json for you to commit, and adds Lattice's local artifacts to \
+.gitignore.")]
 pub struct InitArgs {
 	/// Overwrite an existing lattice.json.
 	#[arg(long)]
@@ -34,7 +35,7 @@ impl InitArgs {
 		let cwd = std::env::current_dir()?;
 		let config_path = cwd.join("lattice.json");
 		if config_path.exists() && !self.force {
-			bail!("lattice.json already exists (use --force to overwrite)");
+			bail!("lattice.json already exists. Pass --force to overwrite it");
 		}
 
 		// Never hang a pipeline: with no TTY, or with `-y`/`--yes`, take the
@@ -98,7 +99,7 @@ fn print_success(config: &Value, candidates: &[WorkspaceCandidate]) {
 		println!();
 		for c in &declared {
 			println!(
-				"{} no task driver resolved for {} — declare one in its {} or add {}",
+				"{} no driver resolved for {}. Declare one in {}, or add {}",
 				style("!").yellow(),
 				style(&c.path).bold(),
 				style("engines").bold(),
@@ -110,7 +111,7 @@ fn print_success(config: &Value, candidates: &[WorkspaceCandidate]) {
 		let paths: Vec<&str> = held_back.iter().map(|c| c.path.as_str()).collect();
 		println!();
 		println!(
-			"{} left out {}: no task driver resolved. Declare one in {} to add {}.",
+			"{} left out {}. No driver resolved there. Declare one in {} to add {}.",
 			style("·").dim(),
 			style(list_paths(&paths)).bold(),
 			style("engines").bold(),
@@ -223,7 +224,7 @@ fn manual_entry(theme: &ColorfulTheme) -> Result<Value> {
 		let have_any = !workspaces.is_empty() || !pins.is_empty();
 		let mut options = vec!["a workspace to build", "a tool version to pin"];
 		if have_any {
-			options.push("nothing else — write the config");
+			options.push("nothing else, write the config");
 		}
 		let prompt = if have_any {
 			"Add anything else?"
@@ -261,7 +262,7 @@ fn prompt_workspace(theme: &ColorfulTheme) -> Result<WorkspaceCandidate> {
 		})
 		.interact_text()?;
 	let path: String = Input::with_theme(theme)
-		.with_prompt("workspace path (a literal directory)")
+		.with_prompt("workspace path, a literal directory")
 		.with_initial_text(name.clone())
 		.interact_text()?;
 
@@ -289,7 +290,7 @@ fn prompt_pin(theme: &ColorfulTheme) -> Result<EnginePin> {
 		.interact()?;
 	let engine = engines[idx].to_string();
 	let version: String = Input::with_theme(theme)
-		.with_prompt(format!("version constraint for {engine} (e.g. >=20.0.0)"))
+		.with_prompt(format!("version constraint for {engine}, such as >=20.0.0"))
 		.validate_with(|input: &String| -> Result<(), &str> {
 			if input.trim().is_empty() {
 				Err("a constraint must not be empty")

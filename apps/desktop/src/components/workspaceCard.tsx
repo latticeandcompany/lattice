@@ -35,7 +35,7 @@ const WorkspaceCard = ({ workspace, onRun, runInFlight }: WorkspaceCardProps) =>
 
 		{workspace.tasks.length === 0 ? (
 			<div className="p-3" style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-				None of the tasks in this repo have anything to run in this folder.
+				No task in this project resolves to a command in this workspace.
 			</div>
 		) : (
 			workspace.tasks.map((task) => (
@@ -51,10 +51,10 @@ const WorkspaceCard = ({ workspace, onRun, runInFlight }: WorkspaceCardProps) =>
 	</div>
 );
 
-// Why this tool, and not another.
+// Why this driver, and not another.
 const evidenceTitle = (via: { kind: string; file?: string }) =>
 	via.kind === 'declaration'
-		? 'You named this tool in lattice.json'
-		: `Chosen because this folder has ${via.file}`;
+		? 'Driver declared in lattice.json'
+		: `Driver detected from ${via.file}`;
 
 export default WorkspaceCard;

@@ -3,13 +3,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/appContext.tsx';
 import { shortenPath } from '../lib/format.ts';
 
-// The open repo, and every other one you have opened, as one control near the top of
-// the rail. A React-controlled dropdown, matching how the theme control works rather
-// than pulling in Bootstrap's JS for one menu.
+// The open project, and every other one you have opened, as one control near the top
+// of the rail. A React-controlled dropdown, matching how the theme control works
+// rather than pulling in Bootstrap's JS for one menu.
 //
-// The trigger is the project block itself rather than an icon beside it: swapping repos
-// is the thing a person does most often in a window that only ever shows one, and an
-// icon in the footer said nothing about what it switched.
+// The trigger is the project block itself rather than an icon beside it: swapping
+// projects is the thing a person does most often in a window that only ever shows one,
+// and an icon in the footer said nothing about what it switched.
 const ProjectSwitcher = () => {
 	const { recents, project, openProject, pickAndOpen, forget, close, busy } = useApp();
 	const [open, setOpen] = useState(false);
@@ -48,7 +48,7 @@ const ProjectSwitcher = () => {
 				onClick={() => setOpen((value) => !value)}
 				aria-haspopup="menu"
 				aria-expanded={open}
-				aria-label={project ? `Repo: ${project.name}. Switch repo` : 'Open a repo'}
+				aria-label={project ? `Project: ${project.name}. Switch project` : 'Open a project'}
 				disabled={busy}
 			>
 				<span className="tw:min-w-0 flex-grow-1">
@@ -60,7 +60,7 @@ const ProjectSwitcher = () => {
 							</span>
 						</>
 					) : (
-						<span className="rail-project__name">Open a repo…</span>
+						<span className="rail-project__name">Open a project…</span>
 					)}
 				</span>
 				<i className="bi bi-chevron-expand rail-project__caret" aria-hidden="true" />
@@ -79,7 +79,9 @@ const ProjectSwitcher = () => {
 				{others.length === 0 ? (
 					<li>
 						<span className="dropdown-item-text text-body-secondary small">
-							{recents.length === 0 ? 'No repos opened yet.' : 'No other repos opened yet.'}
+							{recents.length === 0
+								? 'No projects opened yet.'
+								: 'No other projects opened yet.'}
 						</span>
 					</li>
 				) : (
@@ -119,7 +121,7 @@ const ProjectSwitcher = () => {
 						onClick={() => run(() => void pickAndOpen())}
 					>
 						<i className="bi bi-folder2-open" aria-hidden="true" />
-						<span>Open another folder…</span>
+						<span>Open another project…</span>
 					</button>
 				</li>
 				{project && (
@@ -130,7 +132,7 @@ const ProjectSwitcher = () => {
 							onClick={() => run(() => void close())}
 						>
 							<i className="bi bi-x-circle" aria-hidden="true" />
-							<span>Close this repo</span>
+							<span>Close this project</span>
 						</button>
 					</li>
 				)}

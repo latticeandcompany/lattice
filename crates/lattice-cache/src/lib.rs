@@ -257,8 +257,8 @@ impl CacheStore for LocalStore {
 		let entries = collect_output_entries(workspace_path, outputs)?;
 		if !outputs.is_empty() && entries.is_empty() {
 			anyhow::bail!(
-				"no files matched outputs {:?} — nothing was cached. Check the \
-				 patterns are relative to the workspace and that the task writes there",
+				"no files matched outputs {:?}, so nothing was cached. Check that the \
+				 patterns are relative to the workspace, and that the task writes there",
 				outputs
 			);
 		}
@@ -911,7 +911,7 @@ fn hash_file_into(hasher: &mut Sha256, tag: &str, path: &Path) -> Result<()> {
 	// bytes, so the key would be ambiguous. Refuse rather than record a lie.
 	if read_total != len {
 		anyhow::bail!(
-			"{} changed while it was being hashed ({} bytes expected, {} read)",
+			"{} changed while Lattice was hashing it. Expected {} bytes, read {}",
 			path.display(),
 			len,
 			read_total

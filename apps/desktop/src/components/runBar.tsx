@@ -41,7 +41,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 	return (
 		<div className="run-bar">
 			<div className="run-bar__row">
-				<div className="command-tabs" role="group" aria-label="Which task to run">
+				<div className="command-tabs" role="group" aria-label="Tasks to run">
 					{tasks.map((task) => (
 						<button
 							key={task}
@@ -83,13 +83,13 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						<Spinner label={run.phase === 'stopping' ? 'stopping…' : 'running…'} />
 					) : (
 						run.result &&
-						`${runSummary(run.result)}${isFullCache(run.result) ? ' · everything came from cache' : ''}`
+						`${runSummary(run.result)}${isFullCache(run.result) ? ' · full cache, nothing to run' : ''}`
 					)}
 				</div>
 			</div>
 
 			<div className="run-bar__row">
-				<div className="command-tabs" role="group" aria-label="Cached results">
+				<div className="command-tabs" role="group" aria-label="Cache mode">
 					{CACHE_MODES.map((option) => (
 						<button
 							key={option.mode}
@@ -113,8 +113,9 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 					<input
 						type="text"
 						className="form-control"
-						placeholder="Only workspaces named like…"
-						aria-label="Only run in workspaces whose name contains this"
+						placeholder="Filter by workspace name"
+						aria-label="Filter workspaces by name"
+						title="Runs in the workspaces whose name contains this, plus what they depend on."
 						value={state.filter}
 						onChange={(event) => onChange({ filter: event.target.value })}
 						disabled={inFlight}
@@ -124,12 +125,12 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 				<select
 					className="form-select form-select-sm"
 					style={{ maxWidth: '11rem' }}
-					aria-label="How many tasks run at once"
+					aria-label="Concurrency"
 					value={state.concurrency}
 					onChange={(event) => onChange({ concurrency: event.target.value })}
 					disabled={inFlight}
 				>
-					<option value="">As many as fit</option>
+					<option value="">One per CPU</option>
 					{[1, 2, 4, 8, 16].map((value) => (
 						<option key={value} value={String(value)}>
 							{value} at once
@@ -147,7 +148,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						disabled={inFlight}
 					/>
 					<label className="form-check-label small" htmlFor="keep-going">
-						Carry on when something fails
+						Keep going after a failure
 					</label>
 				</div>
 
@@ -161,7 +162,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						disabled={inFlight}
 					/>
 					<label className="form-check-label small" htmlFor="sequentially">
-						One task at a time
+						Finish each task before starting the next
 					</label>
 				</div>
 			</div>

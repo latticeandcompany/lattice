@@ -18,15 +18,16 @@ pub const BIN_VERSION: &str = env!("CARGO_PKG_VERSION");
     name = "lattice",
     about = "A high-performance, local toolchain for managing monorepos.",
     version = BIN_VERSION,
-    long_about = "Lattice runs tasks across the workspaces of a monorepo in dependency \
-order, with pinned toolchains and a cache that skips tasks whose inputs have not changed.\n\n\
-Declare workspaces and tasks in lattice.json, then `lattice run <task>`. Toolchains are \
-provisioned under .lattice.",
+    long_about = "Lattice runs the tasks you declare in lattice.json across the workspaces \
+of your repo, in dependency order. A task whose inputs have not changed comes back from the \
+cache instead of running again. Lattice also pins the tool versions the repo needs and \
+provisions them into .lattice.\n\n\
+To start, run `lattice init`. Then run `lattice run <task>`.",
     help_template = "\u{2756} {name} {version}\n{about}\n\n\
 {usage-heading} {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
-	/// Stream the plain line-by-line log instead of the interactive UI.
+	/// Print raw `workspace:task:` lines instead of the live display.
 	#[arg(short, long, global = true)]
 	pub loquacious: bool,
 
@@ -38,7 +39,7 @@ pub struct Cli {
 	#[arg(long, global = true)]
 	pub no_version_check: bool,
 
-	/// Tune the splash art's teal shade for a light or dark terminal.
+	/// Shade the logo for a light or dark terminal.
 	#[arg(long, global = true, value_name = "THEME")]
 	pub theme: Option<ThemeArg>,
 
@@ -70,10 +71,10 @@ pub enum Commands {
 	/// Run one or more tasks across your workspaces, in dependency order.
 	Run(RunArgs),
 
-	/// Provision pinned toolchains and install native dependencies.
+	/// Provision pinned toolchains, then install each workspace's dependencies.
 	Setup(SetupArgs),
 
-	/// Scaffold a lattice.json (and .lattice/schema.json) in the current directory.
+	/// Create a lattice.json and a .lattice/schema.json in the current directory.
 	Init(InitArgs),
 
 	/// Evict cache artifacts until the cache is under a size limit.

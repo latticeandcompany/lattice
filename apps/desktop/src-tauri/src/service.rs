@@ -230,7 +230,7 @@ pub fn write_init(
 	let existing = dir.join(lattice_config::CONFIG_FILE);
 	if existing.exists() && !force {
 		bail!(
-			"{} already exists; open it instead, or choose to overwrite",
+			"{} already exists. Open the project instead, or overwrite it",
 			existing.display()
 		);
 	}

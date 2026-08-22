@@ -24,7 +24,7 @@ const AppShell = () => {
 				</div>
 
 				<div>
-					<div className="app-rail__group">Repo</div>
+					<div className="app-rail__group">Project</div>
 					<ProjectSwitcher />
 					{project && (
 						<button

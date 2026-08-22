@@ -1,38 +1,41 @@
 ---
 title: Toolchains
-description: The complete built-in driver table and well-known engine list, regenerated from source.
+description: Every built-in task driver and every engine Lattice can version-check without help, generated from the source tables.
 group: Reference
 order: 3
 ---
 
 # Toolchains
 
-The exhaustive reference for the tools Lattice knows out of the box: every
-built-in task driver, and every engine it can version-check without help. For the
-models behind these tables see [Driver detection](/lattice/docs/drivers) and
+Lattice ships two tables. One lists the task drivers it can recognize in a
+workspace and invoke a task through. The other lists the engines it knows how to
+read a version from. This page is both of them in full.
+
+For the models these tables serve, see
+[Driver detection](/lattice/docs/drivers) and
 [Engines and provisioning](/lattice/docs/engines).
 
 ## The built-in driver table
 
-Every built-in driver is defined by a fingerprint that identifies it in a
+A driver is defined by four things: the fingerprint files that identify it in a
 workspace directory, one or more roles, the command that prints its version, and
-the template it invokes a task with. The tables below are generated from that
-definition set in the source. `{task}` is the literal placeholder each driver
-substitutes the task name into.
+the template it invokes a task through. `{task}` is the literal placeholder each
+template substitutes the task name into.
 
-The candidate with the highest-ranked role drives a workspace; a tool with
-several roles competes with its highest one; two candidates holding the same role
-conflict until a declaration names one. A pure runtime — `node`, `python`,
-`ruby`, `java`, `kotlin` below — never drives a workspace on its own. See [Driver
-detection](/lattice/docs/drivers) for the evidence ladder and the full rule.
+Selection follows role rank. The candidate holding the highest-ranked role
+drives the workspace, a tool with several roles competes with its highest one,
+and two candidates holding the same role conflict until a declaration names one.
+A tool whose only role is Runtime never drives a workspace on its own.
+[Driver detection](/lattice/docs/drivers) has the evidence ladder and the
+composition rules.
 
-Two drivers have no fingerprint: nothing on disk belongs to `pip` or to the Kotlin
-toolchain alone, so both are selected by naming them in `engines` or in a
+Two drivers have no fingerprint. Nothing on disk belongs to `pip` alone or to
+the Kotlin toolchain alone, so both are selected by name in `engines` or in a
 `.tool-versions` file, never by detection.
 
 ### JavaScript and TypeScript
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `node` | Runtime | `.nvmrc` | `node --version` | `node {task}` |
 | `deno` | Runtime, Package Manager, Task Runner | `deno.json`, `deno.jsonc`, `deno.lock` | `deno --version` | `deno task {task}` |
@@ -40,129 +43,151 @@ toolchain alone, so both are selected by naming them in `engines` or in a
 | `pnpm` | Package Manager | `pnpm-lock.yaml` | `pnpm --version` | `pnpm run {task}` |
 | `yarn` | Package Manager | `yarn.lock` | `yarn --version` | `yarn {task}` |
 | `npm` | Package Manager | `package-lock.json`, `npm-shrinkwrap.json` | `npm --version` | `npm run {task}` |
+| `turbo` | Task Runner | `turbo.json` | `turbo --version` | `turbo run {task}` |
+| `nx` | Task Runner | `nx.json` | `nx --version` | `nx run {task}` |
+
+`deno` fills three roles and competes as a task runner. `bun` fills two and
+competes as a package manager. `turbo` and `nx` outrank every package manager
+here, so a workspace holding both `turbo.json` and `pnpm-lock.yaml` resolves to
+`turbo` and composes pnpm underneath it.
 
 ### Rust
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `cargo` | Build Tool | `Cargo.lock`, `rust-toolchain.toml`, `rust-toolchain` | `cargo --version` | `cargo {task}` |
 
 ### Go
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `go` | Build Tool | `go.sum` | `go version` | `go {task}` |
 
 ### Python
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `uv` | Package Manager | `uv.lock` | `uv --version` | `uv run {task}` |
 | `poetry` | Package Manager | `poetry.lock` | `poetry --version` | `poetry run {task}` |
 | `pdm` | Package Manager | `pdm.lock` | `pdm --version` | `pdm run {task}` |
 | `pipenv` | Package Manager | `Pipfile.lock` | `pipenv --version` | `pipenv run {task}` |
-| `pip` | Package Manager | none — declaration only | `pip --version` | `pip {task}` |
+| `pip` | Package Manager | none, declaration only | `pip --version` | `pip {task}` |
 | `python` | Runtime | `.python-version` | `python --version` | `python -m {task}` |
 
-A `requirements.txt` is read by pip, uv, and pip-tools alike, so it names no tool
-and is not a pip fingerprint. Declare `pip` in `engines` for a workspace you want
-pip to drive.
+`requirements.txt` is read by pip, uv, and pip-tools alike, so it identifies no
+tool and is not a `pip` fingerprint. Declare `pip` under `engines` for a
+workspace pip should drive. The file still counts toward
+[cache keys](/lattice/docs/cache-internals).
 
 ### Ruby
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `bundler` | Package Manager | `Gemfile.lock` | `bundle --version` | `bundle exec {task}` |
 | `rake` | Task Runner | `Rakefile` | `rake --version` | `rake {task}` |
 | `ruby` | Runtime | `.ruby-version` | `ruby --version` | `ruby {task}` |
 
-### The JVM (Java, Kotlin, Gradle, Maven)
+### Java
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `gradle` | Build Tool | `gradlew` | `gradle --version` | `./gradlew {task}` |
 | `maven` | Build Tool | `mvnw` | `mvn --version` | `./mvnw {task}` |
 | `java` | Runtime | `.java-version` | `java -version` | `java {task}` |
-| `kotlin` | Runtime | none — declaration only | `kotlinc -version` | `kotlin {task}` |
 
-A Kotlin project is driven by gradle or maven, and no file on disk pins the Kotlin
-toolchain specifically, so `kotlin` is a runtime you declare and compose
-underneath one of those. A `.tool-versions` entry naming `kotlin` counts as a
-declaration.
+Both build tools fingerprint the checked-in wrapper rather than the build file,
+and both invoke through it. A `build.gradle` or a `pom.xml` on its own is a
+generic ecosystem marker, not gradle or maven evidence.
+
+### Kotlin
+
+| Tool | Roles | Fingerprint | Version command | Invoke template |
+| --- | --- | --- | --- | --- |
+| `kotlin` | Runtime | none, declaration only | `kotlinc -version` | `kotlin {task}` |
+
+Kotlin work is driven by gradle or maven, and no file on disk pins the Kotlin
+toolchain specifically. `kotlin` is a runtime you declare and compose underneath
+one of those. A `.tool-versions` entry naming `kotlin` counts as a declaration.
 
 ### .NET
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `dotnet` | Build Tool | `global.json` | `dotnet --version` | `dotnet {task}` |
 | `nuget` | Package Manager | `packages.config` | `nuget help` | `nuget {task}` |
 
-`nuget` fingerprints only the legacy `packages.config` layout. A
-`packages.lock.json` is not nuget evidence: an SDK-style project can restore with
-a lockfile and still be a `dotnet` workspace, and since a package manager outranks
-a build tool, counting it would take the driver away from `dotnet`. The lockfile
-still counts toward [cache keys](/lattice/docs/cache-internals).
+`nuget` fingerprints only the legacy `packages.config` layout.
+`packages.lock.json` is not nuget evidence: an SDK-style workspace can restore
+with a lockfile and still be a `dotnet` workspace, and a package manager
+outranks a build tool, so counting the lockfile would take the driver away from
+`dotnet`. The lockfile still counts toward
+[cache keys](/lattice/docs/cache-internals).
+
+`nuget help` is the version rule because `nuget.exe` prints its version in its
+help output. Lattice reads the first version-shaped substring of whatever a
+version command writes to stdout or stderr, so surrounding banner text does not
+matter.
 
 ### Swift and Objective-C
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `pod` | Package Manager | `Podfile`, `Podfile.lock` | `pod --version` | `pod {task}` |
 | `swift` | Build Tool | `Package.resolved` | `swift --version` | `swift {task}` |
 
 ### PHP
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `composer` | Package Manager | `composer.lock` | `composer --version` | `composer {task}` |
 
 ### Elixir
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `mix` | Package Manager, Task Runner | `mix.lock` | `mix --version` | `mix {task}` |
 
 ### Dart
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `dart` | Package Manager | `pubspec.lock` | `dart --version` | `dart pub {task}` |
 
 ### Haskell
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `stack` | Build Tool | `stack.yaml.lock` | `stack --version` | `stack {task}` |
 | `cabal` | Build Tool | `cabal.project.freeze` | `cabal --version` | `cabal {task}` |
 
-### Generic task runners
+Two build tools with the same role. A workspace holding both lockfiles is an
+ambiguity, resolved by naming one under `engines`.
 
-Not tied to one language. Any of them can sit above a language-specific driver in
-a workspace.
+### Language-agnostic task runners
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
+| Tool | Roles | Fingerprint | Version command | Invoke template |
 | --- | --- | --- | --- | --- |
 | `just` | Task Runner | `justfile`, `.justfile` | `just --version` | `just {task}` |
 | `task` | Task Runner | `Taskfile.yml`, `Taskfile.yaml` | `task --version` | `task {task}` |
-| `turbo` | Task Runner | `turbo.json` | `turbo --version` | `turbo run {task}` |
-| `nx` | Task Runner | `nx.json` | `nx --version` | `nx run {task}` |
 
-That is the complete built-in driver set: 34 drivers across 13 language and
-ecosystem groups.
+Neither belongs to an ecosystem. Either can sit above a language-specific driver
+in any workspace.
+
+That is the complete set: 34 drivers, across 13 ecosystems plus the two tools
+above that belong to none.
 
 ## Well-known engines
 
-An `engines` entry can be a bare version-constraint string only if Lattice has a
-built-in rule for reading that tool's version. The table below is that rule set,
-and it is where every driver above gets its version command too. A string naming
-anything else is rejected by `lattice.json` validation. Every name below is
-accepted in the short form:
+An `engines` entry can be a bare version-constraint string only when Lattice has
+a built-in rule for reading that tool's version. The table below is the rule set,
+and it is where every driver above gets its version command. A string naming
+anything outside this table is rejected by `lattice.json` validation.
 
 ```json
 { "engines": { "node": ">=20.0.0" } }
 ```
 
-| Engine | Version rule (command Lattice runs) |
+| Engine | Version command |
 | --- | --- |
 | `node` | `node --version` |
 | `deno` | `deno --version` |
@@ -205,27 +230,26 @@ accepted in the short form:
 | `turbo` | `turbo --version` |
 | `nx` | `nx --version` |
 
-Every tool in the driver table appears here, so any driver can be pinned in string
-form. Six names are engines but not drivers: `rust`, `python3`, `php`, `elixir`,
-`haskell`, and `ghc`. Each pins a compiler or interpreter that some other tool
-drives tasks with — cargo drives a Rust workspace, composer PHP, mix Elixir, stack
-or cabal Haskell. `haskell` and `ghc` are two spellings of one rule; `python` and
-`python3` are two different interpreters.
+Forty engines. Every tool in the driver table appears here, so any driver can be
+pinned in string form.
 
-`nuget help` is the version rule because nuget.exe has no `--version` flag; its
-help output prints `NuGet Version: x.y.z` on the first line. Lattice reads the
-first version-looking substring of whatever a version command prints, so banner
-text around it doesn't matter.
+Six names are engines and not drivers: `rust`, `python3`, `php`, `elixir`,
+`haskell`, and `ghc`. Each pins a compiler or interpreter that a different tool
+drives tasks with. Cargo drives a Rust workspace, composer a PHP one, mix an
+Elixir one, and stack or cabal a Haskell one. `haskell` and `ghc` are two
+spellings of one rule. `python` and `python3` are two different interpreters and
+two different rules.
 
-A bare string means [validate-only](/lattice/docs/engines): Lattice runs the
-version command above against whatever is on `PATH` and fails if it doesn't
-satisfy the constraint. It installs nothing for a well-known engine unless you add
-an `installCmd` in the object form.
+A bare string is [validate-only](/lattice/docs/engines). Lattice runs the version
+command against whatever is on `PATH` and fails before any task starts if the
+result does not satisfy the constraint. Nothing is installed. Lattice ships no
+install recipe for any engine in this table, well-known or not: provisioning
+happens only when the config supplies an `installCmd`.
 
-## Declaring a tool Lattice doesn't know
+## Declaring a tool Lattice does not know
 
-Any other tool name needs the object form with an explicit `versionCmd`. Skip it
-and `lattice.json` validation rejects the config with the exact fix:
+A name outside the table above requires the object form with an explicit
+`versionCmd`. Without one, validation rejects the config:
 
 ```text
 engine 'alpes' in root uses the string (version-only) form, but 'alpes' is not
@@ -234,7 +258,7 @@ with an explicit `versionCmd`, e.g. "alpes": { "version": ">=1.0.0", "versionCmd
 "alpes --version" }
 ```
 
-Validating a tool already on `PATH`, without installing it:
+Validate a tool already on `PATH` without installing it:
 
 ```json
 {
@@ -247,9 +271,8 @@ Validating a tool already on `PATH`, without installing it:
 }
 ```
 
-Add `installCmd` (and optionally `bin`, which defaults to `bin`) to move from
-validate-only to provisioned. Lattice then installs into
-`.lattice/toolchains/alpes/` and pins the result instead of trusting `PATH`:
+Add `installCmd` to move from validate-only to provisioned. `bin` names the
+directory inside the install that holds executables, and defaults to `bin`:
 
 ```json
 {
@@ -264,6 +287,9 @@ validate-only to provisioned. Lattice then installs into
 }
 ```
 
+Lattice then runs `installCmd` into a directory under
+`.lattice/toolchains/alpes/`, version-checks the result, records a pin, and
+prepends that directory's `bin` to the task's `PATH`.
 [Engines and provisioning](/lattice/docs/engines) covers what
-`$LATTICE_TOOLCHAIN_DIR` receives, how a pin is reused across runs, and what gets
-prepended to a task's `PATH`.
+`$LATTICE_TOOLCHAIN_DIR` receives, how a pin is reused across runs, and how
+`PATH` is assembled.

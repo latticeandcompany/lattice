@@ -1,6 +1,11 @@
 ---
 // A short demo, framed as the payoff for the reader: one file, one command, and
 // the parts that didn't change come back from cache instead of rebuilding.
+//
+// The workspace names in the terminal card match the config card beside it, so the
+// transcript is shaped rather than captured. Every line is a real format string
+// from crates/lattice-output/src/lib.rs — the run-status lines, the `cache hit
+// [key]` form, and the summary. Re-check them there before editing this block.
 ---
 
 <section class="px-3 py-5">
@@ -10,8 +15,8 @@
 				Skip work you already did
 			</h2>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
-				Your projects and how they build live in one file. Run it, and Lattice rebuilds only
-				what changed since last time.
+				One file lists your workspaces and the tasks they share. Lattice runs the tasks that
+				changed and restores the rest from cache.
 			</p>
 		</div>
 
@@ -50,12 +55,12 @@
 					</div>
 					<div class="card-body p-0">
 						<pre class="code-card__body mb-0"><code>{`$ lattice run build
-
-  api   build   built
-  web   build   `}<span class="lattice-accent">restored from cache</span>{`
-  ml    build   built
-
-  3 projects, 1 restored from cache
+api:build: running
+ml:build: running
+web:build: `}<span class="lattice-accent">cache hit [d97c6e8a]</span>{`
+ml:build: done (0.44s)
+api:build: done (1.21s)
+lattice: 3 tasks, 1 cached, 0 failed, 1.26s
 `}</code></pre>
 					</div>
 				</div>

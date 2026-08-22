@@ -83,10 +83,10 @@ test('a skipped task carries its reason', () => {
 	s.ingest(
 		event({
 			kind: 'event',
-			event: { type: 'skipped', workspace: 'web', task: 'build', reason: 'prerequisite failed' },
+			event: { type: 'skipped', workspace: 'web', task: 'build', reason: 'dependency failed' },
 		}),
 	);
-	assert.equal(s.taskView('web:build').reason, 'prerequisite failed');
+	assert.equal(s.taskView('web:build').reason, 'dependency failed');
 });
 
 test('a persistent task that exited cleanly is not a failure', () => {

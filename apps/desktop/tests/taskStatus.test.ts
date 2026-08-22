@@ -19,9 +19,9 @@ test('every state carries a word, not only an icon', () => {
 	}
 });
 
-test('a cached task shows the short key beside the word', () => {
+test('a cache hit shows the short key beside the word', () => {
 	const view = statusView({ state: 'cached', cacheKey: '664f4cd3aaaa' }, 'web:build');
-	assert.equal(view.label, 'cached [664f4cd3]');
+	assert.equal(view.label, 'cache hit [664f4cd3]');
 	assert.equal(view.icon, 'bi-lightning-charge');
 });
 
@@ -30,13 +30,17 @@ test('a finished task shows how long it took', () => {
 });
 
 test('a signal death is reported as such rather than as code null', () => {
-	assert.equal(statusView({ state: 'exited', exitCode: null }, 'web:dev').label, 'killed by signal');
-	assert.equal(statusView({ state: 'exited', exitCode: 1 }, 'web:dev').label, 'exited code 1');
+	assert.equal(
+		statusView({ state: 'exited', exitCode: null }, 'web:dev').label,
+		'exited (killed by signal)',
+	);
+	assert.equal(statusView({ state: 'exited', exitCode: 1 }, 'web:dev').label, 'exited (code 1)');
 });
 
+// `dependency failed` is the only reason the runner produces.
 test('a skipped task says why', () => {
-	const view = statusView({ state: 'skipped', reason: 'prerequisite failed' }, 'web:build');
-	assert.equal(view.label, 'skipped — prerequisite failed');
+	const view = statusView({ state: 'skipped', reason: 'dependency failed' }, 'web:build');
+	assert.equal(view.label, 'skipped (dependency failed)');
 });
 
 test('running uses the spinner component rather than a glyph', () => {

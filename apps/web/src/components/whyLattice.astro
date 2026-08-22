@@ -11,22 +11,22 @@ const benefits: Benefit[] = [
 	{
 		icon: 'bi-lightning-charge',
 		title: 'Builds finish sooner',
-		body: 'Repeat a build and the parts that didn\'t change come straight from cache. You wait for new work, not for work you already did.',
+		body: 'Repeat a build and the parts that didn\'t change come straight from cache. Change one workspace and Lattice re-runs only that workspace and whatever depends on it.',
 	},
 	{
 		icon: 'bi-command',
 		title: 'One command for the whole repo',
-		body: 'Build, test, and run every project in your monorepo the same way, whatever language it\'s written in. No per-language scripts to remember.',
+		body: 'Build and test every workspace with the same command, whatever language each one uses. Lattice orders the runs by dependency and starts the independent ones together.',
 	},
 	{
 		icon: 'bi-play-circle',
 		title: 'No build scripts to write',
-		body: 'List your projects once, and Lattice reads each one\'s own manifest to work out how it builds. No per-language build scripts to write or keep in sync.',
+		body: 'List your workspaces once. Lattice reads the manifest or lockfile already in each directory to work out the command to run.',
 	},
 	{
 		icon: 'bi-box-seam',
-		title: 'The right tool versions, every time',
-		body: 'Lattice pins the compilers and tools each project needs, so a fresh clone builds the same on your laptop and in CI.',
+		title: 'The same tool versions everywhere',
+		body: 'Pin the compilers, linters, and package managers a workspace needs, and Lattice checks or installs them before any task starts. A fresh clone builds the same on your laptop and in CI.',
 	},
 ];
 ---
@@ -35,11 +35,11 @@ const benefits: Benefit[] = [
 	<div class="mx-auto" style="max-width: 72rem;">
 		<div class="mx-auto text-center mb-5" style="max-width: 40rem;">
 			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
-				Spend less time waiting on builds
+				Less setup, faster builds
 			</h2>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
-				Point Lattice at a monorepo and it takes care of the busywork, so you can get back to
-				writing code.
+				Lattice works out which tool each workspace already uses, runs your tasks in dependency
+				order, and restores cached results instead of running them twice.
 			</p>
 		</div>
 

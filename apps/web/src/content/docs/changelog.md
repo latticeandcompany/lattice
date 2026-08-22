@@ -1,380 +1,836 @@
 ---
 title: Changelog
-description: Release history for Lattice, curated from the repo's CHANGELOG.md.
+description: Release history for Lattice, reproduced from the repo's CHANGELOG.md.
 group: Reference
 order: 9
 ---
 
 # Changelog
 
-The user-facing history from the repo's own `CHANGELOG.md`, newest first. That
-file is the source of record; this page drops the entries that only matter
-inside the repo and links out to the relevant docs.
+Newest first. `CHANGELOG.md` in the repo is the source of record, and everything
+below is reproduced from it word for word. This page leaves out the entries and
+paragraphs that only affect the repo, and adds nothing but the links into the
+docs. For the full history, read
+[`CHANGELOG.md`](https://github.com/latticeandcompany/lattice/blob/HEAD/CHANGELOG.md).
 
-Lattice is currently at `1.0.0-beta-2`, a pre-release build; there is no `1.0.0`
-yet. Versions follow semver: a major bump means a breaking change to the
-`lattice.json` schema or the CLI surface. A version bump is also a full cache
-miss, because the running version is one of the inputs hashed into every task's
-cache key, so the first run after an upgrade re-runs everything. See
+Versions follow semver: a major bump means a breaking change to the
+`lattice.json` schema or the CLI surface. The running Lattice version is one of
+the inputs hashed into every task's cache key, so a version bump is a full cache
+miss and the first run after an upgrade re-runs everything. Run
+`lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
+
+## The CLI's messages, the desktop app's labels, and every doc — 2026-08-21
+
+Two lines a script might grep for changed:
+
+- `lattice: full cache — nothing to run` is now `lattice: full cache, nothing to
+  run`
+- the run header pluralizes for real. Where it used to end `across 3
+  workspace(s)`, it now ends `across 3 workspaces`, and `across 1 workspace` for
+  one
+
+Help text and error messages are reworded throughout. Each error now names what
+failed, where, and the one thing to do next, and the semicolons that joined two
+clauses are periods. The unknown-field error, the ambiguity error, and the
+`failed to <verb> <path>` context layers are unchanged: they already read that
+way, and 20 assertions depend on them.
+
+The desktop app labels its controls with the words the docs and `lattice.json`
+use. `Where things can run` is `Workspaces`, `Files it reads` is `Inputs`, `Tool
+versions to carry over` is `Engines`, and each carries one line underneath
+explaining it. The 2026-08-08 entry below moved these labels the other way, to
+plain English; a label that avoids the schema's word teaches nothing a reader can
+search for, so they now use the real term and explain it in place.
+
+The app calls the thing you open a project, everywhere. It used to say `repo` in
+one control and `folder` in the next, for the same thing. The word `folder` is
+gone from the app.
+
+Three claims the app made were false and are corrected. The `--sequentially`
+switch was labeled `One task at a time`, which is `--concurrency 1`; the flag
+runs each task's graph to completion in turn, with normal parallelism inside each
+graph. The engines help text said Lattice can fetch the tools it knows, which it
+does only for an engine with an `installCmd`. The window's duration formatter
+disagreed with the terminal's at three boundaries, so a 59.999s run read `60.00s`
+in the window and `1:00` in the terminal.
+
+The docs, the README, the website, and the published `skills/lattice` skill are
+rewritten. Corrections worth naming, because each documented behavior the code
+does not have:
+
+- Ctrl-C on a persistent task sends `SIGTERM`, waits five seconds, then
+  `SIGKILL`, and the run exits `130`. The docs said `SIGKILL` with no grace
+  period and an exit of `0`
+- `settings.maxCacheSize` takes a string. The docs gave a bare-integer form that
+  the parser rejects
+- driver detection takes the highest role rank across every candidate first, and
+  only then uses a declaration to break a tie. The docs and the skill described a
+  ladder that stops at the first rung, which told a reader that an `engines` entry
+  always settles a driver conflict. Sometimes it does nothing
+- a task's cache key includes the keys of the tasks it depends on, and a task
+  with no `inputs` hashes its whole workspace minus gitignored files. Several
+  pages described a smaller key
+- the installer adds `.lattice/bin/` to `.gitignore` when the repo has one, and a
+  `PATH` line to your shell config unless you pass `--no-modify-path`. The README
+  said it touched nothing else, so the uninstall it documented left that line
+  behind
+- two error messages are built and then discarded, so no reader has ever seen
+  them. `RunFailure` carries the keep-going summary and `RunInterrupted` carries
+  `interrupted — running tasks were stopped`, and `lattice_project::run` takes the
+  run result off each one and drops the message. A `--continue` run that fails
+  prints its reporter summary and exits `1`. An interrupted run prints its summary
+  and exits `130`. The docs quoted both messages as the run's final error, so they
+  now describe what a reader sees, and the absence of an error line is stated
+  rather than left as a surprise
+
+See [CLI](/lattice/docs/cli), [Errors](/lattice/docs/errors), and [Desktop app](/lattice/docs/desktop-app).
+
+## The desktop app's labels, accent, and repo switcher — 2026-08-08
+
+The app labeled its controls with `lattice.json` keys and CLI vocabulary:
+`dependsOn`, `persistent`, "Ignore cache", "Concurrency: auto", "no driver
+resolved". Each was accurate and meant nothing to a reader who had not read the
+schema. The labels now read as plain English: "Waits for", "Keeps running until
+stopped", "Skip the cache", "as many at once as fits", "nothing found to run it
+with". Every control in the config form still shows the `lattice.json` key it
+writes.
+
+Strings the CLI also prints are unchanged. A task's state and a run's summary line
+match the terminal's output character for character.
+
+The accent color is crimson rather than ink, on the buttons, the checkboxes, the
+focus rings, and the active rail. The lockup in the sidebar now carries the word
+`desktop`. Failure moved off crimson to amber, so a broken row and a Run button
+never share a color. Amber is a status color only.
+
+All thirteen ecosystems Lattice detects have artwork. Seven of them showed a
+two-letter monogram before. The marks are vector rather than pre-sized PNGs, and
+they sit on a fixed light plate, so a mark drawn for a white background is legible
+in dark mode without a second file per ecosystem.
+
+Opening a repo, scanning one, saving a config, and a run in flight each show a
+spinner with a word beside it, in the accent color.
+
+Switching repos was a two-glyph icon button in the bottom corner of the sidebar,
+and it did not say what it switched. The open repo is now a dropdown at the top of
+the rail, where its name already appeared. The dropdown lists every repo you have
+opened, marks the current one, and holds the actions for opening another repo and
+closing the current one.
+
+See [Desktop app](/lattice/docs/desktop-app).
+
+## A desktop app — 2026-08-07
+
+Lattice now has a window. It lists the tasks each workspace can run and runs them,
+draws the dependency graph, edits `lattice.json`, and scaffolds a config for a
+repo that has none. The app links the same engine crates the CLI links, in
+process, so the two cannot disagree about what a task is or whether it needs to
+run.
+
+The app shows what a terminal cannot hold on screen: which workspaces exist and
+what each one resolves to, the shape of the graph a task will run, and which of
+the ten cache key components moved when a task misses.
+
+Run it with `npm run app` in `apps/desktop`. This change ships no installers.
+
+See [Desktop app](/lattice/docs/desktop-app) and
+[Architecture](/lattice/docs/architecture).
+
+## Cache entries live directly in the cache directory — 2026-08-07
+
+Entries were written under a subdirectory named for an on-disk cache format
+(`.lattice/cache/v3/`), and that name was hashed into every key, so a release
+that changed what a key covered started a new group and left the old one for
+`lattice prune` to reclaim. The running Lattice version already does that job. A
+version bump moves every key, so the old entries are never asked for again. The
+format directory bought only the directory sweep, which was the one part of prune
+that ever called `remove_dir_all` on a path the user chose.
+
+Entries now sit flat under `settings.cacheDir`, prune removes no directories at
+all, and the first run after this upgrade re-runs everything. Anything left in a
+`v*` directory from an earlier build is unreachable and safe to delete by hand.
+
+See [Cache internals](/lattice/docs/cache-internals).
+
+## A declared env name reaches the key even when it is unset — 2026-08-07
+
+Only resolved `(name, value)` pairs were hashed, so a name in `env` or `globalEnv`
+that the environment did not answer contributed nothing at all. Adding one
+therefore hit the entry computed before it was declared, and went on hitting once
+the variable was set, because the value had never been part of the key to begin
+with. The name is now hashed whether or not it resolves, with a set value and an
+unset marker as distinct cases.
+
+See [Caching](/lattice/docs/caching) and
+[Configuration](/lattice/docs/configuration).
+
+## A task command with a quote in it works on Windows — 2026-08-07
+
+A task's command was handed to `cmd` as an ordinary argument. Rust quotes
+arguments the way the MSVC runtime parses them, which escapes an embedded `"` as
+`\"`. `cmd` does not read `\"` as an escape, so any command containing a quote
+arrived mangled. `node -e "console.log(1)"` was enough, as was any path
+with a space in it. Task commands, `installCmd`, `versionCmd` and the `setup`
+installers all went through the same door.
+
+Each now passes `/S /C "<command>"` as a raw argument, which is the documented
+way to reach `cmd` verbatim: with `/S` it strips the first and last quote of the
+rest and takes what is between them as written.
+
+See [Installation](/lattice/docs/installation).
+
+## The test suites run on Windows — 2026-08-07
+
+Adding a Windows CI job showed that most of the suite could not run there, for a
+reason that had nothing to do with what it covered: a test that drives a task
+wrote its body as a POSIX shell script. `cmd` has no `;` separator, its `mkdir`
+takes no `-p`, `echo hi > f` writes a trailing space, and `echo seed1>f` reads
+the trailing digit as a file descriptor. Those tests were not testing Lattice on
+Windows; they were failing on shell grammar.
+
+`cargo test --workspace` now passes on Windows as well as unix, and the Windows
+job runs the whole suite rather than a subset. Three tests stay unix-only on
+purpose: two cover symlink round-tripping and one covers process-group teardown,
+which are the platform's own mechanisms rather than something to emulate.
+
+See [Installation](/lattice/docs/installation).
 
 ## Shared files reach the cache key, and a run cleans up after itself — 2026-08-06
 
-The first run after this upgrade re-runs everything: the key covers more than it
-did, so it is a new cache format. The previous group is retired by the next
-prune.
+The first run after this upgrade re-runs everything: the key now covers more, so
+it is a new cache format. The previous group is retired by the next prune.
 
-A task's `inputs` are relative to its own workspace, and `tasks` is shared by
-every workspace, so a base `tsconfig.json`, a shared schema directory or a root
-`.env` had no `inputs` spelling that meant the same thing everywhere. Nothing
-covered them, and editing one served every task an artifact built before the
-change. Two root-level keys cover them now, both hashed into every task's key:
+- A file shared above the workspaces could not be covered by anything, so editing
+  one served every task a stale artifact. `inputs` patterns are relative to the
+  workspace and `tasks` is shared across workspaces, which left a base
+  `tsconfig.json`, a shared schema directory or a root `.env` with no spelling
+  that meant the same thing everywhere. Two root-level keys now cover them:
+  `globalDependencies` (repo-root-relative globs) and `globalEnv` (variable
+  names), both hashed into every task's key
+- `lattice prune` deleted every directory beside the cache that was not the
+  current cache format. With `cacheDir` pointing at a directory Lattice does not
+  own outright, such as `.lattice`, that took `toolchains/` and `bin/` with it,
+  including the installed binary. Only directories whose names have the shape of
+  a cache format are reclaimed now
+- Ctrl-C left every running task's children alive. Each task runs in its own
+  process group, which is what lets a task that shells out be cleaned up as a
+  unit, and the same call detaches it from the terminal's Ctrl-C. The signal
+  reached Lattice, Lattice exited, and the compilers kept going. An interrupt now
+  sends `SIGTERM` to every running group, waits up to five seconds, then kills
+  what is left, and exits `130` rather than `1`, so a cancelled CI job does not
+  report the same exit code as a build that failed
+- A `dependsOn` that named nothing was a silent no-op. A workspace depending on a
+  misspelled workspace name, or a task depending on a task the `tasks` map never
+  defined, built no edge. The ordering the config was written to guarantee did not
+  happen, and nothing was printed. Both are now rejected at load, with the nearest
+  name offered
+- A workspace `path` could be absolute or climb out of the repo with `..`. The
+  workspace directory bounds which files are hashed, which the `outputs` globs
+  match, and which a cache hit clears before unpacking, so a path that left the
+  repo put all three somewhere Lattice has no business writing. Rejected at load
+- `settings.maxCacheSize` was inert. It read as a budget but only `lattice prune`
+  consulted it, so a repo that set one still grew without limit. Every run now
+  holds the cache to it. There is no default, so a cache with no
+  `settings.maxCacheSize` still grows without limit
+- Toolchain provisioning could not work on Windows, which is a platform the
+  release matrix publishes a binary for. Engine version checks and `installCmd`
+  both ran through `sh -c` and joined `PATH` with `:`, so every engine in a
+  config failed to resolve there. Both now use the platform shell and separator,
+  the way the task runner already did, and CI builds and tests on Windows so it
+  stays that way
+- A task that hung had nothing to stop it, in CI as much as locally. Tasks accept
+  a `timeout` (`"90s"`, `"10m"`, `"1h"`, or seconds); an overrun stops the task's
+  whole process group and counts it as a failure. Ignored on a `persistent` task,
+  and not part of the cache key
+- A cache miss said only that it missed. The key is one hash, so it could not say
+  what moved. It is now built from named components: `inputs`, `env`,
+  `globalEnv`, `globalDependencies`, `dependencies`, `manifests`, `toolchain`,
+  `command`, `patterns`, and `environment`. Each is recorded per workspace and
+  task, so `-l` reports `cache miss: inputs changed` instead of a bare miss
 
-```json
-{
-  "globalDependencies": ["tsconfig.base.json", "proto/**"],
-  "globalEnv": ["NODE_ENV"]
-}
-```
+See [Caching](/lattice/docs/caching) and [Task graph](/lattice/docs/task-graph).
 
-See [Caching](/lattice/docs/caching#files-shared-across-workspaces).
+## The cache key covers what actually determines a task's result — 2026-08-03
 
-A miss now says what moved. The key is built from named components, each recorded
-per workspace and task, so `-l` reports the one that changed instead of only that
-something did:
+The first run after this upgrade re-runs everything. Entries are now grouped by
+cache format on disk, and the previous group is retired by the next
+`lattice prune` rather than read.
 
-```text
-web:build: cache miss: globalDependencies changed
-```
+- Two workspaces could share one cache entry and restore each other's artifacts.
+  The key did not include the workspace, so a task running the same command in
+  two places with nothing else to distinguish it resolved to one identity. The
+  second workspace reported a hit and unpacked the first one's build. The
+  workspace name is now part of every key
+- A change in a dependency did not reach the tasks that depend on it. `dependsOn`
+  decided the order and nothing else, so editing a library rebuilt the library
+  and then served its consumers from cache, against code that no longer existed.
+  Every task's key now includes the resolved keys of its prerequisites. A
+  workspace is one node, so a dependent re-runs when its dependency changes even
+  if the specific files it reads did not
+- A task with no `inputs` hashed no source files at all, so it cached on its
+  first run and never ran again however much the workspace changed. Such a task
+  now hashes its whole workspace, minus what the applicable `.gitignore` files
+  exclude and minus its own `outputs`. Declaring `inputs` is now an optimization
+  rather than a correctness requirement
+- Only the invocation was hashed, never what the invocation resolves to.
+  `npm run build` names a script in `package.json` and `make test` names a target
+  in a `Makefile`; rewriting that script left the key unchanged and served the
+  old artifact. Manifests present in a workspace are now hashed
+- Lockfiles were only looked for beside the workspace, so every layout that
+  hoists one to the top got no invalidation at all from a dependency bump. That
+  covers pnpm, yarn and npm workspaces, and a Cargo virtual workspace. The repo
+  root is now checked too
+- The operating system, architecture and shell are in the key. A cache directory
+  shared between runners, or between a host and a container, could answer one
+  platform's lookup with another platform's artifacts
+- A task's own outputs no longer feed its key. Previously an `outputs` glob
+  inside the `inputs` set moved the key the run was about to store under, so the
+  task could never hit its own entry; the workaround was to repeat every output
+  in `ignore`. That is no longer necessary
+- The `inputs`, `outputs` and `ignore` patterns are hashed as declared. Widening
+  `outputs` used to leave the key alone, so the next run hit an entry that had
+  captured the narrower set and silently restored less than the run produced
 
-Ctrl-C used to leave every running task's children alive. Each task runs in its
-own process group, which is what lets a task that shells out be cleaned up as a
-unit, and the same call detaches it from the terminal's Ctrl-C. The signal
-reached Lattice, Lattice exited, and the compilers kept going. An interrupt now
-sends `SIGTERM` to every running group, waits five seconds, then kills what is
-left, and exits `130` rather than `1`, so a cancelled CI job does not read as a
-build that broke.
+Storage got the same treatment:
 
-`lattice prune` removed every directory beside the cache that was not the current
-cache format. With `cacheDir` pointing at `.lattice`, that took `toolchains/` and
-`bin/` with it, including the installed binary. Only directories shaped like a
-cache format are reclaimed now.
+- Artifacts and metadata are written to a temporary name and renamed into place.
+  Nothing can read a half-written entry, and two `lattice` processes storing the
+  same key can no longer interleave into one broken one
+- A task that declares `outputs` and produces none of them is no longer cached.
+  It used to store an empty archive, which verified correctly forever after, so
+  the task reported a hit, restored nothing, and never ran again
+- A restore clears what the entry's `outputs` match before unpacking. A file the
+  task deleted stays deleted, and content-hashed names like `app.a1b2.js` no
+  longer pile up across builds
+- Symlinks are stored as symlinks and empty output directories survive. Symlinks
+  were previously followed and flattened into copies of their targets
+- `lattice prune` can see artifacts left without metadata by an interrupted run.
+  It enumerated entries by metadata alone, so those bytes were invisible to it
+  and could never be reclaimed, which made `maxCacheSize` unenforceable. It now
+  also retires other formats' directories, and one unreadable metadata file
+  evicts that entry instead of aborting the prune
+- A directory symlink inside an input or output tree no longer recurses until the
+  stack runs out
+- An `outputs` pattern with no glob characters that names a directory, like
+  `dist`, now captures that subtree. It previously matched nothing
 
-A `dependsOn` that named nothing was a silent no-op. A workspace depending on a
-misspelled workspace, or a task depending on a task the `tasks` map never
-defines, built no edge at all, so the ordering the config was written for simply
-did not happen. Both are rejected at load, with the nearest name offered. A
-workspace `path` that is absolute or climbs out of the repo with `..` is rejected
-too, since that path bounds everything a task is allowed to read and write.
+`--no-cache` and `--force` are no longer the same flag. `--no-cache` neither
+reads nor writes. `--force` skips the lookup but still stores, so it replaces a
+suspect entry. It previously declined to write, so it could not.
 
-`settings.maxCacheSize` read as a budget but only `lattice prune` consulted it,
-so a repo that set one still grew without limit. Every run now holds the cache to
-it.
+See [Caching](/lattice/docs/caching) and [Cache
+internals](/lattice/docs/cache-internals).
 
-Tasks accept a `timeout` — `"90s"`, `"10m"`, `"1h"`, or a number of seconds. An
-overrun stops the task's whole process group and counts as a failure, so a hung
-task fails the run instead of holding a CI job until the runner's own limit kills
-it. It is ignored on a `persistent` task and is not part of the cache key. See
-[Task graph](/lattice/docs/task-graph#bounding-how-long-a-task-runs).
+## `lattice init` reads the repo instead of asking about it — 2026-07-31
 
-Toolchains work on Windows. Engine version checks and `installCmd` both ran
-through `sh -c` and joined `PATH` with `:`, so every engine failed to resolve on
-a platform the release matrix ships a binary for. Both use the platform shell and
-separator now, and CI builds and tests there so it stays that way.
+- `init` opened by asking whether the repo needed Lattice as a build tool, a
+  toolchain manager, or both. It then had you type every workspace name and path
+  by hand and invent version constraints defaulting to `>=0.0.0`. It never
+  looked at the directory it was scaffolding
+- It now scans first. Every directory holding a manifest Lattice recognizes is
+  proposed as a workspace, with its detected driver shown next to it. The walk
+  skips hidden directories, gitignored paths, and dependency and output trees
+- Tool versions the repo already records become proposed engines, at the version
+  actually written down: `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`,
+  `.python-version`, `.ruby-version`, `.java-version`, `package.json`
+  (`packageManager` and `engines`), and `go.mod`'s `toolchain` line
+- The capability question is gone. On a terminal you get the two lists
+  pre-checked and uncheck what's wrong. A repo root that holds only a workspace
+  declaration is offered alongside its members but starts unchecked
+- `init` no longer writes a config that does nothing: when the scan finds
+  nothing, or you uncheck everything, it asks for at least one workspace or one
+  engine first. Without a TTY there is no one to ask, so that case still writes
+  the bare skeleton rather than failing a pipeline
+- `--yes` takes the scan's proposal rather than always writing the skeleton
+- A scanned `build` task only claims `outputs: ["dist/**"]` when a `package.json`
+  workspace was found. A Rust or Go repo no longer gets a JavaScript convention
+  written into its config
+- A directory whose driver stays ambiguous is offered but starts unchecked, and
+  is named before `init` exits. Declaring it would halt the next run, so `init`
+  proposes a config that runs and reports what it held back
+
+See [Getting started](/lattice/docs/getting-started) and [CLI
+reference](/lattice/docs/cli).
 
 ## A persistent task that exits is reported — 2026-07-30
 
-Lattice used to spawn a dev server and never look at it again. A
-`persistent: true` task whose command exited — a port already taken, or a
-one-shot command marked persistent by mistake — left the run reporting it as
-running until you pressed Ctrl-C, which then printed `0 failed`.
+- Lattice spawned a dev server and never looked at it again. A `persistent: true`
+  task whose command exited left the run reporting it as running until Ctrl-C,
+  then printing `0 failed`. A port already taken, or a one-shot command marked
+  persistent by mistake, was enough. Every persistent child is now waited on
+- An exit that isn't a clean `0` prints
+  `web:dev: EXITED (code 1) after 1.09s` on stderr, counts in the run summary's
+  failed count, and exits non-zero. A signal reads `EXITED (killed by signal)`
+- An exit code of `0` prints the same line lowercased on stdout and counts as
+  nothing
+- A persistent task that has exited stops holding the run open. When the last one
+  is gone the run prints its summary and exits instead of waiting for a Ctrl-C
+  with nothing left to stop. Other persistent tasks still up are untouched, and
+  the graph's scheduling is unchanged: a persistent exit stops nothing
+- A child Lattice kills at shutdown is not reported and never counts as a
+  failure. The kill request and the child's own exit can land in the same poll,
+  so the shutdown flag decides that, not which one won
+- On Unix, a persistent task that exits on its own now also takes down the rest
+  of its process group, so a server the command backgrounded before quitting
+  isn't left holding a port
 
-Every persistent child is now waited on. An exit that isn't a clean `0` prints
-`web:dev: EXITED (code 1) after 1.09s`, counts in the summary's failed count, and
-exits non-zero; an exit code of `0` prints the same line lowercased and counts as
-nothing. Once the last persistent task in a run has exited the run prints its
-summary and exits, rather than waiting for a Ctrl-C with nothing left to stop.
-
-A dev server Lattice kills at shutdown is not reported and never counts as a
-failure. See [Persistent tasks](/lattice/docs/persistent-tasks) and [Dev servers
-and watchers](/lattice/docs/dev-servers).
+See [Persistent tasks](/lattice/docs/persistent-tasks) and [Dev servers and
+watchers](/lattice/docs/dev-servers).
 
 ## Breaking: an unknown key in `lattice.json` is an error — 2026-07-30
 
-The bundled JSON Schema already rejected keys that are not part of the config, so
-an editor underlined a typo'd `outputs` while `lattice run` read the same file
-without complaint and ignored the key. The parser now rejects it too:
+- The bundled schema has always set `"additionalProperties": false`, so an editor
+  underlined a key Lattice does not define. The config types carried no
+  `deny_unknown_fields`, so `lattice run` read the same file, ignored the key, and
+  ran. The two now agree: every config type rejects a key it does not define, at
+  every level
+- This breaks any `lattice.json` carrying an extra key: a leftover `projects`
+  map, a `settings.logging` from before it was removed, a `glob` on a workspace
+  entry, or a note parked under a key of your own. Delete it. There is no
+  opt-out
+- The two typos this catches were both silent. `output` for `outputs` left a
+  task declaring nothing to capture, so a cache hit restored no files. `input`
+  for `inputs` hashed no files, so the task hit the cache after its first run
+  whatever you edited
+- The message names the key, the object holding it, its position, the nearest
+  valid field, and everything accepted there:
 
-```text
-Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
-Did you mean `outputs`?
-Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
-```
+  ```text
+  Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+  Did you mean `outputs`?
+  Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+  ```
 
-`output` for `outputs` left a task with nothing to capture, so a cache hit
-restored no files; `input` for `inputs` hashed no files, so the task hit the cache
-after its first run whatever you edited. Both now fail the load, before any
-workspace is read.
+  Containers read the way they do in the file: `tasks.build`, `workspaces[1]`,
+  `engines.node`, or `at the top level of lattice.json`. The suggestion fires
+  within one edit for short keys and two for longer ones, case-insensitively, so
+  `Outputs` and `dependOn` are caught as well
+- `engines` is hand-deserialized rather than an untagged enum. An untagged enum
+  reports only that no variant matched, which would have buried the unknown key
+  inside an engine object. A value that is neither form now says so:
+  `invalid type: integer \`20\`, expected a version constraint string or an
+  engine object`
+- The pinned-version check still reads `latticeVersion` and `settings.versionCheck`
+  straight out of the JSON, so a config written for a newer release can still say
+  which build is allowed to read it
+- A test asserts the schema and the config types accept the same key set at every
+  level, so the two cannot drift apart again. The shipped-config tests now cover
+  every `lattice.json` in the tree, examples included, rather than two of them
 
-This breaks any `lattice.json` carrying a key Lattice doesn't define — a leftover
-`projects` map, a `settings.logging` from before it was removed, a note stored
-under a key of your own. The message names the key and its position; delete it.
-See [Configuration](/lattice/docs/configuration#unknown-keys) and
-[Errors](/lattice/docs/errors#unknown-key-in-latticejson).
+See [Configuration](/lattice/docs/configuration) and
+[Errors](/lattice/docs/errors).
+
+## A cache hit does not re-export the stored `env` — 2026-07-30
+
+- `CacheStore::restore`'s rustdoc claimed the caller re-exports the entry's
+  stored `env`. Nothing ever did, and nothing can: a hit starts no process, so
+  there is no environment to export into. The runner's matching dead read is
+  gone. It was an `entry.env()` assigned to `_cached_env`, under a comment that
+  made it look deliberate
+- The stored `env` stays. It is the record of the values the key was computed
+  from, and since the key is a hash it is the only place they remain legible.
+  `cache-internals.md` describes it that way instead of implying a hit re-applies
+  it, and the page now states that restore overwrites the files at the output
+  paths and touches nothing else
+- Tests pin both halves: the values round-trip through the entry and survive a
+  `touch`, `restore` leaves the process environment alone, and a stored entry's
+  meta file records the resolved value that fed its key. The stress test
+  asserts the same against a real `.meta.json`
+
+See [Cache internals](/lattice/docs/cache-internals).
+
+## `--filter` runs what the filtered workspaces depend on — 2026-07-30
+
+- A filter used to be applied before the graph was built, so a `^build` edge into
+  a workspace the pattern excluded resolved to nothing. `lattice run build
+  --filter lattice-runner` in this repo ran one task and reported success, having
+  silently skipped the five workspaces it depends on
+- The matched workspaces are now the roots of the run: the graph adds their
+  transitive dependency closure, deduplicated, and drops everything else. A
+  prerequisite whose inputs haven't changed comes back from cache, so the added
+  cost is a cache lookup per node
+- Nothing that depends *on* a match is included, so `--filter` still narrows a
+  run to one part of the repo
+- `--dry-run` tags each pulled-in node: `→ dagger:build (dependency)  cargo build`
+- A workspace pulled in as a dependency is only asked for the tasks its
+  dependents need, so an `auto: false` workspace outside the filter with no
+  script for the task you named no longer halts the run. Toolchain provisioning
+  and the `across N workspace(s)` count now cover the workspaces in the graph
+  rather than every workspace declared
+
+See [Selecting what runs](/lattice/docs/filtering).
 
 ## The ambiguity error suggests a fix that works — 2026-07-30
 
-A workspace with no ecosystem marker used to be told to add
-`"engines": { "node": ">=0.0.0" }`. Pasting that in produced the same error
-again, because a runtime cannot drive named tasks. The suggestion is now
-`"auto": false, "scripts": { "build": "<command>" }`, which resolves the halt.
+- When a workspace had no ecosystem marker, the halt suggested
+  `"engines": { "node": ">=0.0.0" }`. Pasting that in reproduced the same error,
+  because a runtime cannot drive named tasks. It now suggests
+  `"auto": false, "scripts": { "build": "<command>" }`, which resolves it
+- The `node` fallback fired whenever the candidate list was empty, so the two
+  workspaces most likely to hit it were the emptiest ones: a directory holding
+  only a `.nvmrc`, and a directory with nothing Lattice recognizes at all
+- Where a candidate tool does exist, nothing changes. Every tool a generic
+  ecosystem marker maps to can drive, so a bare `package.json` still suggests
+  `pnpm`. A test asserts that stays true as the marker table grows
+- The stress test now pastes the suggested fix back in and asserts the run
+  succeeds
 
-Where a candidate tool does exist the message is unchanged — a bare
-`package.json` still suggests `pnpm`. See [Driver
-detection](/lattice/docs/drivers) and
-[Errors](/lattice/docs/errors#ambiguous-or-undeclared-task-driver).
+See [Driver detection](/lattice/docs/drivers) and
+[Errors](/lattice/docs/errors).
 
 ## `settings.logging` is gone — 2026-07-30
 
-The field validated against the bundled schema and nothing in the tree read it.
-It is removed from the config type and from the schema. Output verbosity is
-`-l`/`--loquacious`, `settings.loquacious`, and `CI`; see [Output and
-logging](/lattice/docs/output-modes).
+- The field validated against the bundled schema and changed nothing. Nothing in
+  the tree read it. It is removed from the config type and from the schema
+- Output verbosity is `-l`/`--loquacious`, `settings.loquacious`, and `CI`, which
+  is what it always was
+- A `lattice.json` still carrying `logging` keeps loading, because an unknown
+  setting is ignored rather than rejected, so nothing breaks on upgrade. Editors
+  pointed at the refreshed `.lattice/schema.json` will start flagging the key.
+  Delete it
+- `.lattice/schema.json` is only written when absent, so a repo initialized
+  before this keeps its copy. Delete the file and run any `lattice` command to
+  pick up the current one
 
-A `lattice.json` still carrying `logging` kept loading at the time, since an
-unrecognized setting was ignored rather than rejected. That is no longer true —
-see the unknown-key entry above — so delete the setting. Your editor flags it once
-`.lattice/schema.json` is current; that file is only written when missing, so
-delete it and run any `lattice` command to refresh it. See
-[Configuration](/lattice/docs/configuration).
+See [Configuration](/lattice/docs/configuration) and [Output and
+logging](/lattice/docs/output-modes).
 
 ## Flags for what used to be environment variables — 2026-07-29
 
-Four settings that could only be given through the environment are now flags.
-`--theme light|dark` picks the splash art's teal shade, and `--release-base-url`
-sets where release archives are downloaded from. Both are global, so they parse
-on `lattice` and on every subcommand. `--release-latest-url` and
-`--release-list-url` sit on `lattice upgrade`, the only command that resolves
-`latest`.
+- `--theme light|dark` replaces `LATTICE_THEME`, and picks the teal shade of the
+  splash art. A value that is neither is now a parse error listing the two that
+  work, rather than a silently ignored string. It is global, so it parses on
+  `lattice` itself and on every subcommand
+- `--release-base-url <URL>` replaces `LATTICE_RELEASE_BASE_URL`. Also global,
+  because `upgrade` is not the only thing that downloads. An invocation in a repo
+  pinning a version that is not installed fetches it under whatever command you
+  typed
+- `--release-latest-url <URL>` and `--release-list-url <URL>` replace
+  `LATTICE_RELEASE_LATEST_URL` and `LATTICE_RELEASE_LIST_URL`. These sit on
+  `lattice upgrade`, the only command that resolves `latest`
+- Every one of those variables still works. The flag wins where both are given,
+  and a blank value at either step falls through to the default rather than
+  building an empty URL
+- `LATTICE_SWITCHED_FROM` stays a variable on purpose. It is read by the process
+  a version switch hands the invocation to, and that process is a different
+  build of Lattice. An older build would reject a flag it has never heard of and
+  fail the handover. For the same reason, a repo pinning a version older than
+  these flags should keep exporting `LATTICE_RELEASE_BASE_URL`: the handover
+  passes the whole command line through, so a flag the pinned build does not
+  know reaches it as an error
+- `LATTICE_TOOLCHAIN_DIR` is unchanged and gets no flag. It is what Lattice hands
+  to an engine's `installCmd`, not something you tell Lattice
 
-The matching `LATTICE_*` variables all still work; the flag wins where both are
-given. `LATTICE_SWITCHED_FROM` stays a variable, because it is read by a
-*different build* of Lattice after a version switch, which may not know the
-flag. `LATTICE_TOOLCHAIN_DIR` also stays one: Lattice hands it to your
-`installCmd` rather than reading it. See [Environment
-variables](/lattice/docs/environment-variables) and the [CLI
+See [Environment variables](/lattice/docs/environment-variables) and [CLI
 reference](/lattice/docs/cli).
 
 ## One color per task in the plain stream — 2026-07-29
 
-The `workspace:task` label leading each line of the plain stream now carries its
-own color, so the interleaved output of a parallel run can be followed one task
-at a time. Both halves of the label count: `web:build`, `web:test`, and
-`api:build` are three different colors, and the first eight distinct labels in a
-run never share one.
+- The `workspace:task` label leading every line of the plain stream is now
+  colored, one color per task, so the interleaved output of a parallel run can be
+  followed by eye. `web:build`, `web:test`, and `api:build` are three different
+  colors; the eight in the palette are one hue step apart at a fixed saturation,
+  and none of them reads as the red a `FAILED` marker uses
+- Colors are handed out in the order labels are first seen, so the first eight
+  distinct labels in a run never share one. Because tasks start in parallel, which
+  color a task gets can differ between runs. Within a run it never changes
+- The loquacious trace lines carry the same colored label, so `lattice:
+  web:build: hash …` and `web:build:`'s own output read as one stream
+- Whether color is emitted now depends on stdout being a real terminal rather than
+  on which mode you got. `-l` at a shell colors labels; the same run piped,
+  redirected, or under `CI` emits no escapes at all and is byte-for-byte what it
+  printed before. `NO_COLOR` still suppresses everything
+- Nothing but the label is styled, and `FAILED` is still the word `FAILED`
 
-Color now follows the terminal rather than the mode, so `-l` at a shell paints
-labels while the same run piped, redirected, or under `CI` emits nothing to
-strip. `NO_COLOR` still turns it all off. See [Output and
-logging](/lattice/docs/output-modes).
+See [Output and logging](/lattice/docs/output-modes).
 
 ## A run that executes nothing says so — 2026-07-29
 
-A run where every task came back from cache now ends with a `FULL CACHE` line
-under the summary. Plain output carries the same line without color, greppable in
-a CI log. See [Output and logging](/lattice/docs/output-modes) and
+- When every task in a run comes back from cache, the summary is followed by
+  `❖❖❖ FULL CACHE`, painted across the teal ramp a character at a time. Plain
+  output gets the same signal without color, as `lattice: full cache — nothing
+  to run`, so a CI log can be grepped for it
+- It requires at least one scheduled task, zero failures, and zero tasks that
+  ran, so a filter that matched nothing stays quiet and a graph with a
+  `persistent: true` task never qualifies
+
+See [Output and logging](/lattice/docs/output-modes) and
 [Caching](/lattice/docs/caching).
 
 ## The toolchain table, filled in — 2026-07-29
 
-CocoaPods, pip, NuGet, and Kotlin are supported end to end, `deno` and `bun` are
-runtimes as well as the roles they already had, and the gaps between the driver
-table and the engine list are closed. See [Toolchains](/lattice/docs/toolchains)
-and [Driver detection](/lattice/docs/drivers).
-
-### Four tools that were only half-wired
-- `pod` had a driver row but no engine rule and no dependency installer; `pip`
-  had an installer no driver could reach; `nuget` and `kotlin` were missing
-  outright. All four are now drivers, well-known engines, and known to
-  `lattice setup`
-- `pip` and `kotlin` have no fingerprint on purpose. A `requirements.txt` is
-  read by pip, uv, and pip-tools alike, and a Kotlin project is driven by gradle
-  or maven, so both are selected by declaring them in `engines`
-- `nuget` fingerprints only the legacy `packages.config` layout. A
-  `packages.lock.json` counts toward cache keys but is not driver evidence: an
+- CocoaPods, pip, NuGet, and Kotlin are now fully wired rather than half-known.
+  `pod` had a driver row but no engine rule and no installer; `pip` had an
+  installer that no driver could ever reach; `nuget` and `kotlin` were absent.
+  All four are drivers, well-known engines, and known to `lattice setup` now
+- `deno` and `bun` are runtimes as well as a task runner and a package manager,
+  and `mix` is a package manager as well as a task runner. A driver declares
+  every role it fills and competes with its highest-ranked one, so what drives a
+  workspace is unchanged: `deno` still drives as a task runner and `bun` as a
+  package manager. The table now lists every role a tool fills
+- The well-known engine list and the built-in version commands were two separate
+  tables that disagreed. `uv`, `poetry`, `just`, `turbo`, `nx`, `swift`, `dart`,
+  `composer`, `mix`, `stack`, `cabal`, `pdm`, and `pipenv` all had a version rule
+  but were rejected in string form, so `"engines": { "uv": ">=0.5" }` failed to
+  load for no reason. They are one table now, in `lattice-config`, and every
+  driver is guaranteed a row in it
+- `"python3": ">=3.12"` was checked by running `python --version`, which on many
+  machines is a different interpreter, or Python 2. It runs `python3 --version`
+- `lattice setup` knows how to install dependencies for 11 more drivers:
+  `dotnet restore`, `nuget restore`, `pod install`, `swift package resolve`,
+  `composer install`, `mix deps.get`, `dart pub get`, `pdm install`,
+  `pipenv install`, `stack build --only-dependencies`, and
+  `cabal build --only-download`. A `.csproj` workspace used to report "no known
+  dependency installer" and skip
+- 13 more lockfiles feed cache keys, including `deno.lock`, `composer.lock`,
+  `mix.lock`, `pubspec.lock`, `Package.resolved`, `Podfile.lock`,
+  `packages.lock.json`, `pdm.lock`, `Pipfile.lock`, and `requirements.txt`. A
+  dependency bump in those ecosystems used to hit a stale cache entry. The cache
+  and `setup` read one shared list, so they can't drift apart
+- `npm-shrinkwrap.json` is npm evidence, alongside `package-lock.json`
+- An ambiguity error suggests better candidates. A bare `Cargo.toml`, `go.mod`,
+  `composer.json`, `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`,
+  `cabal.project`, or `.csproj` used to produce an empty candidate list; each
+  now names the tools that could plausibly have been meant
+- Two drivers have no fingerprint on purpose. A `requirements.txt` is read by
+  pip, uv, and pip-tools alike, and a Kotlin workspace is driven by gradle or
+  maven, so `pip` and `kotlin` are selected by declaration rather than by
+  guessing. For the same reason `packages.lock.json` is not nuget evidence: an
   SDK-style project can carry one and still be a `dotnet` workspace
 
-### One table for engines instead of two
-- `uv`, `poetry`, `just`, `turbo`, `nx`, `swift`, `dart`, `composer`, `mix`,
-  `stack`, `cabal`, `pdm`, and `pipenv` each had a built-in version command but
-  were rejected in the string form, so `"engines": { "uv": ">=0.5" }` failed to
-  load. Every built-in driver is now a well-known engine
-- `"python3"` was version-checked by running `python --version`, which on many
-  machines is a different interpreter. It runs `python3 --version`
-
-### A driver can fill more than one role
-- `deno` is a runtime, a package manager, and a task runner; `bun` is a runtime
-  and a package manager; `mix` is a package manager and a task runner. A driver
-  competes with its highest-ranked role, so which tool drives a workspace is
-  unchanged
-
-### Caching and setup catch up with the table
-- 13 more lockfiles feed cache keys — `deno.lock`, `composer.lock`, `mix.lock`,
-  `pubspec.lock`, `Package.resolved`, `Podfile.lock`, `packages.lock.json`,
-  `pdm.lock`, `Pipfile.lock`, `requirements.txt`, and more. A dependency bump in
-  those ecosystems used to come back as a hit
-- `lattice setup` installs dependencies for 11 more drivers, so a `.csproj` or
-  `Podfile` workspace no longer reports "no known dependency installer" and
-  skips
-- An ambiguity error over a bare `Cargo.toml`, `go.mod`, `composer.json`,
-  `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`, `cabal.project`, or
-  `.csproj` now names candidate tools instead of listing none
+See [Toolchains](/lattice/docs/toolchains) and [Driver
+detection](/lattice/docs/drivers).
 
 ## Installing, upgrading, and running the version a repo pins — 2026-07-28
 
-Lattice can be installed without a Rust toolchain, and a repo's
-`latticeVersion` is enforced rather than announced. See
-[Installation](/lattice/docs/installation) and
-[Upgrading](/lattice/docs/upgrading).
+Lattice can now be installed without a Rust toolchain, and a repo's
+`latticeVersion` is enforced rather than merely announced.
 
 ### `curl | sh` installs a target-matched binary into the repo
-- The installer detects the OS, architecture and libc, resolves a version,
-  downloads the matching release archive, verifies its SHA256 against the
-  release's checksums file, and installs `./.lattice/bin/lattice-<version>`
-  with `./.lattice/bin/lattice` symlinked to it. Nothing is written outside
-  `.lattice`, so `rm -rf .lattice` is the uninstall
+- `apps/web/public/install.sh` detects the OS, architecture and libc, resolves a version,
+  downloads the matching release archive, verifies its SHA256 against the release's
+  checksums file, and installs `./.lattice/bin/lattice-<version>` with
+  `./.lattice/bin/lattice` symlinked to it. Nothing is written outside `.lattice`,
+  so `rm -rf .lattice` is the uninstall
 - Version resolution, in order: `$LATTICE_VERSION`, then `latticeVersion` from
-  `./lattice.json`, then the newest release when the directory has no config
-  at all. A `lattice.json` that exists but pins nothing is an error
-- It fails before installing anything on an unsupported platform, a missing
-  pin, a missing release asset, a missing checksums entry, or a digest that
-  does not match
-- `.lattice/bin/` is now one of the `.gitignore` lines `lattice init` maintains
+  `./lattice.json`, then the newest release when the directory has no config at
+  all. The pin is read by the installer because it has to be known before a binary
+  exists to read it. A `lattice.json` that exists but pins nothing is an error
+- It fails loudly, before installing anything, on an unsupported platform, a
+  missing pin, a missing asset, a missing checksums entry, or a digest that does
+  not match
+- It sits in the docs site's `public/`, so the site serves it verbatim at
+  `latticeandcompany.github.io/lattice/install.sh` with no build step of its own.
+  The release workflow publishes the same file as a release asset
+- Keeping versioned binaries on disk is what makes a branch switch cheap, so
+  `.lattice/bin/` is now in the `.gitignore` lines `lattice init` maintains
 
 ### Every invocation runs the version the repo pins
-- A binary under `.lattice/bin` whose version differs from `latticeVersion`
-  now prints one line naming both versions, installs the pinned version if it
-  is not already on disk, repoints the symlink, and hands the invocation over
-  to it with the arguments untouched. Switching between two branches that pin
-  versions you already have is a symlink swap and touches no network
-- A binary Lattice did not install — `cargo install`, a distro package, a
-  local dev build — is never replaced. It gets an advisory one-line nag
-  instead, with a runnable `lattice upgrade <version>`
+- A binary under `.lattice/bin` whose version differs from `latticeVersion` now
+  prints one line naming both versions, installs the pinned version if it is not
+  already on disk, repoints the symlink, and hands the invocation over to it with
+  the arguments untouched. Switching between two branches that pin versions you
+  already have is a symlink swap and touches no network
+- The pin is read straight out of the JSON rather than through the config loader.
+  A config written against a newer schema has to be able to say which version can
+  read it, so the handover happens before anything that could reject it
+- A binary Lattice did not install is never replaced, whether it came from
+  `cargo install`, a distro package, or `scripts/dev-link.sh`. Those keep the
+  advisory one-line nag from #45, which now prints a runnable
+  `lattice upgrade <version>`
 - `--no-version-check`, `LATTICE_NO_VERSION_CHECK` and
-  `settings.versionCheck: false` each skip the whole thing. `upgrade`,
-  `version` and `completions` are never handed off: they answer for the
-  binary that was invoked, and a completion script has to be the only thing
-  on stdout
-- A pinned version that cannot be installed is a hard failure naming the
-  version and the way past it
+  `settings.versionCheck: false` each skip the whole thing. `upgrade`, `version`
+  and `completions` are never handed off: they answer for the binary that was
+  invoked, and a completion script has to be the only thing on stdout
+- A pinned version that cannot be installed is a hard failure naming the version
+  and the way past it, rather than a run on whichever binary happens to be
+  present
 
 ### `lattice upgrade <version|latest>`
 - Installs the version, points `.lattice/bin/lattice` at it, and rewrites
-  `latticeVersion`. `latest` resolves the newest release; a bare version pins
-  it exactly, with or without a leading `v`
-- The config is edited as text, so key order, indentation and the rest of the
-  file survive a bump
-- Re-running for a version already pinned and installed reports that and
-  repoints the symlink
+  `latticeVersion`. `latest` resolves the newest release; a bare version pins it
+  exactly, with or without a leading `v`
+- The config is edited as text, so key order, indentation and the rest of the file
+  survive a bump. A version that is not a version is rejected before it can reach
+  a URL or a filename
+- Re-running for a version already pinned and installed reports that and repoints
+  the symlink, which is the one case where doing nothing would leave the repo on
+  the wrong binary
 
-### Releases are published for six targets
-- macOS x86_64/aarch64, Linux x86_64 (gnu and musl), Linux aarch64, and
-  Windows x86_64, as `lattice-<version>-<target>.tar.gz` archives carrying the
-  binary, the license and completion scripts, alongside one
-  `lattice-<version>-checksums.txt` and the installer itself
+### Releases are built and published by tag
+- `.github/workflows/release.yml` builds `v*` tags for six targets: macOS
+  x86_64 and aarch64, Linux x86_64 gnu and musl, Linux aarch64, and Windows
+  x86_64. It publishes `lattice-<version>-<target>.tar.gz` archives carrying the
+  binary, the license and completion scripts, plus one
+  `lattice-<version>-checksums.txt` and the installer
+- Completions are generated once on a native runner, because a cross-compiled
+  binary cannot be run to print its own
+- The tag has to agree with the tree: `scripts/check-versions.sh <version>` gates
+  the build, and CI now runs it on every push, along with `shellcheck` over the
+  installer
+
+See [Installation](/lattice/docs/installation) and
+[Upgrading](/lattice/docs/upgrading).
 
 ## Four documented promises the code did not keep — 2026-07-28
 
-Groundwork for the first tagged release: statements in the README, the docs,
-or a manifest that the code contradicted.
+Groundwork for the first tagged release. Each item here was a statement in the
+README, the docs or a manifest that the code contradicted.
 
-- The minimum Rust version is `1.86`, not the `1.75` every doc previously
-  claimed. The real floor, once the lockfile is resolved against each
-  dependency's own requirement, comes from `clap`, `sha2`, `indexmap`, and the
-  ICU crates reached through `jsonschema`
-- `lattice version --json` now reports a real target triple
-  (`aarch64-apple-darwin`) in its `target` field instead of a bare
-  architecture (`aarch64`); the bare architecture moved to its own `arch`
-  field rather than being dropped. See [CLI reference](/lattice/docs/cli)
-- Windows is not supported: the toolchain probe hardcodes a Unix shell and a
-  Unix `PATH` separator, so engine version checks and toolchain provisioning
-  cannot work there. The docs now say macOS and Linux,
-  and point Windows users at WSL2. See
-  [Installation](/lattice/docs/installation)
+### The stated minimum Rust version was wrong by eleven minor versions
+- `Cargo.toml` declared no `rust-version` at all, while the README badge, the
+  README Development section, `CONTRIBUTING.md` and `lattice.json`'s
+  `engines.cargo` all claimed 1.75. Resolving the lockfile against each
+  dependency's own `rust-version`, the real floor is 1.86: `clap`, `sha2` and
+  `indexmap` need 1.85, and the ICU crates reached through `jsonschema` → `idna`
+  → `idna_adapter` need 1.86. A build on 1.75 could not have worked
+- `rust-version = "1.86"` is now set once in `[workspace.package]` and inherited
+  by all seven crates, and the four prose copies are corrected to match.
+  `cargo +1.86 check --workspace --all-targets --locked` passes
+- Declaring it turned on clippy's `incompatible_msrv` lint, which found one real
+  violation: `u64::is_multiple_of` in `lattice-config` is stable since 1.87. It
+  is now `bytes % unit == 0`, which is what the method is sugar for, so the
+  floor stays where the dependency tree actually puts it
+- `jsonschema` is a dev-dependency taken with `default-features = false`. Its
+  default features pull `reqwest` in for remote `$ref` resolution, which the
+  schema tests never use. That dragged a whole TLS stack into the dev tree,
+  against `CONTRIBUTING.md`'s rule about network access. All 23 schema tests
+  pass without it
+
+### `version --json` could not report a target triple
+- The `target` field was `std::env::consts::ARCH`, so it printed `aarch64`
+  rather than `aarch64-apple-darwin`. `bug_report.yml` asks contributors for
+  that output to identify a platform, and the installer needs the same
+  vocabulary to pick a release asset
+- A `build.rs` on `crates/lattice` now emits `LATTICE_TARGET` from cargo's
+  `TARGET`, and the bare architecture moves to its own `arch` field rather than
+  being dropped
+- The stress test asserted only that a `target` key existed, which a bare arch
+  satisfied. It now also asserts the value looks like a triple, and a missing
+  `version` field is a hard failure instead of silently falling back to a
+  hardcoded `0.1.0`
+
+### A docs page described a command that does not exist
+- `apps/web/src/content/docs/templates.md` documented scaffolding new workspaces
+  from a template. There is no `templates` command in
+  `crates/lattice/src/commands/`, and `CONTRIBUTING.md` prohibits documenting
+  features that do not ship. The page is deleted and `nested-repos.md` moves up
+  to fill the gap it left in the Guides ordering
+
+### Windows was presented as merely untested
+- `lattice-runner` has a correct `cmd /C` branch, but `lattice-workspace`'s
+  toolchain probe hardcodes `sh -c` and joins `PATH` with `:`, so engine version
+  checks and toolchain provisioning cannot work there. A Windows binary would
+  launch, print a splash, and fail at the detection ladder
+- The README and the getting-started page now say macOS and Linux, and point
+  Windows users at WSL2
+
+See [Installation](/lattice/docs/installation) and [CLI
+reference](/lattice/docs/cli).
 
 ## Long durations print as a clock — 2026-07-28
 
 - Task and run times over a minute now read `4:07` and `1:12:30` instead of
   `247.00s` and `4350.00s`. Under a minute is unchanged (`1.23s`). Applies
-  everywhere Lattice prints a duration: per-task completion lines and the run
-  summary, in both the interactive and CI reporters. See
-  [Output and logging](/lattice/docs/output-modes)
+  everywhere `lattice` prints a duration: per-task completion lines and the run
+  summary, in both the interactive and CI reporters
+
+See [Output and logging](/lattice/docs/output-modes).
 
 ## Nested repos: docs, worked example, and tests — 2026-07-28
 
-- A subtree that already has its own task runner can be declared as a manual
-  workspace whose `scripts` shell out to that runner. Ordering, `dependsOn`,
-  caching as one opaque unit, and validation fall out of the existing
-  workspace mechanism
-- Two limitations: a manual workspace must declare any task invoked directly,
-  and a downstream workspace must not copy an upstream artifact at build
-  time, because a cache key covers only the inputs its own workspace declares
-- `examples/nested-repo` ships as a runnable worked example: a JS monorepo
-  (npm workspaces, two packages, an inner dependency edge) as one Lattice
-  node, plus a downstream service. See [Nested repos](/lattice/docs/nested-repos)
+### Docs
+- A subtree that already has its own task runner is declared as a manual
+  workspace whose scripts shell out to that runner; this needed no feature work,
+  since ordering, `dependsOn`, caching as one opaque unit, and validation all
+  fall out of the existing mechanism
+- The nested-repos page covers the config, what each tool owns, and the `ignore`
+  set that broad `inputs` require: dependency trees, the inner runner's own
+  cache, and output directories
+- Two limitations are documented. A manual workspace must declare any task
+  invoked directly. A downstream workspace must not copy an upstream artifact at
+  build time, because a cache key covers only the inputs its own workspace
+  declares
+
+### Example & tests
+- `examples/nested-repo` is a runnable repo with a real JS monorepo (npm
+  workspaces, two packages, an inner dependency edge) as one Lattice node, plus
+  a downstream service
+- `e2e_passthrough.rs` and a new stress-test section prove the nested repo runs
+  in graph order, provisions no toolchains, caches and restores as one unit,
+  re-runs on an inner source edit, and never reports a hit when the inner
+  runner's cache directory is left unignored
+
+See [Nested repos](/lattice/docs/nested-repos).
 
 ## Docs site search — 2026-07-28
 
-- Full-text search over the documentation, opened with `⌘K`/`Ctrl-K` or `/`,
-  navigable with the arrow keys, listing heading-level matches beneath each
-  page so a long page points at the section that matched
+- Full-text search over the documentation, built on Pagefind; the index is
+  generated from the built HTML as the last step of `npm run build` and ships as
+  static files
+- `data-pagefind-body` on the docs article scopes the index to documentation
+  prose, keeping the landing page and 404 out
+- Page title and section come from the collection frontmatter rather than being
+  scraped out of headings
+- The palette opens with `⌘K`/`Ctrl-K` or `/`, walks results with the arrow
+  keys, and lists heading-level matches beneath each page so a long page points
+  at the section that matched
+- With no index present the palette shows an explanatory notice; this is the
+  case under `astro dev`, since search needs `npm run build && npm run preview`
 
 ## Persistent tasks stream their output by default — 2026-07-27
 
-- A `lattice run` that pulls in a persistent task — a dev server, a watcher,
-  or anything in its dependency closure — now defaults to raw line-by-line
-  output instead of the live TUI, so the process's streaming output stays
-  visible; this previously required `-l` (`--loquacious`)
+- A `lattice run` that pulls a persistent task into its closure now defaults to
+  raw line-by-line output instead of the live TUI, so the process's streaming
+  output stays visible; this previously required `-l` (`--loquacious`)
 - Non-persistent runs on a terminal still get the interactive TUI
-- A persistent task's output always streams live even in raw mode, while
-  other per-task output stays collapsed and is surfaced on failure
-- Auto-detection no longer fabricates a command for a persistent task: a
-  direct-invoke driver (`cargo`, `go`, …) used to invent a command for any
-  task name, so `lattice run dev` picked up every Rust and Go workspace as
-  `cargo dev` or `go dev` even though no such task exists
+- A persistent task's output always streams live even in raw mode, while other
+  per-task output stays collapsed and is surfaced on failure
+- Auto-detection no longer fabricates a command for a `persistent` task: a
+  direct-invoke driver (cargo, go, …) used to invent a command for any task
+  name, so `lattice run dev` picked up every Rust and Go workspace as `cargo
+  dev` or `go dev` even though no such task exists
 - A persistent task now runs only where the workspace declares it, through an
   explicit `scripts` entry or a manifest script for the JS and Deno drivers;
-  non-persistent tasks (`build`, `test`, …) still infer as before. See
-  [Persistent tasks](/lattice/docs/persistent-tasks) and
-  [Output and logging](/lattice/docs/output-modes)
+  non-persistent tasks (`build`, `test`, …) still infer as before
+
+See [Persistent tasks](/lattice/docs/persistent-tasks) and [Output and
+logging](/lattice/docs/output-modes).
 
 ## Stacked commands and a self-healing editor schema — 2026-07-27
 
-- `lattice run` accepts multiple tasks in one invocation
-  (`lattice run lint test build`); the roots merge into a single dependency
-  graph, so a dependency shared by several roots runs once and independent
-  roots parallelize where the graph allows
+- `lattice run` accepts multiple tasks in one invocation (`lattice run lint test
+  build`); the roots merge into a single dependency graph, so a dependency
+  shared by several roots runs once and independent roots parallelize where the
+  graph allows
 - All existing flags (`--filter`, `--concurrency`, `--continue`, `--dry-run`,
-  `--no-cache`) apply to the combined run, and an unknown task in the list
-  fails fast and names the offender
+  `--no-cache`) apply to the combined run, and an unknown task in the list fails
+  fast and names the offender
 - `--sequentially` / `-s` runs each task's graph to completion in the order
-  given before starting the next; fail-fast stops at the first failed phase,
-  and `--continue` runs the remaining phases and still exits non-zero
-- `run`, `setup`, and `prune` write `.lattice/schema.json` when it is
-  missing, as happens with a cleared cache directory or a clone where it was
-  never committed, so an editor's JSON language server can resolve the
-  config's `$schema`. An existing copy is left untouched. See
-  [Task graph](/lattice/docs/task-graph) and [CLI reference](/lattice/docs/cli)
+  given before starting the next; fail-fast stops at the first failed phase, and
+  `--continue` runs the remaining phases and still exits non-zero
+- `run`, `setup`, and `prune` write `.lattice/schema.json` when it is missing,
+  as happens with a cleared cache directory or a clone where it was never
+  committed, so an editor's JSON language server can resolve the config's
+  `$schema`
+- An existing copy is left untouched to avoid churn, and the schema is committed
+  to this repo so validation works before the first run
+
+See [Task graph](/lattice/docs/task-graph) and [CLI
+reference](/lattice/docs/cli).
 
 ## The documented install command installed the wrong software — 2026-07-27
 
 - The docs site told readers to run `cargo install lattice`, but `lattice` on
   crates.io is an unrelated markdown linter, so anyone following the
-  getting-started page or the landing-page copy button got someone else's
-  tool. Both were corrected to a working install path. See
-  [Installation](/lattice/docs/installation) for the current instructions
+  getting-started page or the landing-page copy button got someone else's tool
+- Both now show the repo-local bootstrap one-liner, with `cargo install --git …
+  lattice` documented as the from-source path
+
+See [Installation](/lattice/docs/installation).
 
 ## License of record was inconsistent — 2026-07-27
 
-- `LICENSE` is ISC while the workspace manifest declared `license = "MIT"`;
-  the manifest now says ISC
+- `LICENSE` is ISC while the workspace manifest declared `license = "MIT"`; the
+  manifest now says `ISC`

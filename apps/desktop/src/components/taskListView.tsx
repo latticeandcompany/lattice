@@ -79,7 +79,7 @@ const TaskListView = () => {
 					{failure && run.outcome?.status === 'interrupted' && (
 						<div className="notice mb-3">
 							<i className="bi bi-slash-circle" aria-hidden="true" />
-							<div>Stopped. Anything still running was cancelled.</div>
+							<div>Interrupted. Every running task was stopped.</div>
 						</div>
 					)}
 
@@ -97,10 +97,7 @@ const TaskListView = () => {
 					{project.workspaces.length === 0 ? (
 						<div className="empty-state">
 							<i className="bi bi-inboxes fs-2" aria-hidden="true" />
-							<div>
-								No workspaces yet. Add the folders you want Lattice to run things in, over in
-								Config.
-							</div>
+							<div>No workspaces declared. Add one in Config.</div>
 						</div>
 					) : (
 						project.workspaces.map((workspace) => (

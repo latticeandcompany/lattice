@@ -13,7 +13,7 @@
     { "name": "lattice-project", "path": "crates/lattice-project", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-events", "lattice-config", "lattice-workspace"] },
     { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-project", "lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
     { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } },
-    { "name": "desktop", "path": "apps/desktop", "engines": { "node": ">=26" }, "dependsOn": ["lattice-project", "lattice-events"] }
+    { "name": "desktop", "path": "apps/desktop", "engines": { "node": ">=26" }, "dependsOn": ["lattice-project", "lattice-events"]}
   ],
   "engines": {
     "cargo": ">=1.86.0"
@@ -38,10 +38,6 @@
     "check": {
       "inputs": ["src/**/*", "Cargo.toml"]
     },
-    "clean": {},
-    "bundle": {
-      "dependsOn": ["build", "^bundle"],
-      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "vite.config.ts", "index.html", "tsconfig.json", "src-tauri/src/**/*", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "src-tauri/capabilities/**"]
-    }
+    "clean": {}
   }
 }

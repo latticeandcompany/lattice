@@ -188,7 +188,7 @@ t_has "bare \`lattice\` points at help" "lattice --help"
 lat "$ENVROOT" --help ; t_ok "\`--help\` exits 0"
 t_has "help lists run"         "Run one or more tasks"
 t_has "help lists setup"       "Provision"
-t_has "help lists init"        "Scaffold"
+t_has "help lists init"        "Create a lattice.json"
 t_has "help lists prune"       "Evict cache"
 t_has "help lists upgrade"     "another version of Lattice"
 t_has "help lists completions" "completion"
@@ -306,7 +306,7 @@ name = \"core\"
 "
 lat "$UNDRIVEN" init --yes ; t_ok "init --yes exits 0 with an undriveable candidate"
 t_has "init names the held-back directory" "crates/core"
-t_has "init explains the hold-back"        "no task driver resolved"
+t_has "init explains the hold-back"        "driver resolved"
 t_nogrepfile "$UNDRIVEN/lattice.json" "crates/core" "undriveable candidate is not declared"
 t_grepfile   "$UNDRIVEN/lattice.json" "apps/web"    "driveable candidate is declared"
 lat "$UNDRIVEN" run build --dry-run ; t_ok "a scanned config never halts on ambiguity"
@@ -396,7 +396,7 @@ sed "s#LATTICE_VERSION#$VERSION#" "$PROD/lattice.json" > "$PROD/lattice.json.tmp
 # Sanity: config must load.
 lat "$PROD" run definitely-not-a-task ; t_bad "prod config loads (unknown task still parses config)"
 t_has "unknown task names the task"     "definitely-not-a-task"
-t_has "unknown task lists available"    "available tasks:"
+t_has "unknown task lists available"    "Defined tasks:"
 
 # =========================================================================
 # 4. setup / toolchain gradient (host / validate / provision).
@@ -939,7 +939,7 @@ cat > "$ERR/lattice.json" <<'JSON'
   "tasks": { "x": { "dependsOn": ["y"] }, "y": { "dependsOn": ["x"] } } }
 JSON
 lat "$ERR" run x ; t_bad "task cycle is rejected"
-t_has "cycle message" "cycle detected"
+t_has "cycle message" "the task graph has a cycle"
 
 # Persistent task depended upon.
 mkerr persist_dep; mkdir -p "$ERR/a"
@@ -948,7 +948,7 @@ cat > "$ERR/lattice.json" <<'JSON'
   "tasks": { "srv": { "persistent": true }, "use": { "dependsOn": ["srv"] } } }
 JSON
 lat "$ERR" run use ; t_bad "depending on a persistent task is rejected"
-t_has "persistent-dep message" "cannot be depended on"
+t_has "persistent-dep message" "no other task may depend on it"
 
 # Duplicate workspace name.
 mkerr dupname; mkdir -p "$ERR/a" "$ERR/b"
@@ -1094,7 +1094,7 @@ t_has "prune under limit removes nothing" "removed 0 artifacts"
 
 # Prune with neither flag nor setting.
 lat "$DET" prune ; t_bad "prune with no size and no setting fails"
-t_has "prune-no-size message" "no max cache size"
+t_has "prune-no-size message" "no cache size limit set"
 
 # =========================================================================
 # 12b. Correctness guardrails: the failures that used to be silent.
@@ -1840,17 +1840,33 @@ for e in $(comm -23 <(printf '%s\n' "$SKILL_DRIVERS") <(printf '%s\n' "$SKILL_EN
 done
 
 # --- the invoke templates ------------------------------------------------
-# Every Build Tool row of the skill's driver table, verified from its own
+# Every build-tool row of the skill's driver table, verified from its own
 # fingerprint: these invoke a task directly, with no manifest to consult.
+#
+# Column positions track the table's header at
+# skills/lattice/references/toolchains.md: Tool, Language, Roles, Fingerprint,
+# Version command, Invoke template. A row can hold several roles, so match
+# inside $4 rather than comparing it.
 DRVDIR="$ENVROOT/skill-drivers"
 mkdir -p "$DRVDIR"
-awk -F'|' 'NF >= 6 && $3 ~ /Build Tool/ {
-  tool = $2; fps = $4; inv = $6
+awk -F'|' 'NF >= 7 && $4 ~ /Build tool/ {
+  tool = $2; fps = $5; inv = $7
   gsub(/[` ]/, "", tool)
   gsub(/`/, "", fps); split(fps, a, ","); fp = a[1]; gsub(/^ +| +$/, "", fp)
   gsub(/`/, "", inv); gsub(/^ +| +$/, "", inv)
   print tool "\t" fp "\t" inv
 }' "$SKILLTOOLS" > "$DRVDIR/rows.tsv"
+
+# An extraction that matches nothing would build a config with no workspaces, and
+# every assertion below it would pass without running. Reshaping the table in the
+# skill has broken this parse before, so check the row count first.
+DRVROWS="$(wc -l < "$DRVDIR/rows.tsv" | tr -d ' ')"
+if [ "$DRVROWS" -eq 8 ]; then
+  pass "the skill's driver table yields 8 build-tool rows"
+else
+  fail "the skill's driver table yields 8 build-tool rows" \
+    "got $DRVROWS — check the column order against the table's header"
+fi
 
 DRVWS=""
 while IFS=$'\t' read -r tool fp inv; do
@@ -1937,9 +1953,9 @@ t_nogrepfile "$DESKTOP/src/globals.scss" 'btn-contrast' "the app's primary actio
 # takes the colour of whatever it sits in. Waiting is one state and reads as one colour.
 t_grepfile "$DESKTOP/src/globals.scss" '.spinner-border' "every spinner takes the accent rather than its surroundings"
 
-# Swapping repos is the thing a window that shows one repo at a time is most often asked
-# to do, so it lives on the repo itself rather than behind an icon in a corner.
-t_grepfile "$DESKTOP/src/components/appShell.tsx" '<ProjectSwitcher />' "the rail's repo block is the switcher"
+# Swapping projects is the thing a window that shows one project at a time is most often
+# asked to do, so it lives on the project itself rather than behind an icon in a corner.
+t_grepfile "$DESKTOP/src/components/appShell.tsx" '<ProjectSwitcher />' "the rail's project block is the switcher"
 
 # The ecosystem a driver belongs to is chosen in Rust; the artwork for it lives in the
 # app. A new driver in a new ecosystem would otherwise ship an empty square, and only

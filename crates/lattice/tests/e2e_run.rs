@@ -168,7 +168,7 @@ fn filter_pulls_in_transitive_dependencies() {
 		.args(["run", "build", "-f", "top", "-l"])
 		.assert()
 		.success()
-		.stdout(predicate::str::contains("across 3 workspace(s)"))
+		.stdout(predicate::str::contains("across 3 workspaces"))
 		.stdout(predicate::str::contains("base:build"))
 		.stdout(predicate::str::contains("mid:build"))
 		.stdout(predicate::str::contains("top:build"));
@@ -518,7 +518,7 @@ fn undefined_task_fails_cleanly() {
 		.assert()
 		.failure()
 		.stderr(predicate::str::contains("not defined"))
-		.stderr(predicate::str::contains("available tasks"))
+		.stderr(predicate::str::contains("Defined tasks"))
 		.stderr(predicate::str::contains("build"))
 		// An error, not a panic or backtrace.
 		.stderr(predicate::str::contains("panicked").not())

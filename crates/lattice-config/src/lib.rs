@@ -251,8 +251,8 @@ pub struct EngineSpecObject {
 	pub bin: Option<String>,
 }
 
-/// One workspace: a single project directory that is the unit of task running
-/// and caching.
+/// One workspace: a directory with its own manifest, and the unit of task
+/// running and caching.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceConfig {
@@ -340,19 +340,19 @@ impl Duration {
 		let unit_part = unit_part.trim();
 
 		if num_part.is_empty() {
-			bail!("duration '{s}' has no numeric component");
+			bail!("duration '{s}' does not start with a number");
 		}
 
 		let value: f64 = num_part
 			.parse()
-			.with_context(|| format!("invalid numeric component in duration '{s}'"))?;
+			.with_context(|| format!("could not read the number in duration '{s}'"))?;
 
 		let seconds = match unit_part.to_ascii_lowercase().as_str() {
 			"" | "s" | "sec" | "secs" => value,
 			"ms" => value / 1000.0,
 			"m" | "min" | "mins" => value * 60.0,
 			"h" | "hr" | "hrs" => value * 3600.0,
-			other => bail!("unknown duration unit '{other}' in '{s}'"),
+			other => bail!("unknown duration unit '{other}' in '{s}'. Use ms, s, m, or h"),
 		};
 
 		if seconds <= 0.0 {
@@ -454,12 +454,12 @@ impl CacheSize {
 		let unit_part = unit_part.trim();
 
 		if num_part.is_empty() {
-			bail!("cache size '{s}' has no numeric component");
+			bail!("cache size '{s}' does not start with a number");
 		}
 
 		let value: f64 = num_part
 			.parse()
-			.with_context(|| format!("invalid numeric component in cache size '{s}'"))?;
+			.with_context(|| format!("could not read the number in cache size '{s}'"))?;
 
 		let multiplier: u64 = match unit_part.to_ascii_uppercase().as_str() {
 			"" | "B" => 1,
@@ -467,7 +467,7 @@ impl CacheSize {
 			"MB" | "M" => 1024 * 1024,
 			"GB" | "G" => 1024 * 1024 * 1024,
 			"TB" | "T" => 1024u64 * 1024 * 1024 * 1024,
-			other => bail!("unknown cache size unit '{other}' in '{s}'"),
+			other => bail!("unknown cache size unit '{other}' in '{s}'. Use B, KB, MB, GB, or TB"),
 		};
 
 		Ok(CacheSize((value * multiplier as f64) as u64))
@@ -599,7 +599,7 @@ impl LatticeConfig {
 			check_contained_path(&ws.name, &ws.path)?;
 			if !seen.insert(ws.name.as_str()) {
 				bail!(
-					"duplicate workspace name '{}': workspace names must be unique",
+					"duplicate workspace name '{}'. Every workspace name must be unique",
 					ws.name
 				);
 			}
@@ -684,7 +684,7 @@ fn check_contained_path(name: &str, path: &str) -> Result<()> {
 	if rooted || drive_prefixed {
 		bail!(
 			"workspace '{name}' has a path '{path}' that is not relative to the repo \
-			 root; workspace paths are relative to it"
+			 root. Write every workspace path relative to the repo root"
 		);
 	}
 
@@ -698,8 +698,8 @@ fn check_contained_path(name: &str, path: &str) -> Result<()> {
 		}
 		if depth < 0 {
 			bail!(
-				"workspace '{name}' has a path '{path}' that points outside the repo root; \
-				 workspace paths must stay inside the repo"
+				"workspace '{name}' has a path '{path}' that points outside the repo root. \
+				 Every workspace path must stay inside the repo"
 			);
 		}
 	}
@@ -711,10 +711,10 @@ fn check_string_engines(engines: &EngineMap, scope: &str) -> Result<()> {
 	for (name, spec) in engines {
 		if matches!(spec, EngineSpec::Version(_)) && !is_well_known_engine(name) {
 			return Err(anyhow!(
-				"engine '{name}' in {scope} uses the string (version-only) form, but '{name}' is \
-                 not a well-known engine Lattice can version-check on its own. Use the object form \
-                 with an explicit `versionCmd`, e.g. \"{name}\": {{ \"version\": \">=1.0.0\", \
-                 \"versionCmd\": \"{name} --version\" }}"
+				"engine '{name}' in {scope} uses the string form, which carries only a version. \
+                 '{name}' is not a well-known engine, so Lattice cannot version-check it on its \
+                 own. Use the object form with a `versionCmd`, like this: \"{name}\": \
+                 {{ \"version\": \">=1.0.0\", \"versionCmd\": \"{name} --version\" }}"
 			));
 		}
 	}

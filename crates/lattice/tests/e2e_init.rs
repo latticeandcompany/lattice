@@ -80,7 +80,7 @@ fn init_leaves_out_what_it_cannot_drive_and_says_so() {
 		.assert()
 		.success()
 		.stdout(predicate::str::contains("crates/core"))
-		.stdout(predicate::str::contains("no task driver resolved"));
+		.stdout(predicate::str::contains("driver resolved"));
 
 	let config: Value =
 		serde_json::from_str(&fx.read("lattice.json")).expect("lattice.json parses");

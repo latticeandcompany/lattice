@@ -12,14 +12,15 @@ use crate::release::{self, ReleaseUrls};
 
 #[derive(Args, Debug)]
 #[command(long_about = "Move this repo to another version of Lattice.\n\n\
-Installs the version into .lattice/bin, points .lattice/bin/lattice at it, and \
-writes it to `latticeVersion` in lattice.json. Every later invocation reads that \
-pin, so commit the change and everyone on the repo gets the same build.\n\n\
+Lattice installs that version into .lattice/bin and points .lattice/bin/lattice at \
+the new binary. It also writes the version to `latticeVersion` in lattice.json. \
+Every later invocation reads that pin. Commit the change so everyone on the repo \
+runs the same build.\n\n\
 Examples:\n  \
 lattice upgrade 0.2.0\n  \
 lattice upgrade latest")]
 pub struct UpgradeArgs {
-	/// Version to move to (e.g. 0.2.0), or `latest` for the newest release.
+	/// Version to move to, such as 0.2.0, or `latest` for the newest release.
 	#[arg(value_name = "VERSION")]
 	pub version: String,
 
@@ -42,8 +43,8 @@ impl UpgradeArgs {
 		let cwd = std::env::current_dir()?;
 		let root = find_root(&cwd).ok_or_else(|| {
 			anyhow::anyhow!(
-				"no lattice.json found in this directory or any parent; \
-                 run `lattice init` to create one"
+				"no lattice.json found in this directory or any parent. \
+                 Run `lattice init` to create one"
 			)
 		})?;
 
@@ -54,11 +55,11 @@ impl UpgradeArgs {
 
 		let target = if self.version.eq_ignore_ascii_case("latest") {
 			println!("{}", banner_line("upgrade"));
-			println!("  resolving the newest release ...");
+			println!("  resolving the newest release...");
 			let latest = release::resolve_latest(&urls)?;
 			if latest.prerelease {
 				println!(
-					"  {} is a pre-release — no stable release yet",
+					"  {} is a pre-release, and there is no stable release yet",
 					style(&latest.version).bold()
 				);
 			}

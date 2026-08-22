@@ -92,8 +92,8 @@ const thread = (l: Lang) => {
 	<div class="hero__copy position-relative mx-auto text-center px-3">
 		<h1 class="hero__title fw-bold mb-3">Weave it all together</h1>
 		<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 34rem;">
-			A high-performance, local toolchain for managing monorepos. Build every language in your repo with
-			one command, and skip the work that hasn't changed.
+			A high-performance, local toolchain for managing monorepos. One command builds and tests every
+			workspace in your repo, in any language. Lattice skips whatever you already built.
 		</p>
 		<div class="d-flex flex-wrap gap-2 justify-content-center mb-4">
 			<a href={withBase('/docs')} class="btn btn-secondary px-4">Read the docs</a>
@@ -104,11 +104,11 @@ const thread = (l: Lang) => {
 				client:load
 				size="sm"
 				tabs={[
-					{ name: 'Install', command: installCommand },
+					{ name: 'CLI', command: installCommand },
 					{
-						name: 'For agents',
+						name: 'Agent skill',
 						command: skillInstallCommand,
-						hint: 'Installs the Lattice skill into your coding agent',
+						hint: 'What the Lattice skill covers',
 						hintHref: withBase('/for-agents'),
 					},
 				]}

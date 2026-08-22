@@ -40,7 +40,7 @@ const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 						{task.task}
 						{task.persistent && (
 							<span className="chip ms-2" title="Declared persistent: true">
-								runs until stopped
+								persistent
 							</span>
 						)}
 						{!task.cacheable && (
@@ -96,8 +96,8 @@ const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 						className="icon-btn"
 						onClick={() => onRun('force')}
 						disabled={runInFlight}
-						title={`Run ${taskKey} again, even if nothing changed`}
-						aria-label={`Run ${taskKey} again, even if nothing changed`}
+						title={`Run ${taskKey} again, ignoring the cache`}
+						aria-label={`Run ${taskKey} again, ignoring the cache`}
 					>
 						<i className="bi bi-arrow-clockwise" aria-hidden="true" />
 					</button>
@@ -107,7 +107,7 @@ const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 			{view.missComponents && view.missComponents.length > 0 && (
 				<div className="miss-chips" aria-label={view.missMessage}>
 					<span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-						ran again because this changed:
+						cache miss:
 					</span>
 					{view.missComponents.map((component) => (
 						<span key={component} className="chip">

@@ -123,7 +123,7 @@ pub fn build_execution_graph_selected(
 	for root_task in root_tasks {
 		if !config.tasks.contains_key(*root_task) {
 			bail!(
-				"task '{}' is not defined in the tasks section of lattice.json",
+				"task '{}' is not defined in the `tasks` map in lattice.json",
 				root_task
 			);
 		}
@@ -161,8 +161,9 @@ pub fn build_execution_graph_selected(
 					// toolchain.
 					if !ws.auto && selected && root_tasks.contains(&task_name.as_str()) {
 						bail!(
-                            "workspace '{}' is \"auto\": false but declares no command for \
-                             task '{}'; add it under this workspace's \"scripts\" map in lattice.json",
+                            "workspace '{}' has \"auto\": false and declares no command for \
+                             task '{}'. Add the command under this workspace's \"scripts\" \
+                             map in lattice.json",
                             ws.name,
                             task_name
                         );
@@ -231,7 +232,7 @@ pub fn build_execution_graph_selected(
 				.is_some()
 		{
 			bail!(
-				"persistent task '{}' in workspace '{}' cannot be depended on by other tasks",
+				"task '{}' in workspace '{}' is persistent, so no other task may depend on it",
 				graph[idx].task_name,
 				graph[idx].workspace_name
 			);
@@ -239,7 +240,7 @@ pub fn build_execution_graph_selected(
 	}
 
 	let topo_order = toposort(&graph, None)
-		.map_err(|_| anyhow::anyhow!("cycle detected in task dependency graph"))?;
+		.map_err(|_| anyhow::anyhow!("the task graph has a cycle"))?;
 
 	Ok(ExecutionGraph { graph, topo_order })
 }

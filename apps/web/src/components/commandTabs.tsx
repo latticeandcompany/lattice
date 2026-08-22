@@ -23,7 +23,7 @@ const CommandTabs = ({ tabs, size = 'md' }: CommandTabsProps) => {
 
 	return (
 		<div className="d-flex flex-column align-items-center">
-			<div className="command-tabs mb-2" role="tablist" aria-label="Install command">
+			<div className="command-tabs mb-2" role="tablist" aria-label="What to install">
 				{tabs.map((t, i) => (
 					<button
 						key={t.name}

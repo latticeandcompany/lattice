@@ -36,11 +36,23 @@ export interface CacheModeOption {
 	hint: string;
 }
 
-/** The hints say what actually differs, in terms of what happens rather than flags. */
+/** Each hint says what happens, then names the flag that does it. */
 export const CACHE_MODES: CacheModeOption[] = [
-	{ mode: 'normal', label: 'Use the cache', hint: 'Reuse anything unchanged, and save what runs.' },
-	{ mode: 'force', label: 'Run it all again', hint: 'Run everything, then save the new results.' },
-	{ mode: 'ignore', label: 'Skip the cache', hint: 'Run everything, and save nothing.' },
+	{
+		mode: 'normal',
+		label: 'Use cache',
+		hint: 'Reuse a stored result when the cache key matches, and store what runs.',
+	},
+	{
+		mode: 'force',
+		label: 'Force',
+		hint: 'Run every task and replace its stored result, like --force.',
+	},
+	{
+		mode: 'ignore',
+		label: 'No cache',
+		hint: 'Run every task and store nothing, like --no-cache.',
+	},
 ];
 
 export const cacheModeHint = (mode: CacheMode): string =>

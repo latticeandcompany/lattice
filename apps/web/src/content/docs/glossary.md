@@ -1,243 +1,272 @@
 ---
 title: Glossary
-description: Terms of art the rest of the docs use, defined once, linked from everywhere.
+description: Every term the rest of the docs use, defined once, linked from everywhere.
 group: Reference
 order: 8
 ---
 
 # Glossary
 
-One entry per term, alphabetically, each linking to the page that covers it in
-depth.
+One entry per term, alphabetically. Each entry links to the page that covers the
+term in depth.
 
 ### Ambiguity
 
-The failure mode when Lattice cannot pick a single [driver](#driver) for an
-[auto](#workspace) workspace: two tools of the same [role](#role) both have
-evidence, or a workspace shows only a bare generic marker (a lone
-`package.json`, `pom.xml`, …) with no tool-unique signal. The run halts before
-any task starts and prints a copy-pasteable `engines` fix. See [Driver
-detection](/lattice/docs/drivers).
+The state in which Lattice cannot name a single [driver](#driver) for an `auto`
+[workspace](#workspace), either because two tools of the same [role](#role) both
+have evidence or because the workspace shows only a bare ecosystem marker with
+no tool-unique signal. The run halts before any task starts and prints a
+copy-pasteable `engines` fix. See [Driver detection](/lattice/docs/drivers).
 
 ### Cache hit
 
-The outcome when a task's [cache key](#cache-key) matches a stored entry
-**and** that entry passes the integrity check: its metadata parses, its
-tarball opens, and the tarball's sha256 matches the digest recorded when it
-was written. Only then does Lattice restore the stored outputs instead of
-running the command. See [Caching](/lattice/docs/caching).
+The outcome in which a task's [cache key](#cache-key) matches a stored entry and
+that entry passes its integrity check, so Lattice restores the stored outputs
+instead of running the command. The check has three parts: the metadata parses,
+the tarball opens, and the tarball's sha256 matches its recorded [output
+digest](#output-digest). See [Caching](/lattice/docs/caching).
 
 ### Cache key
 
-The sha256 hash that identifies a task's result: a domain-separated,
-length-prefixed digest over the task name, its resolved command, every file
-matched by `inputs` (minus `ignore`, contents included), any tool-unique
-[lockfile evidence](#lockfile-evidence) present in the workspace, the resolved
-value of every `env` variable the task names, the [toolchain](#toolchain)
-identity, and the running Lattice version. Change any one input and the key
-changes. See [Cache internals](/lattice/docs/cache-internals).
+The sha256 hash that identifies one task's result, computed over everything that
+can change what the task produces. Ten components feed it: the run environment
+(Lattice version, platform, shell, workspace name, task name), the resolved
+command, the [toolchain](#toolchain) identity, the cache keys of the task's
+prerequisites, the `inputs`, `outputs`, and `ignore` pattern lists, the resolved
+`env` and `globalEnv` values, the contents of every matched input file, the
+[manifests](#manifest) and lockfiles present in the workspace and at the repo
+root, and the digest of `globalDependencies`. See [Cache
+internals](/lattice/docs/cache-internals).
 
 ### Cache miss
 
-Anything that isn't a [cache hit](#cache-hit): no stored entry for the key,
-missing metadata, a tarball that won't open, or a tarball whose digest doesn't
-match the recorded one. A miss re-runs the command. See
+Anything that is not a [cache hit](#cache-hit): no stored entry for the key,
+missing metadata, a tarball that will not open, or a tarball whose digest does
+not match the recorded one. A miss runs the command. See
 [Caching](/lattice/docs/caching).
+
+### Caret prefix
+
+The `^` that turns a task's `dependsOn` entry into a cross-workspace edge, so
+`"dependsOn": ["^build"]` means the `build` task of every workspace this one
+depends on. A `dependsOn` entry with no `^` names a task in the same workspace.
+See [Task graph](/lattice/docs/task-graph).
+
+### `dependsOn`
+
+The name of two different fields. On a [workspace](#workspace) it lists other
+workspaces by name, and it takes effect only where a task's `dependsOn` uses the
+[caret prefix](#caret-prefix). On a [task](#task) it lists other tasks, with `^`
+for a cross-workspace edge and a bare name for a same-workspace edge. See [Task
+graph](/lattice/docs/task-graph).
 
 ### Drift
 
 The gap between the `latticeVersion` pinned in the nearest `lattice.json` and
-the binary actually running. When a managed binary under `.lattice/bin` drifts
-from the pin, Lattice installs the pinned version and hands the invocation to it
-before anything runs; the interactive-only version-drift nag is the advisory
-version of the same check for a binary Lattice didn't install. See
-[Upgrading](/lattice/docs/upgrading).
+the version of the binary that is running. A binary Lattice installed under
+`.lattice/bin` resolves drift by installing the pinned version and handing the
+invocation to it before anything else runs. For a binary Lattice did not
+install, the same check prints an advisory nag on a terminal and changes
+nothing. See [Upgrading](/lattice/docs/upgrading).
 
 ### Driver
 
-The tool that turns a workspace's named task into a real shell command: `pnpm`,
-`cargo`, `go`, `gradle`, and 30 others, all but two identified by a fingerprint
-file in the workspace directory. A driver *runs* tasks; an [engine](#engine) is
-a *versioned tool* a workspace needs on its `PATH` or provisioned. Every driver
-is also a well-known engine — `cargo` invokes `cargo build`, and its version
-can be constrained — but the two are resolved independently, and some engines
-(`rust`, `php`, `elixir`, `ghc`) are not drivers. See [Driver
-detection](/lattice/docs/drivers).
+The tool that turns a workspace's named task into a real shell command, such as
+`pnpm`, `cargo`, `go`, or `gradle`. Lattice ships 34 drivers, all but `pip` and
+`kotlin` identified by a fingerprint file in the workspace directory. A driver
+runs tasks. An [engine](#engine) is a versioned tool a task needs, and the two
+resolve independently. See [Driver detection](/lattice/docs/drivers).
 
 ### Engine
 
-A versioned tool named under `engines`: `node`, `rust`, `go`, or anything else
-with a version constraint, in string form for a well-known name or object form
-(`version`, `versionCmd`, `installCmd`, `bin`) for anything else. An engine's
-*shape*, not its name, selects [host mode](#host-mode),
-[validate-only](#validate-only), or [provisioning](#provisioning). An engine is
-what Lattice version-checks; a [driver](#driver) is what Lattice invokes to run
-a task. See [Engines and provisioning](/lattice/docs/engines).
+A versioned tool named under `engines`, written either as a bare constraint
+string for one of the 40 well-known names or as an object with `version`,
+`versionCmd`, `installCmd`, and `bin`. The shape of the constraint, not its
+name, selects [host mode](#host-mode), [validate-only](#validate-only), or
+[provisioning](#provisioning). See [Engines and
+provisioning](/lattice/docs/engines).
+
+### Eviction
+
+The removal of cache entries to bring the cache under a size limit, oldest
+`lastUsed` first. `lattice prune` evicts against `--max-size` or
+`settings.maxCacheSize`, and a run enforces `settings.maxCacheSize` after it
+finishes. See [Cache internals](/lattice/docs/cache-internals).
 
 ### Filter
 
 The `-f`/`--filter <PATTERN>` flag on `lattice run`, which selects the
-workspaces whose `name` contains `PATTERN` (a substring match).
-The matches are the roots of the run: the graph also holds everything they
-depend on, transitively, and nothing that depends on them. A filter that
-matches nothing is not an error. See [Selecting what
-runs](/lattice/docs/filtering).
+workspaces whose `name` contains `PATTERN` as a substring. The matched
+workspaces are the roots of the run: the graph also holds everything they depend
+on, transitively, and nothing that depends on them. A filter that matches
+nothing is not an error. See [Selecting what runs](/lattice/docs/filtering).
 
 ### Host mode
 
-The engine mode when a constraint has neither a version nor an `installCmd`:
-Lattice trusts whatever the [driver](#driver) or task finds on `PATH` and checks
-nothing. See [Engines and provisioning](/lattice/docs/engines).
+The [engine](#engine) mode that applies when a constraint has neither a version
+nor an `installCmd`, in which Lattice trusts whatever the task finds on `PATH`
+and checks nothing. See [Engines and provisioning](/lattice/docs/engines).
 
 ### Inputs
 
-The `inputs` field on a task: glob patterns for the files whose *contents*
-enter the [cache key](#cache-key). A task with no `inputs` has no files in its
-key at all, so an unchanged command with an unchanged environment always hits,
-even after its source changes. See [Caching](/lattice/docs/caching).
+The `inputs` field on a task: glob patterns for the files whose contents feed
+the [cache key](#cache-key). With `inputs` omitted, every file in the workspace
+is hashed except what `.gitignore` excludes and what the task's own `outputs`
+match. See [Caching](/lattice/docs/caching).
 
 ### Lockfile evidence
 
-A lockfile or wrapper file only one tool produces — `pnpm-lock.yaml`,
-`bun.lockb`, `Cargo.lock`, `poetry.lock`, `turbo.json`, and similar. It is the
-lowest rung of the [driver](#driver) evidence ladder (rung 3, below a
-declaration and a native file) and, independently, one of the inputs hashed into
-every task's [cache key](#cache-key), so a dependency bump invalidates the cache
-even when the lockfile isn't listed in `inputs`. The two sets differ:
-`requirements.txt` is dependency state no single tool owns, so it feeds the
-cache key without naming a driver, and `packages.lock.json` feeds the key while
-leaving `dotnet` driving. See [Driver detection](/lattice/docs/drivers) and
-[Caching](/lattice/docs/caching).
+A lockfile or wrapper file that only one tool produces, such as
+`pnpm-lock.yaml`, `bun.lockb`, `Cargo.lock`, `poetry.lock`, or `turbo.json`. It
+is the lowest rung of the [driver](#driver) evidence ladder, below a declaration
+and a native file. The same files also feed every task's [cache
+key](#cache-key), so a dependency bump invalidates the cache even when the
+lockfile is not listed in `inputs`. See [Driver
+detection](/lattice/docs/drivers).
 
-### Outputs
+### Manifest
 
-The `outputs` field on a task: glob patterns for the files a successful run
-captures into the cached artifact, and what a later [cache hit](#cache-hit)
-restores. A file the command produces that `outputs` doesn't match is never
-saved. Only a successful run is stored; a failed task is never cached, matching
-`outputs` or not. See [Caching](/lattice/docs/caching).
+A file that defines what a task command actually does, such as `package.json`,
+`Cargo.toml`, `Makefile`, or `Taskfile.yml`. A resolved command is usually an
+indirection, so every manifest present in a workspace feeds that workspace's
+[cache keys](#cache-key). See [Cache internals](/lattice/docs/cache-internals).
 
 ### Output digest
 
 The sha256 hex of a cached artifact's tarball bytes, recorded in its
 `.meta.json` as `output_digest` when the entry is written. A lookup recomputes
 the digest from the tarball on disk and reports a hit only if the two match, so
-a corrupted or partially-written artifact is a miss rather than a false hit. See
-[Cache internals](/lattice/docs/cache-internals).
+a corrupted or partly written artifact is a [miss](#cache-miss) rather than a
+false hit. See [Cache internals](/lattice/docs/cache-internals).
+
+### Output mode
+
+Which of two presentations `lattice run` uses: **interactive**, a live terminal
+display that settles into a summary, or **raw**, a plain stream of
+`workspace:task:` lines. Lattice picks raw when stdout is not a terminal, when
+`CI` is set, when `-l`/`--loquacious` or `settings.loquacious` applies, or when
+the run pulls in a [persistent task](#persistent-task). See [Output and
+logging](/lattice/docs/output-modes).
+
+### Outputs
+
+The `outputs` field on a task: glob patterns for the files a successful run
+captures into the cached artifact, and the files a later [cache hit](#cache-hit)
+restores. A file the command produces that `outputs` does not match is never
+saved, and a failed task is never cached whatever it matched. See
+[Caching](/lattice/docs/caching).
 
 ### Persistent task
 
-A task declared with `persistent: true` — a dev server, watcher, or anything
-not meant to exit. It is never cached regardless of `cache`, it must be a leaf
-in the [task graph](#task-graph) (nothing may depend on it, since it never
-completes), and pulling one into a run's closure forces raw/CI output so its
-streaming output stays visible instead of being collapsed behind a live TUI. It
-doesn't hold the scheduler, but Lattice watches it: if it exits, the run reports
-that, and a non-zero exit is a failure. See [Persistent
+A task declared with `persistent: true`, meaning it is not expected to exit. It
+is never cached whatever `cache` says, it must be a leaf in the [task
+graph](#task-graph) because nothing can wait on a task that never finishes, and
+pulling one into a run forces [raw output](#output-mode) so its stream stays
+visible. Lattice does not hold the scheduler for it, but it does watch it: an
+exit is reported, and a non-zero exit fails the run. See [Persistent
 tasks](/lattice/docs/persistent-tasks).
 
 ### Pin
 
-A version fixed against drift, in two distinct places. `latticeVersion` in the
-root `lattice.json` pins which Lattice binary a repo runs, and a running
-invocation switches to it automatically (see [Drift](#drift)). Separately, each
-provisioned [engine](#engine) writes its own `pins.json` — the exact version
-installed and the hash of the `installCmd` that produced it — into its
-toolchain directory, so a later run reuses that install instead of repeating it.
-See [Upgrading](/lattice/docs/upgrading) and [Engines and
-provisioning](/lattice/docs/engines).
+A version fixed against [drift](#drift), in two unrelated places.
+`latticeVersion` in the [root config](#root-config) pins which Lattice binary
+the repo runs. Each provisioned [engine](#engine) writes its own `pins.json`,
+recording the version installed and the hash of the `installCmd` that produced
+it, so a later run reuses that install. See [Upgrading](/lattice/docs/upgrading)
+and [Engines and provisioning](/lattice/docs/engines).
+
+### Project
+
+One opened repo with a `lattice.json` at its root, together with the config and
+the resolved workspaces read from it. A project holds many
+[workspaces](#workspace), and the two are never the same thing. The desktop app
+opens a project. See [The desktop app](/lattice/docs/desktop-app).
 
 ### Provisioning
 
-The engine mode when a constraint has an `installCmd`: Lattice runs that
-command itself into a content-addressed directory under
+The [engine](#engine) mode that applies when a constraint has an `installCmd`,
+in which Lattice runs that command into
 `.lattice/toolchains/<engine>/<version>-<installHash>/`, version-checks the
 result, writes a [pin](#pin), and prepends the resulting `bin` directory to the
-task's `PATH`. Reusing an existing pin means installation happens once per
-distinct `installCmd` content, not once per run. See [Engines and
+task's `PATH`. Reusing an existing pin means one install per distinct
+`installCmd`, not one per run. See [Engines and
 provisioning](/lattice/docs/engines).
 
 ### Role
 
-A kind of job a [driver](#driver) does: runtime, build tool, package manager, or
-task runner, ranked in that order. A driver declares every role it fills and
-competes with its highest-ranked one, so `deno` (runtime, package manager, and
-task runner) drives as a task runner and `bun` (runtime and package manager) as
-a package manager. Drivers competing for *different* roles compose into one
-stack for a workspace — a Node runtime plus a pnpm package manager is not a
-conflict, and the higher-ranked role drives named tasks. Drivers competing for
-the *same* role are an [ambiguity](#ambiguity) unless a declaration names one. A
-driver whose only role is runtime can never drive tasks on its own. See [Driver
+The kind of job a [driver](#driver) does, one of runtime, build tool, package
+manager, or task runner, ranked in that order. A driver declares every role it
+fills and competes with its highest-ranked one, so `deno` competes as a task
+runner and `bun` as a package manager. Drivers holding different roles compose
+into one stack and the highest-ranked one drives. Drivers holding the same role
+are an [ambiguity](#ambiguity) unless a declaration names one. A driver whose
+only role is runtime cannot drive tasks. See [Driver
 detection](/lattice/docs/drivers).
 
 ### Root config
 
-The single `lattice.json` at the repository root — the one file that declares
-every [workspace](#workspace), the root `engines`, the `tasks` map, and
-repo-wide `settings`. Lattice walks up from the current directory to find it,
-so any subdirectory can run `lattice` commands. A workspace may add its own
-`scripts` and `engines`, but the task graph, cache settings, and workspace list
-live only in the root config. See [Configuration](/lattice/docs/configuration).
+The single `lattice.json` at the repo root, which declares every
+[workspace](#workspace), the root `engines`, the `tasks` map,
+`globalDependencies`, `globalEnv`, and repo-wide `settings`. Lattice walks up
+from the current directory to find it, so any subdirectory can run `lattice`
+commands. A workspace may add its own `scripts` and `engines`, and nothing else.
+See [Configuration](/lattice/docs/configuration).
 
 ### Schedule
 
-The runner-facing shape of the [task graph](#task-graph): for each task, which
-other tasks must finish first, which tasks move closer to ready once it
+The runner-facing form of the [task graph](#task-graph), recording for each task
+which tasks must finish first, which tasks move closer to ready when it
 finishes, and how many prerequisites are still outstanding. The runner drives
-execution from the schedule alone; it never touches the graph directly. See
-[Task graph](/lattice/docs/task-graph).
+execution from the schedule alone and never touches the graph. See [Task
+graph](/lattice/docs/task-graph).
 
 ### Stacked run
 
-Naming more than one task in a single `lattice run` invocation, e.g.
-`lattice run lint test build`. The tasks are merged into one combined
-[task graph](#task-graph) rather than run as separate graphs, so a dependency
-two of them share executes once and independent work still parallelizes.
-`--sequentially` opts out: it runs each named task's graph to completion before
-starting the next. See [Selecting what runs](/lattice/docs/filtering).
+A single `lattice run` invocation naming more than one task, such as
+`lattice run lint test build`. The named tasks merge into one combined [task
+graph](#task-graph), so a dependency two of them share runs once and independent
+work still parallelizes. `--sequentially` opts out and runs each task's graph to
+completion before starting the next. See [Selecting what
+runs](/lattice/docs/filtering).
 
 ### Task
 
-A named unit of work under `tasks` in `lattice.json` — `build`, `test`,
-`lint`, or anything else — resolved to a concrete shell command per workspace
-by that workspace's [driver](#driver) or its own `scripts` override. A task's
-`dependsOn` names other *tasks* (see [workspace `dependsOn`](#workspace) for
-the field of the same name that means something different). See [Task
+A named unit of work declared under `tasks` in the [root config](#root-config),
+resolved to one concrete shell command per workspace by that workspace's
+[driver](#driver) or its own `scripts` entry. `build`, `test`, and `lint` are
+names you choose, and Lattice reserves none. See [Task
 graph](/lattice/docs/task-graph).
 
 ### Task graph
 
-The expansion of one or more root tasks across every resolved workspace into a
+The expansion of one or more named tasks across every resolved workspace into a
 directed graph of concrete task instances, built from each task's `dependsOn`
-(`^task` for a cross-workspace edge, a bare `task` for a same-workspace edge)
-and each workspace's own `dependsOn`. Lattice runs it in dependency order, in
-parallel where the graph allows. See [Task graph](/lattice/docs/task-graph).
+and each workspace's `dependsOn`. Lattice runs the graph in dependency order, in
+parallel wherever the graph allows. See [Task graph](/lattice/docs/task-graph).
 
 ### Toolchain
 
-The set of engines Lattice has resolved for a run: for each, whether it came
-from [host mode](#host-mode), [validate-only](#validate-only), or
-[provisioning](#provisioning), combined into a `PATH` prefix and a single
+The set of [engines](#engine) Lattice has resolved for a run, recording for each
+whether it came from [host mode](#host-mode), [validate-only](#validate-only),
+or [provisioning](#provisioning), and combined into a `PATH` prefix plus one
 identity string that feeds every affected task's [cache key](#cache-key).
-Resolution happens once per distinct merged engine map and is reused across
-workspaces that share one. See [Engines and
+Resolution happens once per distinct merged engine map and is reused by every
+workspace that shares one. See [Engines and
 provisioning](/lattice/docs/engines).
 
 ### Validate-only
 
-The engine mode when a constraint has a version but no `installCmd`: Lattice
-runs a version command against whatever is already on `PATH` and fails before
-any task starts if the result doesn't satisfy the constraint. Nothing is
-installed either way. See [Engines and provisioning](/lattice/docs/engines).
+The [engine](#engine) mode that applies when a constraint has a version but no
+`installCmd`, in which Lattice runs a version command against whatever is on
+`PATH` and fails before any task starts if the result does not satisfy the
+constraint. Nothing is installed either way. See [Engines and
+provisioning](/lattice/docs/engines).
 
 ### Workspace
 
-A single project directory — the unit of task running and caching. Declared
-explicitly by `name` and `path` under the root
-`lattice.json`'s `workspaces` list. A workspace's own `dependsOn` names other
-*workspaces* by name and only takes effect where a task's `dependsOn` uses a
-`^`-prefixed token — on its own it declares nothing about scheduling (see
-[task `dependsOn`](#task) for the field of the same name that means something
-different). `auto: false` opts a workspace out of [driver](#driver) detection
-entirely: you declare its `scripts` and `engines` yourself and nothing is
-inferred. See [Workspaces](/lattice/docs/workspaces).
+One directory Lattice runs tasks in: a directory with its own manifest, declared
+by `name` and a literal `path` in the [root config](#root-config)'s `workspaces`
+list. A workspace is the unit of [driver](#driver) detection, task running, and
+caching, and it is one part of a [project](#project) rather than the whole repo.
+`auto: false` opts a workspace out of driver detection, leaving `scripts` as the
+only source of its commands. See [Workspaces](/lattice/docs/workspaces).

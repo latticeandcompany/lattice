@@ -170,7 +170,7 @@ const labelFor = (id: string, live: NodeState | undefined): string => {
 	if (!live) return id;
 	switch (live.state) {
 		case 'cached':
-			return `${id} ·cached`;
+			return `${id} ·cache hit`;
 		case 'failed':
 			return `${id} ·failed`;
 		case 'skipped':
@@ -195,7 +195,7 @@ export const tooltipHtml = (
 	if (live) rows.push(['status', live.state]);
 	if (live?.cacheKey) rows.push(['key', live.cacheKey.slice(0, 8)]);
 	if (node.persistent) rows.push(['persistent', 'yes']);
-	if (node.pulledIn) rows.push(['pulled in', 'a dependency of what you selected']);
+	if (node.pulledIn) rows.push(['pulled in', 'a dependency of a task you selected']);
 
 	const body = rows
 		.map(
@@ -220,11 +220,11 @@ export interface LegendEntry {
 
 /** Every encoding gets a key: a shape needs one as much as a hue would. */
 export const LEGEND: LegendEntry[] = [
-	{ icon: 'bi-arrow-right', label: 'left to right is dependency order' },
-	{ icon: 'bi-circle-fill', label: 'ran' },
-	{ icon: 'bi-circle', label: 'not run' },
-	{ icon: 'bi-lightning-charge', label: 'faded — came from cache' },
-	{ icon: 'bi-square', label: 'rounded square — runs until stopped' },
-	{ icon: 'bi-dash', label: 'dashed outline — pulled in as a dependency' },
-	{ icon: 'bi-x-lg', label: 'amber outline — failed' },
+	{ icon: 'bi-arrow-right', label: 'left to right: dependency order' },
+	{ icon: 'bi-circle-fill', label: 'filled: ran' },
+	{ icon: 'bi-circle', label: 'outline: not run' },
+	{ icon: 'bi-lightning-charge', label: 'faded: cache hit' },
+	{ icon: 'bi-square', label: 'rounded square: persistent task' },
+	{ icon: 'bi-dash', label: 'dashed outline: pulled in as a dependency' },
+	{ icon: 'bi-x-lg', label: 'amber outline: failed' },
 ];

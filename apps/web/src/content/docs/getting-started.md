@@ -1,30 +1,30 @@
 ---
 title: Getting started
-description: From an empty repo to a task that hits the cache on its second run.
+description: From an empty repo to a task that comes back from cache on its second run.
 group: Overview
 order: 3
 ---
 
 # Getting started
 
-This takes one repo from no Lattice config to a task that runs once and comes
-back from cache on the next run. It assumes `lattice` is on your `PATH`; see
-[Installation](/lattice/docs/installation) if it isn't.
+We are going to take one repo from no config to a task that runs once and comes
+back from cache on the next run.
+
+You need `lattice` on your `PATH`. See
+[Installation](/lattice/docs/installation) if you do not have it yet.
 
 ## Scaffold a config
 
-In the root of your repo, run:
+From the root of your repo, run:
 
 ```sh
 lattice init
 ```
 
-`init` reads the repo before it writes anything. It walks the tree for
-directories holding a manifest it recognizes and proposes each one as a
-workspace, and it reads the tool versions you already record in files like
-`.nvmrc`, `.tool-versions`, and `rust-toolchain.toml` and proposes those as
-engines. On a terminal you get both lists pre-checked, and uncheck whatever is
-wrong:
+`init` reads the repo before it writes anything. On a terminal you get two
+checklists to confirm: every directory holding a manifest it recognizes, and
+every tool version the repo already pins in a file like `.nvmrc`,
+`.tool-versions`, or `rust-toolchain.toml`. Uncheck whatever is wrong.
 
 ```text
 found 2 workspaces
@@ -35,38 +35,36 @@ found 1 pinned tool version
 > [x] node         22.11.0        .nvmrc
 ```
 
-If it finds nothing to propose, it asks you to declare at least one workspace or
-one engine — a config with neither does nothing, so `init` will not write one.
-
-To take the scan's proposal without confirming, pass `-y`. Piped output or a
-non-interactive shell does the same thing on its own:
+To take the scan's proposal without confirming, pass `-y`. A pipe or a
+non-interactive shell does the same on its own:
 
 ```sh
 lattice init -y
 ```
+
+The rest of this guide builds a repo up from nothing, so run it somewhere with
+no manifests to find. You should see three files reported and a hint about what
+to do next:
 
 ```text
 ✓ wrote lattice.json
 ✓ wrote .lattice/schema.json
 ✓ updated .gitignore
 
-next: lattice run build
+next: declare a workspace in lattice.json
 ```
 
-`lattice.json` is the config: the workspaces the scan found and one starter
-task. `.lattice/schema.json` is a committed JSON Schema your editor can validate
-against as you type; delete it and the next command rewrites it. In
-`.gitignore`, three lines are appended and existing content is untouched:
-`.lattice/cache/`, `.lattice/toolchains/`, and `.lattice/bin/`, the per-machine
-artifacts under `.lattice/`.
+`lattice.json` is the config. `.lattice/schema.json` is a committed JSON Schema
+your editor validates against as you type. In `.gitignore`, three lines are
+appended and the existing content is left alone: `.lattice/cache/`,
+`.lattice/toolchains/`, and `.lattice/bin/`.
 
-Running `init` again refuses to touch an existing `lattice.json` unless you add
-`--force`.
+To scaffold over a `lattice.json` that already exists, add `--force`. Without
+it, `init` refuses.
 
 ## Read what it wrote
 
-The rest of this guide builds a repo up from nothing, so assume the scan found
-nothing to propose and `init` wrote the bare skeleton:
+Open `lattice.json`:
 
 ```json
 {
@@ -74,48 +72,50 @@ nothing to propose and `init` wrote the bare skeleton:
   "latticeVersion": "1.0.0-beta-2",
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
     }
   },
   "workspaces": []
 }
 ```
 
-`$schema` points at the committed schema file, for editor validation.
-`latticeVersion` pins the config to the release that scaffolded it; see
-[Upgrading](/lattice/docs/upgrading) for what happens when the installed binary
-and this field disagree. `workspaces` is empty — a workspace is a project
-directory declared by name and path, and it is the unit Lattice runs and caches
-tasks in (see [Workspaces](/lattice/docs/workspaces)). In
-`tasks.build`, `dependsOn: ["^build"]` means "run this workspace's dependencies'
-`build` first" and `outputs: ["dist/**"]` tells the cache which files to
-capture. There's no workspace to run it in yet, so it does nothing until you add
-one.
+Four things are in there. `$schema` points at the committed schema file.
+`latticeVersion` pins the release this repo runs on (see
+[Upgrading](/lattice/docs/upgrading)). `tasks.build` declares one task, where
+`dependsOn: ["^build"]` means "build my dependencies first" and `outputs` tells
+the cache which files to capture (see [Task
+graph](/lattice/docs/task-graph)). `workspaces` is empty, and a workspace is a
+directory with its own manifest that Lattice runs tasks in (see
+[Workspaces](/lattice/docs/workspaces)).
 
-Confirm that by running it as-is:
+Nothing is declared to run yet. Confirm that:
 
 ```sh
 lattice run build
 ```
 
 ```text
-lattice: no workspaces declared. Add them to the `workspaces` array in
-lattice.json to run `build`.
+lattice: no workspaces declared. Add one to the `workspaces` array in lattice.json, then run `build`.
 ```
 
-Exit code `0`. An empty repo is nothing to do, not a failure.
+Check the exit code with `echo $?`. It is `0`. An empty repo is nothing to do,
+not a failure.
 
-## Add a workspace and a task
+## Add a workspace
 
-Add a directory with something to build, and declare it as a workspace:
+Make a directory with something to build:
 
 ```sh
 mkdir -p app/src
 echo hello > app/src/index.txt
 ```
 
-Edit `lattice.json`:
+Now declare it. Replace `lattice.json` with this:
 
 ```json
 {
@@ -138,12 +138,22 @@ Edit `lattice.json`:
 }
 ```
 
-`auto: false` opts this workspace out of driver detection: `scripts.build` is
-the exact command that runs, and no lockfile or manifest is read to infer one.
-See [Driver detection](/lattice/docs/drivers) for how `auto` (the default)
-infers a command from evidence already in the directory. The task's `inputs`
-list is what the cache hashes to decide whether `app`'s `build` needs to run
-again.
+Two fields are new. `auto: false` opts this workspace out of driver detection,
+so `scripts.build` is exactly what runs (see [Driver
+detection](/lattice/docs/drivers) for what the default, `auto: true`, infers
+instead). The task's `inputs` names the files whose contents decide whether
+`build` needs to run again.
+
+Check that Lattice resolved the command you wrote:
+
+```sh
+lattice run build --dry-run
+```
+
+```text
+❖ lattice  dry run · build
+  → app:build  mkdir -p dist && cp src/index.txt dist/index.txt
+```
 
 ## Provision and install
 
@@ -156,11 +166,11 @@ lattice setup
 ❖ setup complete
 ```
 
-`setup` provisions any pinned toolchains this repo's `engines` declare (none, in
-this example) and installs each workspace's native dependencies. Run it again
-and a workspace whose lockfile hasn't changed is skipped, unless you pass
-`--force`. See [Engines and provisioning](/lattice/docs/engines) for what
-happens once an engine constraint is declared.
+`setup` provisions the toolchains this repo pins under `engines` and installs
+each workspace's dependencies. This repo pins nothing and has no dependencies,
+so it finishes immediately. See [Pinning tool
+versions](/lattice/docs/pinning-tool-versions) for what it does once `engines`
+has an entry.
 
 ## Run the task
 
@@ -169,21 +179,24 @@ lattice run build -l
 ```
 
 ```text
-lattice: running `build` across 1 workspace(s)
-lattice: app:build: hash 8aecd62e96682197
-lattice: app:build: cache miss
+lattice: running `build` across 1 workspace
+lattice: app:build: hash 92e4f1987f6770d8
+lattice: app:build: cache miss (nothing cached for this task yet)
 app:build: running
 app:build: done (0.01s)
 lattice: 1 tasks, 0 cached, 0 failed, 0.01s
 ```
 
-`app/dist/index.txt` now exists. `-l` (`--loquacious`) prints this plain,
-line-by-line log; without it, a terminal gets a live interactive display driven
-from the same events. See [Output and logging](/lattice/docs/output-modes).
+Your hash may differ from this one. It covers the platform, the shell, and the
+Lattice version as well as the task's inputs. `app/dist/index.txt` now exists.
+
+`-l` prints this plain line-by-line log. Drop it and a terminal gets a live
+display of the same run instead. See [Output and
+logging](/lattice/docs/output-modes).
 
 ## Run it again
 
-Nothing changed under `app/src`, so the second run doesn't execute the command
+Nothing under `app/src` changed, so the second run does not execute the command
 at all:
 
 ```sh
@@ -191,25 +204,26 @@ lattice run build -l
 ```
 
 ```text
-lattice: running `build` across 1 workspace(s)
-lattice: app:build: hash 8aecd62e96682197
-app:build: cache hit [8aecd62e]
+lattice: running `build` across 1 workspace
+lattice: app:build: hash 92e4f1987f6770d8
+app:build: cache hit [92e4f198]
 lattice: 1 tasks, 1 cached, 0 failed, 0.00s
+lattice: full cache, nothing to run
 ```
 
-Same hash as the cold run, so Lattice restores `app/dist` from `.lattice/cache/`
-instead of re-running `scripts.build`. Delete `app/dist` and run again: it comes
-back from the same cache entry without rebuilding. Edit `app/src/index.txt` and
-the hash changes, so the next run misses. The hash covers the task's command,
-its `inputs`, its resolved environment, and more; see
-[Caching](/lattice/docs/caching) for exactly what goes in and what makes a
-cached result valid on restore.
+Same hash as the first run, so Lattice restored `app/dist` from
+`.lattice/cache/` instead of running `scripts.build` again.
+
+Two more things to try. Delete `app/dist` and run again: it comes back from the
+same entry without rebuilding. Then edit `app/src/index.txt` and run again: the
+hash changes and the command runs. See [Caching](/lattice/docs/caching) for
+everything that feeds that hash.
 
 ## Next
 
-- [Workspaces](/lattice/docs/workspaces) — what a workspace is and how
-  discovery, `path`, and `dependsOn` work.
-- [Task graph](/lattice/docs/task-graph) — how tasks expand across
-  workspaces, `^task` vs. `task`, and parallelism.
-- [Caching](/lattice/docs/caching) — what goes into a cache key, and what
-  counts as a hit.
+- [Adopting Lattice](/lattice/docs/adopting-lattice) to bring a repo that
+  already builds into Lattice one workspace at a time.
+- [Workspaces](/lattice/docs/workspaces) for `path`, `auto`, `dependsOn`, and
+  `scripts` in full.
+- [Task graph](/lattice/docs/task-graph) for how one task expands across
+  workspaces, and what `^build` does.

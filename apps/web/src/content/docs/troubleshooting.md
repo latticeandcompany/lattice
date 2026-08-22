@@ -1,161 +1,164 @@
 ---
 title: Troubleshooting
-description: Symptom, cause, and fix for the failure modes you actually hit.
+description: Symptoms you actually hit, with the command that shows you what went wrong.
 group: Guides
 order: 7
 ---
 
 # Troubleshooting
 
-Symptoms, causes, fixes. For the exact text of every error Lattice prints, see
+Symptom, cause, fix. For the exact text of every message Lattice prints, see
 [Errors](/lattice/docs/errors).
+
+Three commands answer most of these, so reach for them before reading further:
+
+```sh
+lattice run <task> --dry-run   # the graph and every resolved command, run nothing
+lattice run <task> -l          # hashes, cache decisions, and each task's output
+lattice version                # which binary actually ran
+```
 
 ## Detection and configuration
 
-### A workspace halts with "ambiguous or undeclared task driver"
-
-Lattice gathers candidate tools for the workspace from your `engines`
-declaration, native files like `packageManager` or `.nvmrc`, and tool-unique
-lockfiles. It halts when there are no candidates, when the only candidates are
-runtimes, or when two candidates hold the same role (`bun.lockb` and
-`pnpm-lock.yaml`, say). See [Driver detection](/lattice/docs/drivers) for the
-model and [Errors](/lattice/docs/errors#ambiguous-or-undeclared-task-driver) for
-the message shapes.
-
-Fix: add an `engines` entry to that workspace in `lattice.json` naming the tool
-that should run its tasks — a package manager, build tool, or task runner. The
-line the error suggests resolves the halt, but it isn't always the tool you want,
-so check it against what the workspace actually uses. Where no candidate could
-drive tasks, the suggestion is the `auto: false` plus `scripts` form instead,
-since no `engines` entry would help there.
-
-### A task's resolved command isn't what you expected
-
-An explicit entry in a workspace's `scripts` map always wins. Only a task with no
-entry there falls back to the driver's inferred invocation. For JavaScript-family
-drivers, inference requires the task name to exist in the manifest's own
-`scripts`/`tasks` map. For direct-invoke drivers such as `cargo` and `go`,
-inference never produces a command for a `persistent` task — there is no universal
-`cargo dev` — so a persistent task on one of those needs an explicit `scripts`
-entry.
-
-Fix: run `lattice run <task> --dry-run`. It prints every `workspace:task` that
-would run, in order, next to its fully resolved command, including
-cross-workspace dependencies, and executes nothing:
-
-```sh
-lattice run build --dry-run
-```
+### A run halts before any task starts, naming a workspace
 
 ```text
+Error: workspace 'web' has an ambiguous or undeclared driver.
+Candidate drivers: pnpm, npm, yarn, bun
+Declare the driver in lattice.json, under this workspace:
+  "engines": { "pnpm": ">=0.0.0" }
+```
+
+Lattice found more than one tool that could run that workspace's tasks and will
+not guess between them. It halts the same way when it finds none, and when the
+only candidates are runtimes, which cannot drive a named task on their own.
+
+To fix it, add the `engines` entry to that workspace naming the tool that should
+run its tasks. The line in the message resolves the halt, but it names the first
+candidate that could drive tasks rather than the one your repo uses, so check it
+before pasting it. Where nothing could have driven tasks, the message suggests
+`"auto": false` plus a `scripts` map instead, because no `engines` entry would
+help. See [Driver detection](/lattice/docs/drivers).
+
+### A workspace with `"auto": false` halts on one task
+
+```text
+Error: workspace 'api' has "auto": false and declares no command for task 'build'. Add the command under this workspace's "scripts" map in lattice.json
+```
+
+Turning detection off means the workspace's `scripts` map is the only source of
+its commands, and there is no entry for the task you named. An `auto` workspace
+with no command for a task is skipped quietly; a declared one is an error,
+because you said what it runs.
+
+Add the entry, or drop `"auto": false` and let detection find the tool. See
+[Workspaces](/lattice/docs/workspaces).
+
+### A task's resolved command is not the one you expected
+
+An entry in a workspace's `scripts` map always wins. Only a task with no entry
+there falls back to what the driver would infer, and inference is not universal:
+a JavaScript-family driver needs the task name to exist in the manifest's own
+scripts map, and a direct-invoke driver such as `cargo` or `go` never infers a
+command for a `persistent` task, because there is no `cargo dev`.
+
+Print what would run:
+
+```text
+$ lattice run build --dry-run
 ❖ lattice  dry run · build
-  → web:build   pnpm run build
-  → cli:build   cargo build --release
+  → ui:build  pnpm run build
+  → api:build  cargo build --release
 ```
 
-If the command shown isn't the one you meant, add or edit that workspace's
-`scripts` entry for the task.
+Each line is `workspace:task` and the exact command the runner would hand to
+`sh -c`, or to `cmd /C` on Windows. If it is not the command you meant, add or
+edit that workspace's `scripts` entry.
 
-`--dry-run` returns before toolchains are provisioned or `PATH` is adjusted, so it
-shows the command as written, not as it would resolve once a provisioned tool is
-first on `PATH`.
+`--dry-run` returns before any toolchain is provisioned, so it shows the command
+as written, not as it will resolve once a provisioned tool is first on `PATH`.
 
-### A config validation error on `lattice.json`
-
-Duplicate workspace names, an empty `path`, a bad `maxCacheSize` string, an
-`engines` entry using the version-only string form for a tool Lattice can't
-version-check — all are caught before any task runs, with a message naming the
-field and value.
-
-Fix: see [Errors](/lattice/docs/errors#config-loading-and-validation) for every
-shape, and [Configuration](/lattice/docs/configuration) for the field reference.
-
-### `unknown field` on a key you expected to work
+### `unknown field` on a key you believe is valid
 
 ```text
-Error: unknown field `output` in tasks.build (lattice.json line 5, column 14)
+Error: unknown field `output` in tasks.build (lattice.json line 3, column 31)
 Did you mean `outputs`?
-Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache
+Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache, timeout
 ```
 
-A key that is not part of the config at that level. Nothing ran. Two cases
-account for most of these: a near miss the message already names, and a key that
-used to be accepted and no longer is — `settings.logging`, or a `glob` on a
-workspace entry.
+The key is not part of the config at that level, and nothing ran. Most of these
+are the near miss the message already names. The rest are keys that used to be
+accepted and are not any more.
 
-Fix: delete the key, or write the one the message names. There is no setting that
-relaxes this. If a key you believe is valid is being rejected, your binary is
-older than the config — check `latticeVersion` against `lattice --version`.
+Delete the key, or write the one the message names. No setting relaxes this. If
+the key really is valid, your binary is older than the config: compare
+`latticeVersion` in `lattice.json` against `lattice version`.
 
-### A cycle in the task graph
+### `the task graph has a cycle`
 
 ```text
-cycle detected in task dependency graph
+Error: the task graph has a cycle
 ```
 
-Two or more tasks depend on each other, directly or transitively, through
-`dependsOn` — same-workspace or `^`-prefixed cross-workspace edges. There is no
-valid run order, so nothing runs.
+Two or more tasks depend on each other, directly or through other tasks, so
+there is no order to run them in. Nothing ran.
 
-Fix: the error names the graph, not the edge, and `--dry-run` prints no order for
-a graph that can't be scheduled, so read each involved task's `dependsOn` in
-`lattice.json` and trace the loop. See [Task graph](/lattice/docs/task-graph) for
-how `^task` and `task` build edges.
+The message names the graph rather than the edge, and `--dry-run` prints no
+order for a graph it cannot schedule, so trace it by reading `dependsOn` on each
+task involved. A same-workspace edge is a bare task name; a cross-workspace edge
+carries `^`. See [Task graph](/lattice/docs/task-graph).
+
+### A validation error names a field in `lattice.json`
+
+Duplicate workspace names, an empty `path`, an unparseable `maxCacheSize`, and a
+version-only engine string for a tool Lattice cannot version-check are all
+caught before any task starts, with the field and the value in the message. See
+[Errors](/lattice/docs/errors) for every shape and
+[Configuration](/lattice/docs/configuration) for the field reference.
 
 ## Caching
 
-### A task never hits the cache
+### A task misses the cache every run
 
-The cache key hashes the task name, its resolved command, every file matched by
-its `inputs` globs, tool-unique lockfiles in the workspace, the current values of
-any env vars listed in `env`, the resolved toolchain identity, and the Lattice
-version. A key that changes every run usually means something is feeding the hash
-that shouldn't: an `inputs` glob matching a file that legitimately changes on
-every run (a timestamp, a `.DS_Store`), or an `env` entry whose value differs
-across shells and machines (an absolute path, a session id).
-
-Fix: narrow `inputs`, add the file to `ignore`, or drop the `env` entry unless the
-command's output genuinely depends on it. Run with `-l`/`--loquacious`, which
-names the part of the key that moved:
+Run it with `-l` and read the two lines Lattice prints per task:
 
 ```text
-web:build: hash a1b2c3d4e5f6a7b8
-web:build: cache miss: inputs changed
+lattice: ui:build: hash 26be571e2ec773a7
+lattice: ui:build: cache miss: inputs changed
 ```
 
-The names map onto the config: `inputs`, `env`, `globalEnv`,
-`globalDependencies`, `manifests` (a manifest or lockfile in the workspace, or a
-lockfile at the repo root), `dependencies` (a prerequisite task's key moved),
-`toolchain`, `command`, `patterns` (the glob lists themselves), and
-`environment` (platform, shell, or Lattice version). Start with whichever it
-names.
+The `cache miss:` line names which part of the key moved, which is where to
+look. `inputs changed` with no source edit means an `inputs` glob is matching
+something that rewrites itself on every run: a timestamp, a log, a
+`.DS_Store`. `environment changed` on an otherwise identical run usually means
+the Lattice version moved. `dependencies changed` is not a problem on its own,
+because an upstream change is supposed to reach downstream.
 
-`inputs changed` every run with no source edit means a glob is matching
-something that rewrites itself. `environment changed` on an otherwise-identical
-run usually means the Lattice version moved. `dependencies changed` is not a
-problem on its own — an upstream change is supposed to reach downstream.
+Narrow the glob, add the file to `ignore`, or drop the `env` entry whose value
+differs between machines. For what each component name covers, see [Cache
+internals](/lattice/docs/cache-internals).
 
-Two misses name no part. `nothing cached for this task yet` means the task has
-never completed here. `the entry for this key is no longer in the cache` means
-the key is unchanged but the entry went: evicted under
-`settings.maxCacheSize`, swept by `lattice prune`, or rejected as corrupt.
+Two misses name no component at all. `cache miss (nothing cached for this task
+yet)` means the task has never finished here. `cache miss (the entry for this
+key is no longer in the cache)` means the key is unchanged and the entry went:
+evicted under `settings.maxCacheSize`, swept by `lattice prune`, or rejected as
+corrupt.
 
-### A task hits the cache when it shouldn't
+### A task hits the cache when the result is stale
 
-The build reads a file, or an env var, that isn't declared. `inputs` matches only
-what its globs say; a file read outside that set is invisible to the key, so
-editing it changes nothing and the stale result replays. `env` is the same — only
-the names you list are read and hashed. Neither case raises a warning.
+The task reads a file, or an environment variable, that nothing declares.
+`inputs` matches only what its globs say, and `env` reads only the names you
+list, so anything outside both is invisible to the key and a stale result
+replays. Neither case warns.
 
-Fix: widen the `inputs` glob or add the missing name to `env`. See
-[Caching](/lattice/docs/caching) for what belongs in each. Use
-`lattice run <task> --force` or `--no-cache` to force a fresh run while you
-investigate.
+Widen the `inputs` glob or add the name to `env`. While you investigate, force a
+fresh run with `--force`, which also replaces the stored entry, or `--no-cache`,
+which stores nothing.
 
-If the file lives *above* the workspace — a base `tsconfig.json`, a shared
-schema directory, a root `.env` — no `inputs` glob can name it, because `inputs`
-is relative to the workspace. Add it to the root-level `globalDependencies`
-instead, and put repo-wide variables in `globalEnv`:
+A file above the workspace cannot be named by `inputs`, because `inputs` is
+relative to the workspace directory. A base `tsconfig.json`, a shared schema
+directory, or a root `.env` goes in `globalDependencies` instead, and a
+repo-wide variable goes in `globalEnv`:
 
 ```json
 {
@@ -164,149 +167,219 @@ instead, and put repo-wide variables in `globalEnv`:
 }
 ```
 
-### `--force`/`--no-cache` doesn't help, or the output looks wrong after a hit
+### A task warns about its outputs and is never cached
 
-A cache hit counts only if the metadata parses, the tarball opens, and its digest
-matches what's recorded. Anything else is a miss and the task reruns, never a
-false hit. If restoring outputs into the workspace fails partway — permissions,
-disk space — that is a non-fatal warning and the task still ran fresh, so the
-result on disk is correct even though the warning printed. See
-[Errors](/lattice/docs/errors#cache-operations) for the warning text.
+```text
+lattice: warning: api:build: failed to cache outputs: no files matched outputs ["dist/**"], so nothing was cached. Check that the patterns are relative to the workspace, and that the task writes there
+```
+
+The task declares `outputs` and produced none of them. Lattice refuses to store
+an empty artifact, so the task succeeds, nothing is cached, and it runs again
+next time. The warning repeats every run.
+
+Three things cause it. The patterns are relative to the workspace directory and
+not to the repo root, so `outputs` on a task every workspace shares has to match
+in all of them. The command may be writing somewhere else, which a look at the
+directory after a run will settle. Or the command genuinely produces nothing on
+this machine, which is common for a build that skips its native step when the
+compiler is missing; drop `outputs` from that task and let the cache entry
+record only that it succeeded.
+
+### The run warns about restoring a cache entry
+
+Restoring outputs into a workspace can fail on permissions or disk space. That
+is a warning, not a failure: the task ran fresh instead, so what is on disk is
+correct. A cache hit itself is all-or-nothing. The metadata has to parse, the
+tarball has to open, and its digest has to match what was recorded, so a corrupt
+entry is a miss and the task reruns rather than replaying something wrong.
 
 ## Toolchains
 
-### An engine version check fails on a teammate's machine but not yours
+### An engine check fails on one machine and passes on another
 
-The constraint is in validate-only mode: a version range with no `installCmd`, so
-Lattice checks whatever is on that machine's `PATH`. Machines with different tools
-installed disagree. See [Errors](/lattice/docs/errors#validate-only-failures) for
-the exact messages — command not found, version doesn't parse, version doesn't
-satisfy the range.
+```text
+Error: engine 'node' on PATH is 26.0.0, which does not satisfy the constraint '>=999'
+```
 
-Fix: get every machine's host tool onto the same version, or add an `installCmd`
-to move the constraint into provision mode, where Lattice installs its own copy
-into `.lattice/toolchains/` per machine. See [Engines and
-provisioning](/lattice/docs/engines).
+The constraint has a version and no `installCmd`, so Lattice checks whatever is
+on that machine's `PATH` and installs nothing. Machines with different tools
+disagree.
 
-### `installCmd` provisioning fails partway
+Either get every machine's host tool onto the same version, or add an
+`installCmd` so Lattice installs its own copy under `.lattice/toolchains/` per
+machine. See [Engines and provisioning](/lattice/docs/engines).
+
+### An engine is rejected before anything is checked
+
+```text
+Error: engine 'frobnicate' in root uses the string form, which carries only a version. 'frobnicate' is not a well-known engine, so Lattice cannot version-check it on its own. Use the object form with a `versionCmd`, like this: "frobnicate": { "version": ">=1.0.0", "versionCmd": "frobnicate --version" }
+```
+
+The bare-string form of an `engines` entry works only for the tools Lattice
+already knows how to version-check. For anything else, use the object form and
+give it a `versionCmd`. Guessing the flag would be worse than asking.
+
+### `installCmd` fails partway through
 
 Provisioning stages the install into a temporary directory, runs `installCmd`,
-version-checks the result, then renames the staged directory to its final
-content-addressed path. A failure at any of those steps is fatal and names the
-stage. See [Errors](/lattice/docs/errors#provisioning-failures).
+version-checks the result, and only then renames the staging directory to its
+final content-addressed path. A failure at any step is fatal and names the step.
 
-Fix: rerun the same command. Nothing is left pinned on a partial failure, so
-provisioning retries from scratch and there is no partial state to clean up by
-hand.
+Rerun the same command. Nothing was pinned, so provisioning starts over and
+there is no half-installed toolchain to clean up by hand.
 
-### Toolchain resolution isn't shown by `--dry-run`
+### `--dry-run` says nothing about toolchains
 
-`--dry-run` prints resolved commands and returns before any toolchain is
-provisioned or validated. An engine failure surfaces only when a task actually
-runs, or via `lattice setup`, which provisions root engines up front.
+`--dry-run` resolves commands and returns before any engine is validated or
+provisioned. An engine problem surfaces when a task actually runs, or up front
+from `lattice setup`, which provisions the root engines first.
 
-Fix: to confirm a teammate's toolchain resolves before handing them a task, have
+To check that a teammate's toolchain resolves before handing them work, have
 them run `lattice setup`.
 
 ## Output
 
-### The interactive TUI doesn't show up
+### You expected the live display and got plain lines
 
-Lattice picks `Raw` output whenever stdout isn't a real terminal, a `CI`
-environment variable is set, or `-l`/`--loquacious` was passed. On top of that,
-`lattice run` forces `Raw` whenever the tasks being run pull a `persistent` task
-into their closure, so the dev server's streaming output stays visible.
-Redirecting output to a file or a pipe fails the TTY check, which is the most
-common cause. See [Output and logging](/lattice/docs/output-modes).
+Lattice uses raw, line-by-line output whenever stdout is not a terminal, `CI` is
+set to any value, `-l`/`--loquacious` was passed, or `settings.loquacious` is
+`true`. A run that pulls a `persistent: true` task into its graph is raw too,
+even at a terminal, so a dev server's output stays visible.
 
-### You wanted plain lines but got the interactive view
+Redirecting or piping fails the terminal check, and that is the usual cause.
+Nothing forces the live display back on. See [Output and
+logging](/lattice/docs/output-modes).
 
-Fix: pass `-l`/`--loquacious`, set `settings.loquacious: true` in `lattice.json`,
-or set `CI` in the environment. Any one forces `Raw`, which is also the readable
-form when piping `lattice run` into another tool or a CI log viewer.
+### You wanted plain lines and got the live display
 
-### Colored output shows up somewhere it shouldn't
+Pass `-l`, set `settings.loquacious` to `true` in `lattice.json`, or set `CI` in
+the environment. Any one of them gives you the raw stream, which is also the
+readable form when you are piping `lattice run` into something else.
 
-Color is emitted only when stdout is a real terminal, in both modes. An `-l` run
-at your shell has colored `workspace:task` labels; the same run piped or
-redirected has none. If you see escapes in something that isn't a terminal,
-whatever is running Lattice is presenting itself as one.
+### Color shows up where it should not
 
-Fix: set `NO_COLOR=1` (any value) to suppress color everywhere without changing
-the output mode.
+Color follows the terminal, not the output mode. An `-l` run at your shell has
+colored `workspace:task` labels and the same run redirected to a file has none.
+Escapes in something that is not a terminal mean whatever is running Lattice is
+presenting itself as one.
 
-### A persistent task never lets `lattice run` finish
+Set `NO_COLOR` to any value to suppress color everywhere without changing the
+layout or the mode.
 
-Once a run starts a `persistent: true` task — a dev server, a watcher — the run
-waits on a shutdown signal before exiting. Non-persistent prerequisites still run
-to completion and their results are visible first, but as long as the task is up
-the process blocks until you send `Ctrl-C`. That's the intended shape of a `dev`
-run, and no flag changes it.
+### A run with a dev server in it never finishes
 
-The run does end by itself if every persistent task in it exits, so a task marked
-persistent by mistake no longer blocks: it gets an `EXITED (code <n>)` line and a
-counted failure. See [Persistent tasks](/lattice/docs/persistent-tasks).
+Once a run starts a `persistent: true` task it waits, streaming that task's
+output, until you interrupt it. Everything else in the graph finishes first and
+its results are visible above. No flag changes this: it is what a `dev` run is.
 
-Fix: for day-to-day use, run the persistent task on its own in one terminal and
-everything else separately — see [Dev servers and
-watchers](/lattice/docs/dev-servers). For a run that always terminates, leave the
-persistent task out of the requested list and run its prerequisites alone.
+`Ctrl-C` stops it, and the run exits `130` with no message about the interrupt.
+A run also ends on its own once every persistent task in it has exited, so a task marked persistent by mistake
+no longer blocks: it gets an `exited (code 0)` line and the run prints its
+summary. For a run that always terminates, leave the persistent task out of the
+names you pass. See [Run dev servers](/lattice/docs/dev-servers).
+
+### A task cannot depend on your `dev` task
+
+```text
+Error: task 'dev' in workspace 'web' is persistent, so no other task may depend on it
+```
+
+Nothing can wait on a task that never exits, so a persistent task has to be a
+leaf. If another task needs what the dev server produces, depend on the build
+step that produces it. See [Persistent tasks](/lattice/docs/persistent-tasks).
 
 ## Running
 
-### A `--filter` ran more or fewer workspaces than you expected
+### The run printed `FAILED` lines but the summary says `0 failed`
 
-`--filter <pattern>` matches workspaces whose **name** contains `pattern` — a
-substring match, not a path match. The matches are the roots of
-the run, so the graph also holds everything they depend on, transitively. Those
-extra nodes are tagged `(dependency)` under `--dry-run`. Nothing that depends on
-a match is included. A filter matching nothing prints
-`lattice: no workspaces matched filter '<pattern>'.` and exits 0.
+```text
+docs:build: running
+ui:build: running
+docs:build: FAILED
+ui:build: FAILED
+lattice: 2 tasks, 0 cached, 0 failed, 1.49s
+```
 
-Fix: match on the workspace `name` as declared in `lattice.json`, not a directory
-name or a glob. If a prerequisite you expected is missing, check that the
-depending workspace lists it in its `dependsOn` and that the task's `dependsOn`
-carries the `^`. See [Selecting what runs](/lattice/docs/filtering).
+The run was interrupted. `Ctrl-C`, or the `SIGTERM` a CI runner sends when
+someone cancels the job, stops the scheduler and terminates each running task's
+whole process group. Those children exit non-zero, so each task reports `FAILED`,
+and none of them is counted as a failure.
 
-### `.lattice/schema.json` is missing or your editor shows a stale schema
+Nothing prints the word interrupted. The exit code is the only signal, and it is
+`130`, so read `$?` rather than the summary. A build that genuinely broke exits
+`1`. See [Run Lattice in CI](/lattice/docs/continuous-integration).
 
-`lattice run`, `lattice setup`, and `lattice prune` each write the bundled schema
-when `.lattice/schema.json` is absent. An existing file is left alone, even an old
-one, so a copy you customized or committed is never churned.
+### `--filter` ran more or fewer workspaces than you expected
 
-Fix: delete the file and rerun any command that loads the config — `lattice run
-... --dry-run` is enough — or rewrite it outright:
+`--filter <pattern>` is a substring match against a workspace's `name`, not
+against its path and not a glob. The matches are the roots of the run, so the
+graph also holds everything they depend on, transitively, tagged `(dependency)`
+under `--dry-run`. Nothing that depends on a match is included. A pattern that
+matches nothing prints `lattice: no workspaces matched filter '<pattern>'.` and
+exits `0`.
+
+Match on the `name` as declared in `lattice.json`. If a prerequisite you
+expected is missing, check that the depending workspace lists it in its
+`dependsOn` and that the task's `dependsOn` entry carries the `^`. See
+[Selecting what runs](/lattice/docs/filtering).
+
+### `lattice prune` refuses to run
+
+```text
+Error: no cache size limit set. Pass --max-size, or set settings.maxCacheSize in lattice.json
+```
+
+`prune` evicts entries until the cache is under a limit, and it will not invent
+one. Pass `--max-size 2GB`, or set `settings.maxCacheSize` so every run holds
+itself to the same budget:
+
+```json
+{
+  "settings": {
+    "maxCacheSize": "2GB"
+  }
+}
+```
+
+### `.lattice/schema.json` is missing, or your editor shows a stale schema
+
+Any command that opens the project writes the bundled schema when
+`.lattice/schema.json` is absent, and leaves an existing file alone however old
+it is, so a copy you customized is never churned.
+
+To pick up a newer schema, delete the file and run any command that loads the
+config, such as `lattice run build --dry-run`. Or rewrite everything:
 
 ```sh
 lattice init --force
 ```
 
-`schema.json` is meant to be committed. It's the one thing under `.lattice/` that
-`lattice init` does not add to `.gitignore`.
+`schema.json` is meant to be committed. It is the one thing under `.lattice/`
+that `lattice init` does not add to `.gitignore`.
 
-## Clean slate and gathering information
+## Start over
 
-Everything under `.lattice/` is derived state:
+Everything under `.lattice/` is derived, apart from the schema copy:
 
 | Path | What deleting it costs |
 | --- | --- |
-| `.lattice/cache/` | Cached task outputs, keyed by content. Every task reruns cold on the next `lattice run`. |
-| `.lattice/toolchains/` | Provisioned engines. Any engine with an `installCmd` reprovisions next time it's needed — a network fetch, not a config change. |
-| `.lattice/bin/` | Lattice's own self-managed versions, present when this repo pins `latticeVersion` to something other than the binary on your `PATH`. The next command re-downloads and re-verifies the pinned release. |
-| `.lattice/schema.json` | The one file here meant to be committed. If it's gone from disk but still tracked, `git status` shows it deleted; if it's genuinely gone, the next `run`/`setup`/`prune` rewrites it. |
+| `.lattice/cache/` | Cached task results. Every task reruns cold once. |
+| `.lattice/toolchains/` | Provisioned engines. Any engine with an `installCmd` reinstalls the next time it is needed, which is a network fetch and not a config change. |
+| `.lattice/bin/` | The Lattice versions Lattice manages, present when the repo pins a `latticeVersion` other than the binary on your `PATH`. The next command re-downloads and re-verifies the pinned release. |
+| `.lattice/schema.json` | The one file here meant to be committed. If it is gone from disk but still tracked, `git status` shows it deleted; if it is genuinely gone, the next command that loads the config rewrites it. |
 
-`rm -rf .lattice` is a complete reset. Nothing under it is required for
-correctness, only for speed and for not reprovisioning tools you already have. It
-never touches `lattice.json`, which lives at the repo root. You do not need to
-rerun `lattice init` afterward.
+`rm -rf .lattice` is a complete reset. Nothing under it is needed for
+correctness, only for speed and for not reinstalling tools you already have. It
+never touches `lattice.json` at the repo root, and you do not need to rerun
+`lattice init` afterward.
 
-Before filing an issue or asking a teammate for help, gather:
+## Gather information for a bug report
 
-| Command | What it tells you |
+| Command | What it gives you |
 | --- | --- |
-| `lattice version` | The exact binary version that ran, useful when a repo pins `latticeVersion`. |
+| `lattice version` | The version of the binary that actually ran, which matters when the repo pins one. |
 | `lattice run <tasks> --dry-run` | The graph and every resolved command, without running or caching anything. |
-| `lattice run <tasks> -l` | Raw output plus cache hash and hit/miss lines, for caching questions and for full output to paste into a report. |
+| `lattice run <tasks> -l` | Every hash, every cache decision, and each task's full output. |
 
 For the models behind these symptoms, see [Driver
 detection](/lattice/docs/drivers), [Engines and

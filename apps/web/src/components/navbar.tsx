@@ -36,7 +36,7 @@ const Navbar = () => {
 				<button
 					type="button"
 					className="navbar-toggler border-0 p-2"
-					aria-label="Toggle navigation"
+					aria-label={open ? 'Close menu' : 'Open menu'}
 					aria-expanded={open}
 					onClick={() => setOpen((v) => !v)}
 					style={{ color: 'var(--text)', boxShadow: 'none' }}

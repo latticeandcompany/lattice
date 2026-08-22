@@ -96,14 +96,14 @@ const SetupWizard = () => {
 				<div className="empty-state">
 					<i className="bi bi-folder2-open fs-1" aria-hidden="true" />
 					<h1 className="h4 fw-bold" style={{ color: 'var(--text)' }}>
-						Open a repo to get started
+						Open a project to get started
 					</h1>
 					<p style={{ maxWidth: '28rem' }}>
-						Pick a folder. If it already has a lattice.json, Lattice opens it. If it does not,
-						Lattice looks around the repo and suggests one.
+						Choose a directory. If it holds a lattice.json, Lattice opens the project. If it does
+						not, Lattice scans for workspaces and proposes one.
 					</p>
 					<button type="button" className="btn btn-primary px-4" onClick={() => void pickAndOpen()}>
-						Choose a folder
+						Open a project…
 					</button>
 				</div>
 			</div>
@@ -114,7 +114,7 @@ const SetupWizard = () => {
 		<div className="app-main__scroll">
 			<div className="app-main__inner" style={{ maxWidth: '48rem' }}>
 				<h1 className="fw-bold mb-4" style={{ fontSize: '2rem', letterSpacing: '-0.02em' }}>
-					Set up this repo
+					Set up this project
 				</h1>
 
 				{error && (
@@ -127,14 +127,15 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">1</div>
 					<div className="step__body">
-						<h2 className="step__title">The folder</h2>
+						<h2 className="step__title">Project root</h2>
+						<p className="step__hint">Lattice writes lattice.json here.</p>
 						<div className="step__code step__code--file selectable">{pendingRoot}</div>
 						<button
 							type="button"
 							className="btn btn-outline-secondary btn-sm"
 							onClick={() => void pickAndOpen()}
 						>
-							Choose a different one
+							Choose another directory
 						</button>
 					</div>
 				</div>
@@ -142,21 +143,19 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">2</div>
 					<div className="step__body">
-						<h2 className="step__title">Where things can run</h2>
+						<h2 className="step__title">Workspaces</h2>
 						{scan === null ? (
-							<Spinner label="Looking through the repo…" className="step__hint" />
+							<Spinner label="Scanning the project…" className="step__hint" />
 						) : scan.candidates.length === 0 ? (
 							<p className="step__hint">
-								Nothing here looks like a workspace yet — no package.json, Cargo.toml, go.mod, or
-								anything else Lattice knows. You can still add folders by hand once the config
-								exists.
+								No directory here holds a manifest Lattice recognises: no package.json, no
+								Cargo.toml, no go.mod. You can declare workspaces by hand once the config exists.
 							</p>
 						) : (
 							<>
 								<p className="step__hint">
-									Every folder with a manifest of its own is listed. The ones Lattice could not
-									find a tool for start unticked, because there would be nothing to run in them
-									yet.
+									Every directory with its own manifest. Unticked means Lattice found no driver to
+									run tasks there.
 								</p>
 								{scan.candidates.map((candidate) => (
 									<CandidateRow
@@ -177,17 +176,18 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">3</div>
 					<div className="step__body">
-						<h2 className="step__title">Tool versions to carry over</h2>
+						<h2 className="step__title">Engines</h2>
 						{scan === null ? (
-							<Spinner label="Looking for pinned versions…" className="step__hint" />
+							<Spinner label="Scanning for pinned versions…" className="step__hint" />
 						) : scan.pins.length === 0 ? (
 							<p className="step__hint">
-								Nothing in this repo records a tool version yet, so there is nothing to carry over.
+								No file in this project records a tool version, so there is nothing to copy.
 							</p>
 						) : (
 							<>
 								<p className="step__hint">
-									Copied exactly as the files here already have them. Nothing is being changed.
+									Tool versions this project already pins. Lattice copies each one into{' '}
+									<code>engines</code> exactly as the file records it.
 								</p>
 								{scan.pins.map((pin) => (
 									<PinRow
@@ -205,7 +205,8 @@ const SetupWizard = () => {
 				<div className="step">
 					<div className="step__num">4</div>
 					<div className="step__body">
-						<h2 className="step__title">What gets written</h2>
+						<h2 className="step__title">Root config</h2>
+						<p className="step__hint">Lattice writes two files here and updates .gitignore.</p>
 						<div className="card code-card mb-3">
 							<div className="card-header code-card__bar">
 								<span className="code-card__dot" />
@@ -218,9 +219,9 @@ const SetupWizard = () => {
 							</div>
 						</div>
 						<p className="step__hint mb-3">
-							Two other things get written: <code>.lattice/schema.json</code>, so your editor can
-							check the config as you type, and three lines added to <code>.gitignore</code> to keep
-							the cache, the tools Lattice fetches, and the binaries it installs out of git.
+							<code>.lattice/schema.json</code> lets your editor check the config as you type. Three
+							lines in <code>.gitignore</code> keep the cache, the toolchains Lattice installs, and
+							the binaries it manages out of git.
 						</p>
 						<button
 							type="button"
@@ -271,8 +272,8 @@ const CandidateRow = ({
 				{candidate.name}
 			</span>
 			<span className="scan-row__meta d-block">
-				{candidate.path} · found {candidate.marker}
-				{candidate.driver ? ` · runs with ${candidate.driver}` : ' · nothing found to run it with'}
+				{candidate.path} · {candidate.marker}
+				{candidate.driver ? ` · driver: ${candidate.driver}` : ' · no driver found'}
 			</span>
 		</label>
 	</div>
@@ -300,7 +301,7 @@ const PinRow = ({
 			<span className="chip me-2">
 				{pin.engine} {pin.version}
 			</span>
-			<span className="scan-row__meta">already written in {pin.source}</span>
+			<span className="scan-row__meta">pinned in {pin.source}</span>
 		</label>
 	</div>
 );

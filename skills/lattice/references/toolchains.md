@@ -1,163 +1,232 @@
 # Drivers, engines, and provisioning
 
+A **driver** is the tool that turns a workspace's named task into a shell
+command. An **engine** is a versioned tool named under `engines`. The two are
+resolved independently. Every driver is also a well-known engine name, but not
+every engine is a driver.
+
 ## How a driver is chosen
 
-A workspace's task `build` has to become a real shell command. The tool that
-supplies it is the workspace's **driver**. Lattice climbs a fixed ladder per
-workspace and stops at the first rung that produces a single, unambiguous tool:
+Lattice collects candidate tools for a workspace from three kinds of evidence,
+then resolves them by **role rank first** and evidence second.
 
-| Rung | Evidence | Example |
-| --- | --- | --- |
-| 1. Declaration | A tool named in this workspace's or the root's `engines` | `"engines": { "pnpm": ">=8" }` |
-| 2. Native file | A file the developer authored to pin a tool | `packageManager` in `package.json`, `.tool-versions`, `mise.toml` `[tools]`, `.nvmrc`, `rust-toolchain.toml`, a `go.mod` `toolchain` line, `./gradlew`, `.python-version`, `.java-version`, `.ruby-version` |
-| 3. Lockfile | A lockfile or wrapper only one tool produces | `pnpm-lock.yaml`, `bun.lockb`, `Cargo.lock`, `poetry.lock`, `turbo.json` |
-| 4. Nothing unambiguous | — | halt and ask |
+### Step 1: collect candidates
 
-Rung 1 wins outright. Below it, native files and lockfiles only disambiguate
-when two tools would otherwise tie.
+| Evidence | What counts |
+| --- | --- |
+| Declaration | Any driver name that is a key in this workspace's merged `engines` map (root `engines` plus the workspace's own) |
+| Native file | `.nvmrc`, `packageManager` in `package.json`, a tool name in `.tool-versions`, a tool name under `[tools]` in `mise.toml` or `.mise.toml`, `rust-toolchain.toml`, `rust-toolchain`, `.python-version`, `.ruby-version`, a `ruby ` directive in `Gemfile`, `.java-version`, a `toolchain ` directive in `go.mod`, `gradlew`, `mvnw`, `deno.json`, `deno.jsonc` |
+| Lockfile | Any other fingerprint file in the driver table below |
 
-A bare generic marker is never enough on its own: a lone `package.json`,
-`pom.xml`, `pyproject.toml`, or `Gemfile` identifies an ecosystem, not a tool.
-Those names appear only in the candidate list an ambiguity error suggests.
+One tool can be named by several kinds of evidence. Lattice keeps the strongest
+per tool: declaration, then native file, then lockfile.
 
-### Roles: what composes, what conflicts
+### Step 2: resolve by role
 
-Every driver carries one or more roles. Different roles in one workspace compose
-into a stack; the highest rank drives. Two drivers competing for the *same*
-driving role conflict and halt.
+Every driver declares one or more roles. A driver competes with its
+highest-ranked role.
 
-| Role | Rank | Examples |
+| Role | Rank | Drivers with this as their highest role |
 | --- | --- | --- |
 | Runtime | 0 | `node`, `python`, `ruby`, `java`, `kotlin` |
-| Build tool | 1 | `cargo`, `go`, `gradle`, `maven`, `dotnet` |
-| Package manager | 2 | `pnpm`, `npm`, `yarn`, `bun`, `uv`, `poetry`, `nuget` |
-| Task runner | 3 | `just`, `task`, `turbo`, `nx`, `deno`, `rake` |
+| Build tool | 1 | `cargo`, `go`, `gradle`, `maven`, `dotnet`, `swift`, `stack`, `cabal` |
+| Package manager | 2 | `pnpm`, `yarn`, `npm`, `bun`, `uv`, `poetry`, `pdm`, `pipenv`, `pip`, `bundler`, `nuget`, `pod`, `composer`, `dart` |
+| Task runner | 3 | `just`, `task`, `turbo`, `nx`, `deno`, `rake`, `mix` |
 
-A tool can fill several roles: `deno` is a runtime, a package manager, and a task
-runner, and `bun` is a runtime and a package manager. Such a tool drives with its
-highest-ranked role — `deno` as a task runner, `bun` as a package manager — so a
-`.nvmrc` beside a `bun.lockb` still resolves to bun rather than tying with node.
+The resolution rules, in order:
 
-A `.nvmrc` beside a `pnpm-lock.yaml` is not a conflict: pnpm drives, and node
-stays on record in the resolved engine map so it can still be provisioned. Two
-package managers — `pnpm-lock.yaml` and `bun.lockb` — have no tiebreak and halt.
+1. Take the highest role rank among all candidates.
+2. If that rank is Runtime (0), halt. A runtime cannot drive a named task.
+   There is no universal `node build`.
+3. Keep only the candidates at that rank. If exactly one remains, it drives.
+4. If several remain, and exactly one of them is a declaration, that one drives.
+5. Otherwise, halt with an ambiguity error.
 
-A pure runtime can never drive a named task by itself; there is no universal
-`node build`. A workspace whose only evidence is runtime-level halts exactly as
-if there were no evidence at all:
+**Role rank is checked before evidence rank.** A declaration does not override a
+higher-ranked tool. Declaring `"engines": { "pnpm": ">=8" }` in a workspace that
+also has a `turbo.json` resolves to `turbo`, because a task runner outranks a
+package manager. To force `pnpm` there, set `"auto": false` and write `scripts`.
+
+Consequences worth memorizing:
+
+- `.nvmrc` plus `pnpm-lock.yaml` resolves to `pnpm`. Different roles compose;
+  `node` stays in the engine map and can still be version-checked or
+  provisioned.
+- `pnpm-lock.yaml` plus `bun.lockb` halts. Two package managers, same rank, no
+  declaration.
+- `bun.lockb` plus `.nvmrc` resolves to `bun`. Bun's highest role is package
+  manager, which outranks node's runtime.
+- `turbo.json` plus `pnpm-lock.yaml` resolves to `turbo`.
+- `Gemfile` with a `ruby` directive plus `Rakefile` resolves to `rake`.
+
+### A generic marker is never evidence
+
+A file that names a language but not a tool never produces a candidate. These
+markers are read only to build the candidate list an ambiguity error suggests:
+
+| Marker present | Tools the error names |
+| --- | --- |
+| `package.json` | `pnpm`, `npm`, `yarn`, `bun` |
+| `Cargo.toml` | `cargo` |
+| `go.mod` | `go` |
+| `pyproject.toml` | `uv`, `poetry`, `pdm`, `pipenv` |
+| `requirements.txt` | `pip`, `uv`, `poetry` |
+| `setup.py` | `pip`, `uv`, `poetry` |
+| `Gemfile` | `bundler`, `rake` |
+| `pom.xml` | `maven` |
+| `build.gradle`, `build.gradle.kts` | `gradle` |
+| `composer.json` | `composer` |
+| `mix.exs` | `mix` |
+| `pubspec.yaml` | `dart` |
+| `Package.swift` | `swift` |
+| `stack.yaml` | `stack` |
+| `cabal.project` | `cabal` |
+| a `.sln`, `.csproj`, `.fsproj`, or `.vbproj` file | `dotnet`, `nuget` |
+
+The first marker in that order wins. A workspace holding only a marker halts:
 
 ```text
-Error: workspace 'app' has an ambiguous or undeclared task driver.
-No task driver could be detected (no lockfile, wrapper, or native declaration).
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'app' has an ambiguous or undeclared driver.
+Candidate drivers: pnpm, npm, yarn, bun
+Declare the driver in lattice.json, under this workspace:
+  "engines": { "pnpm": ">=0.0.0" }
+```
+
+A workspace holding no recognized file at all, or only runtime-level evidence,
+halts with the other form:
+
+```text
+Error: workspace 'app' has an ambiguous or undeclared driver.
+Lattice detected no driver. The directory holds no lockfile, no wrapper, and no native declaration.
+Declare the driver in lattice.json, under this workspace:
   "auto": false, "scripts": { "build": "<command>" }
 ```
 
-### `auto: false` turns the ladder's consequences off
+The suggested fix names the first candidate that could actually drive tasks. It
+falls back to the `auto: false` form when no candidate can.
 
-Lattice may still notice a driver, but it never infers a command from one and an
-ambiguous or undetectable result never halts the run. Only `scripts` supplies
-commands. A task requested against such a workspace with no matching entry is
-fatal rather than skipped.
+### `auto: false` disables the consequences, not the detection
+
+With `auto: false` Lattice still runs detection, but an ambiguous or absent
+result is never an error and no command is ever inferred. Only `scripts`
+supplies commands, and a task requested against such a workspace with no
+matching `scripts` entry is fatal rather than skipped.
 
 ## The built-in driver table
 
-`{task}` is the placeholder each driver substitutes the task name into.
+34 drivers. `{task}` is replaced by the task name. `Language` is the ecosystem
+slug Lattice tags the workspace with; 13 slugs are in use, and `just` and `task`
+carry none because they sit above whatever the workspace is.
 
-### JavaScript and TypeScript
+| Tool | Language | Roles | Fingerprint | Version command | Invoke template |
+| --- | --- | --- | --- | --- | --- |
+| `node` | node | Runtime | `.nvmrc` | `node --version` | `node {task}` |
+| `deno` | node | Runtime, Package manager, Task runner | `deno.json`, `deno.jsonc`, `deno.lock` | `deno --version` | `deno task {task}` |
+| `bun` | node | Runtime, Package manager | `bun.lockb`, `bun.lock` | `bun --version` | `bun run {task}` |
+| `pnpm` | node | Package manager | `pnpm-lock.yaml` | `pnpm --version` | `pnpm run {task}` |
+| `yarn` | node | Package manager | `yarn.lock` | `yarn --version` | `yarn {task}` |
+| `npm` | node | Package manager | `package-lock.json`, `npm-shrinkwrap.json` | `npm --version` | `npm run {task}` |
+| `turbo` | node | Task runner | `turbo.json` | `turbo --version` | `turbo run {task}` |
+| `nx` | node | Task runner | `nx.json` | `nx --version` | `nx run {task}` |
+| `cargo` | rust | Build tool | `Cargo.lock`, `rust-toolchain.toml`, `rust-toolchain` | `cargo --version` | `cargo {task}` |
+| `go` | go | Build tool | `go.sum` | `go version` | `go {task}` |
+| `uv` | python | Package manager | `uv.lock` | `uv --version` | `uv run {task}` |
+| `poetry` | python | Package manager | `poetry.lock` | `poetry --version` | `poetry run {task}` |
+| `pdm` | python | Package manager | `pdm.lock` | `pdm --version` | `pdm run {task}` |
+| `pipenv` | python | Package manager | `Pipfile.lock` | `pipenv --version` | `pipenv run {task}` |
+| `pip` | python | Package manager | none | `pip --version` | `pip {task}` |
+| `python` | python | Runtime | `.python-version` | `python --version` | `python -m {task}` |
+| `bundler` | ruby | Package manager | `Gemfile.lock` | `bundle --version` | `bundle exec {task}` |
+| `rake` | ruby | Task runner | `Rakefile` | `rake --version` | `rake {task}` |
+| `ruby` | ruby | Runtime | `.ruby-version` | `ruby --version` | `ruby {task}` |
+| `gradle` | java | Build tool | `gradlew` | `gradle --version` | `./gradlew {task}` |
+| `maven` | java | Build tool | `mvnw` | `mvn --version` | `./mvnw {task}` |
+| `java` | java | Runtime | `.java-version` | `java -version` | `java {task}` |
+| `kotlin` | kotlin | Runtime | none | `kotlinc -version` | `kotlin {task}` |
+| `dotnet` | dotnet | Build tool | `global.json` | `dotnet --version` | `dotnet {task}` |
+| `nuget` | dotnet | Package manager | `packages.config` | `nuget help` | `nuget {task}` |
+| `pod` | swift | Package manager | `Podfile`, `Podfile.lock` | `pod --version` | `pod {task}` |
+| `swift` | swift | Build tool | `Package.resolved` | `swift --version` | `swift {task}` |
+| `composer` | php | Package manager | `composer.lock` | `composer --version` | `composer {task}` |
+| `mix` | elixir | Package manager, Task runner | `mix.lock` | `mix --version` | `mix {task}` |
+| `dart` | dart | Package manager | `pubspec.lock` | `dart --version` | `dart pub {task}` |
+| `stack` | haskell | Build tool | `stack.yaml.lock` | `stack --version` | `stack {task}` |
+| `cabal` | haskell | Build tool | `cabal.project.freeze` | `cabal --version` | `cabal {task}` |
+| `just` | none | Task runner | `justfile`, `.justfile` | `just --version` | `just {task}` |
+| `task` | none | Task runner | `Taskfile.yml`, `Taskfile.yaml` | `task --version` | `task {task}` |
 
-| Tool | Role | Fingerprint | Version command | Invoke template |
-| --- | --- | --- | --- | --- |
-| `node` | Runtime | `.nvmrc` | `node --version` | `node {task}` |
-| `deno` | Runtime, Package Manager, Task Runner | `deno.json`, `deno.jsonc`, `deno.lock` | `deno --version` | `deno task {task}` |
-| `bun` | Runtime, Package Manager | `bun.lockb`, `bun.lock` | `bun --version` | `bun run {task}` |
-| `pnpm` | Package Manager | `pnpm-lock.yaml` | `pnpm --version` | `pnpm run {task}` |
-| `yarn` | Package Manager | `yarn.lock` | `yarn --version` | `yarn {task}` |
-| `npm` | Package Manager | `package-lock.json`, `npm-shrinkwrap.json` | `npm --version` | `npm run {task}` |
+Two drivers have no fingerprint and can only be selected by declaration.
+`pip` has none because a `requirements.txt` is read by pip, uv, and pip-tools
+alike. `kotlin` has none because a Kotlin project is driven by gradle or maven,
+and only a `.tool-versions` entry names the Kotlin toolchain itself.
 
-### Rust, Go, Python
-
-`pip` has no fingerprint of its own: a `requirements.txt` is read by pip, uv, and
-pip-tools alike, so naming pip in `engines` is the only way to select it.
-
-| Tool | Role | Fingerprint | Version command | Invoke template |
-| --- | --- | --- | --- | --- |
-| `cargo` | Build Tool | `Cargo.lock`, `rust-toolchain.toml`, `rust-toolchain` | `cargo --version` | `cargo {task}` |
-| `go` | Build Tool | `go.sum` | `go version` | `go {task}` |
-| `uv` | Package Manager | `uv.lock` | `uv --version` | `uv run {task}` |
-| `poetry` | Package Manager | `poetry.lock` | `poetry --version` | `poetry run {task}` |
-| `pdm` | Package Manager | `pdm.lock` | `pdm --version` | `pdm run {task}` |
-| `pipenv` | Package Manager | `Pipfile.lock` | `pipenv --version` | `pipenv run {task}` |
-| `pip` | Package Manager | none — declaration only | `pip --version` | `pip {task}` |
-| `python` | Runtime | `.python-version` | `python --version` | `python -m {task}` |
-
-### Ruby, the JVM, .NET
-
-`kotlin` has no fingerprint either: a Kotlin project is driven by gradle or
-maven, so the Kotlin toolchain is pinned as an engine and composes underneath.
-`nuget` fingerprints only the legacy `packages.config` layout — an SDK-style
-project can carry a `packages.lock.json` and still be a `dotnet` workspace.
-
-| Tool | Role | Fingerprint | Version command | Invoke template |
-| --- | --- | --- | --- | --- |
-| `bundler` | Package Manager | `Gemfile.lock` | `bundle --version` | `bundle exec {task}` |
-| `rake` | Task Runner | `Rakefile` | `rake --version` | `rake {task}` |
-| `ruby` | Runtime | `.ruby-version` | `ruby --version` | `ruby {task}` |
-| `gradle` | Build Tool | `gradlew` | `gradle --version` | `./gradlew {task}` |
-| `maven` | Build Tool | `mvnw` | `mvn --version` | `./mvnw {task}` |
-| `java` | Runtime | `.java-version` | `java -version` | `java {task}` |
-| `kotlin` | Runtime | none — declaration only | `kotlinc -version` | `kotlin {task}` |
-| `dotnet` | Build Tool | `global.json` | `dotnet --version` | `dotnet {task}` |
-| `nuget` | Package Manager | `packages.config` | `nuget help` | `nuget {task}` |
-
-### Swift, PHP, Elixir, Dart, Haskell
-
-| Tool | Role | Fingerprint | Version command | Invoke template |
-| --- | --- | --- | --- | --- |
-| `pod` | Package Manager | `Podfile`, `Podfile.lock` | `pod --version` | `pod {task}` |
-| `swift` | Build Tool | `Package.resolved` | `swift --version` | `swift {task}` |
-| `composer` | Package Manager | `composer.lock` | `composer --version` | `composer {task}` |
-| `mix` | Package Manager, Task Runner | `mix.lock` | `mix --version` | `mix {task}` |
-| `dart` | Package Manager | `pubspec.lock` | `dart --version` | `dart pub {task}` |
-| `stack` | Build Tool | `stack.yaml.lock` | `stack --version` | `stack {task}` |
-| `cabal` | Build Tool | `cabal.project.freeze` | `cabal --version` | `cabal {task}` |
-
-### Generic task runners
-
-Not tied to one language; any of these can sit above a language-specific driver.
-
-| Tool | Role | Fingerprint | Version command | Invoke template |
-| --- | --- | --- | --- | --- |
-| `just` | Task Runner | `justfile`, `.justfile` | `just --version` | `just {task}` |
-| `task` | Task Runner | `Taskfile.yml`, `Taskfile.yaml` | `task --version` | `task {task}` |
-| `turbo` | Task Runner | `turbo.json` | `turbo --version` | `turbo run {task}` |
-| `nx` | Task Runner | `nx.json` | `nx --version` | `nx run {task}` |
-
-That is the complete set: 34 drivers across 13 ecosystem groups.
+`nuget` fingerprints `packages.config`, the legacy layout, and not
+`packages.lock.json`. An SDK-style project can carry a `packages.lock.json` and
+still be a `dotnet` workspace.
 
 ## How a task's command resolves
 
-An explicit entry in a workspace's `scripts` map always wins. Only a task with
-no entry there falls back to the driver's inferred invocation. Two limits on
-inference are worth knowing:
+An entry in the workspace's `scripts` map always wins, whether `auto` is true or
+false. Only a task with no `scripts` entry falls back to the driver's invoke
+template. Two limits on inference:
 
-- For JavaScript-family drivers, inference requires the task name to exist in
-  the manifest's own `scripts`/`tasks` map. Lattice never invents a script the
-  `package.json` doesn't have.
-- For direct-invoke drivers (`cargo`, `go`, and similar), inference never
-  fabricates a command for a `persistent` task — there is no universal
-  `cargo dev` — so a persistent task on one of those needs an explicit
+- For `npm`, `pnpm`, `yarn`, and `bun`, the task name must be a key in
+  `package.json`'s `scripts` object. For `deno`, it must be a key under `tasks`
+  in `deno.json` or `deno.jsonc`. Lattice never invents a script the manifest
+  does not have.
+- For every other driver, a `persistent: true` task is never inferred. There is
+  no `cargo dev`. A persistent task on a direct-invoke driver needs an explicit
   `scripts` entry.
+
+A task with no command in a workspace is skipped silently when `auto` is true,
+and fatal when `auto` is false.
+
+## What `lattice setup` installs per driver
+
+`lattice setup` provisions engines, then runs one dependency-install command per
+workspace, chosen by the resolved driver.
+
+| Driver | Install command |
+| --- | --- |
+| `pnpm` | `pnpm install` |
+| `yarn` | `yarn install` |
+| `npm` | `npm install` |
+| `bun` | `bun install` |
+| `deno` | `deno cache .` |
+| `cargo` | `cargo fetch` |
+| `go` | `go mod download` |
+| `poetry` | `poetry install` |
+| `uv` | `uv sync` |
+| `pdm` | `pdm install` |
+| `pipenv` | `pipenv install` |
+| `pip` | `pip install -r requirements.txt` |
+| `bundler` | `bundle install` |
+| `dotnet` | `dotnet restore` |
+| `nuget` | `nuget restore` |
+| `pod` | `pod install` |
+| `swift` | `swift package resolve` |
+| `composer` | `composer install` |
+| `mix` | `mix deps.get` |
+| `dart` | `dart pub get` |
+| `stack` | `stack build --only-dependencies` |
+| `cabal` | `cabal build --only-download` |
+| `gradle` | `./gradlew dependencies`, or `gradle dependencies` with no wrapper |
+| `maven` | `./mvnw dependency:resolve`, or `mvn dependency:resolve` with no wrapper |
+
+`node`, `python`, `ruby`, `java`, `kotlin`, `rake`, `just`, `task`, `turbo`, and
+`nx` have no install command. Their workspaces get toolchains and nothing else.
+
+After a successful install, `setup` writes an empty `.lattice-setup-marker` file
+in the workspace directory. It is the mtime `setup` compares lockfiles against
+to decide whether to reinstall. `--force` reinstalls regardless. `lattice init`
+does **not** add this file to `.gitignore`; add it yourself, or it becomes a
+hashed input for every task that declares no `inputs`.
 
 ## Well-known engines
 
-An `engines` value may be a bare constraint string only for a name Lattice has a
-built-in version rule for. Anything else must use the object form with an
-explicit `versionCmd`, or the config is rejected on load.
-
-Every tool in the driver table above is a well-known engine, so any driver can be
-declared in string form. A handful of names appear here only — they pin a compiler
-or interpreter that some other tool drives tasks with.
+An `engines` value may be a bare constraint string only for a name in this
+table. Any other name must use the object form with an explicit `versionCmd`, or
+the config is rejected when it loads. 40 names:
 
 | Engine | Version rule |
 | --- | --- |
@@ -202,32 +271,57 @@ or interpreter that some other tool drives tasks with.
 | `turbo` | `turbo --version` |
 | `nx` | `nx --version` |
 
-`rust`, `php`, `elixir`, and `haskell`/`ghc` have no entry in the driver table —
-cargo, composer, mix, and stack/cabal drive those workspaces, while these names
-pin the language toolchain itself. `nuget help` is the version rule because
-nuget.exe has no `--version` flag; it prints `NuGet Version: x.y.z` first.
+Six names are engines but not drivers: `rust`, `python3`, `php`, `elixir`,
+`haskell`, and `ghc`. They pin a compiler or interpreter that some other tool
+drives tasks with. `nuget help` is the version rule because `nuget.exe` has no
+`--version` flag and prints `NuGet Version: x.y.z` first.
 
-Lattice parses the first version-looking substring of whatever a version command
-prints, so extra banner text does not matter.
+Version parsing takes the first run of digits and dots after the first digit in
+the command's output, then reads it as major, minor, patch with missing parts
+set to zero. `v20.11.1`, `go1.22`, `rustc 1.75.0 (abc 2024)`, and `1.75` all
+parse. Banner text around the number does not matter. Output with no digits at
+all fails to parse.
+
+A constraint is matched as a semver range when it parses as one (`>=20.0.0`,
+`^1.75`). Otherwise the first version in the constraint string is treated as a
+lower bound (`1.22` accepts 1.22.3). An empty string accepts anything.
 
 ## The three modes, chosen by shape
 
+The shape of an engine's value selects the mode. The engine's name, and whether
+it is well-known, change nothing.
+
 | You write | Mode | What happens |
 | --- | --- | --- |
-| Nothing, or `{}` | host `PATH` | Trusts whatever is on `PATH`. Installs nothing, checks nothing |
-| A version constraint, no `installCmd` | validate-only | Runs the version command against the host tool, fails if it doesn't satisfy the constraint. Installs nothing |
-| An `installCmd` | provisioned | Runs `installCmd` into a content-addressed directory, version-checks the result, pins it, prepends its `bin` to the task's `PATH` |
+| Nothing, or `{}`, or an object with only `versionCmd` or only `bin` | Host `PATH` | Trusts whatever is on `PATH`. Installs nothing, checks nothing, not even that the tool exists |
+| A version constraint and no `installCmd` | Validate-only | Runs the version command against the host tool. Fails before any task starts if the result does not satisfy the constraint. Installs nothing |
+| An `installCmd` | Provisioned | Runs `installCmd` into a content-addressed directory, version-checks the result, writes a pin, prepends its `bin` to the task's `PATH` |
 
-Nothing else changes the mode — not the engine's name, not whether it's
-well-known. A validate-only failure looks like:
+Validate-only failures, verbatim:
 
 ```text
-engine 'node' 18.19.0 on PATH does not satisfy constraint '>=20.0.0'
+Error: engine 'node' on PATH is 26.0.0, which does not satisfy the constraint '>=99.0.0'
 ```
 
-Because validate-only trusts each machine's own `PATH`, a constraint that passes
-on one machine and fails on another is working as declared. Moving it to
-provisioned mode is what makes machines agree.
+```text
+Error: engine 'cabal': version command `cabal --version` failed:
+sh: cabal: command not found
+```
+
+```text
+Error: engine 'alpes' has a version constraint but no way to check the installed version. 'alpes' is not a well-known engine, so add a `versionCmd` to it
+```
+
+That last one is the object form's trap. `{ "version": ">=1.0.0" }` on a name
+outside the well-known table passes config validation and then fails on the
+first real run. Add `versionCmd` alongside `version`.
+
+Validate-only reads each machine's own `PATH`, so a constraint that passes on
+one machine and fails on another is behaving as declared. An `installCmd` is
+what makes machines agree.
+
+`--dry-run` returns before any engine is resolved, so it never reports an engine
+failure. `lattice setup` reports them up front.
 
 ## Where a provisioned tool lives
 
@@ -235,29 +329,34 @@ provisioned mode is what makes machines agree.
 .lattice/toolchains/
   just/
     1.30.0-1a2b3c4d/
-      bin/          # prepended to the task's PATH
+      bin/
       pins.json
 ```
 
-The directory is named for the resolved version plus the first 8 hex characters
-of `sha256(installCmd)`. `pins.json` records `engine`, `version`, `installHash`,
-and `bin`. Before installing, Lattice reuses an existing directory whose
-`pins.json` matches the current `installCmd` hash and whose `bin` still exists,
-re-checking the version where a version command is available. Installation
-happens once per distinct `installCmd` content.
+The directory name is the resolved version, a hyphen, and the first 8 hex
+characters of `sha256(installCmd)`. `pins.json` records `engine`, `version`,
+`installHash`, and `bin`.
 
-While `installCmd` runs there is no resolved version yet, so the install builds
-into a temporary `tmp-<hash>` directory and is renamed only after the new tool
-passes its version check. Nothing is left pinned on partial failure, so
-rerunning retries from scratch with no state to clean up by hand.
+Before installing, Lattice looks for a directory whose name ends in the current
+install hash, whose `pins.json` records that hash, and whose `bin` directory
+exists. When a version command and a constraint are both available it re-checks
+the version, without reinstalling. A match is reused. So installation happens
+once per distinct `installCmd` string, not once per run, and editing the install
+command provisions into a new directory instead of reusing a stale one.
 
-Hashing the literal `installCmd` string means changing the install command — a
-different registry, a different flag — provisions into a new directory instead of
-silently reusing a stale one.
+The install stages into `tmp-<hash>` and is renamed to its final name only after
+the version check passes. Nothing is left pinned on a partial failure, so
+rerunning retries from scratch with nothing to clean up by hand.
+
+When no version command is available, or its output has no parseable version,
+the resolved version is recorded as `0.0.0` and the directory is named
+`0.0.0-<hash>`. Nothing is checked against the constraint in that case.
 
 `installCmd` receives the target directory twice: as the `LATTICE_TOOLCHAIN_DIR`
-environment variable, and by literal substitution of `$LATTICE_TOOLCHAIN_DIR`
-into the command string before it runs. Either spelling works:
+environment variable, and by literal substitution of the text
+`$LATTICE_TOOLCHAIN_DIR` into the command string before it runs. Either spelling
+works, including on Windows, where the environment variable would otherwise
+need `%LATTICE_TOOLCHAIN_DIR%`.
 
 ```json
 {
@@ -272,14 +371,23 @@ into the command string before it runs. Either spelling works:
 }
 ```
 
+`bin` defaults to `"bin"` and is resolved relative to the install directory.
+
 ## Resolution and activation
 
-Provisioning and version resolution happen once per workspace, memoized: two
-workspaces resolving to the same merged engine map provision once. *Activating* a
-toolchain — putting its `bin` on `PATH` — happens per task, in the environment of
-the one child process spawned for it. No shell is sourced and no profile is
-written, so `rm -rf .lattice/toolchains` is a complete uninstall.
-
 A workspace's `engines` map merges with the root's, and the workspace wins per
-key. The merge happens before any task in that workspace runs, under both
-`lattice run` and `lattice setup`.
+key. Resolution is memoized on the merged map, so two workspaces that resolve to
+the same map provision once. Under `lattice run`, only the workspaces with nodes
+in the graph have their engines resolved at all. Under `lattice setup`, the root
+map is always resolved, even in a repo that declares no workspaces.
+
+Activating a toolchain means prepending its `bin` directories to the `PATH` of
+the single child process Lattice spawns for one task. No shell is sourced, no
+profile is written, and nothing outside `.lattice/` changes. `rm -rf
+.lattice/toolchains` is a complete uninstall.
+
+The resolved toolchain identity is part of every affected task's cache key. It
+is built from one entry per engine: `<name>=host` for host mode,
+`<name>=<version>@host` for validate-only, and `<name>=<version>@<installHash>`
+for provisioned, sorted and joined. Changing a constraint that changes the
+resolved version therefore invalidates the cache.

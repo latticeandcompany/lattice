@@ -1,6 +1,6 @@
 ---
 title: Upgrading
-description: Moving a repo to a new Lattice version and keeping a team on one build.
+description: Move a repo to a new Lattice version and keep a team on one build.
 group: Overview
 order: 4
 ---
@@ -8,117 +8,116 @@ order: 4
 # Upgrading
 
 `latticeVersion` in `lattice.json` names the Lattice build this repo runs on.
-`lattice upgrade` writes that pin; every other command only reads it.
+`lattice upgrade` writes that pin. Every other command only reads it.
 
-## `lattice upgrade`
+## Move the repo to a version
 
 ```sh
 lattice upgrade 0.2.0
 lattice upgrade latest
 ```
 
-Given a version, `lattice upgrade`:
+`lattice upgrade` does three things:
 
-1. Downloads that release's binary into `.lattice/bin` (skipped if it is
-   already there — see [Local binaries][bins] below).
+1. Downloads that release's binary into `.lattice/bin`, unless it is already
+   there.
 2. Points the `.lattice/bin/lattice` symlink at it.
 3. Rewrites `latticeVersion` in `lattice.json`, editing the file as text so key
    order and formatting stay as they were.
 
-`lattice upgrade latest` resolves the newest *stable* release. If the project
-has not shipped a stable release yet, it pins the newest pre-release and says so
-in its output.
+`lattice upgrade latest` resolves the newest stable release. If the project has
+not shipped a stable release yet, it pins the newest pre-release and says so.
 
-A version may be given with or without a leading `v` (`0.2.0` or `v0.2.0`), and
-is otherwise validated as semver: anything else is rejected with `'<value>' is
-not a version`. The value ends up in a URL and a filename, so a path like
-`../../etc` does not get past this.
-
-When it finishes, `lattice upgrade` prints what changed, plus the exact path to
-invoke the new binary (`./.lattice/bin/lattice`, or its absolute path if you are
-outside the repo) if it is not the version you are currently running:
+A version may carry a leading `v` or not, and is otherwise validated as semver.
+Anything else is rejected:
 
 ```text
-◆ lattice  upgrade
+'../../etc' is not a version (expected something like 0.2.0)
+```
+
+When it finishes, `lattice upgrade` reports what changed:
+
+```text
+❖ lattice  upgrade
   0.1.0 → 0.2.0
 
 lattice.json now pins 0.2.0. Commit it so the whole repo moves together.
 Run ./.lattice/bin/lattice to use it.
 ```
 
-Commit the updated `lattice.json`. That line is what moves the rest of the team.
+That last line appears only when the new pin is not the version you are
+currently running. Commit the updated `lattice.json`. That is what moves the
+rest of the team.
 
-### Local binaries under `.lattice/bin`
+To fix a stale symlink left behind by a branch switch, run `lattice upgrade`
+for the version already pinned. It downloads nothing, relinks
+`.lattice/bin/lattice`, and reports `already on <version>`.
+
+### What lives under `.lattice/bin`
 
 A repo keeps one binary per version it has ever pinned, named
 `lattice-<version>`, plus a `lattice` symlink pointing at the current one.
-Moving between versions already on disk — switching branches, undoing an
-upgrade — is a symlink swap; only a missing version is downloaded. `rm -rf
-.lattice` removes every locally installed Lattice build along with the rest of
-the directory.
+Moving between versions already on disk is a symlink swap, so switching
+branches or undoing an upgrade costs nothing. Only a missing version is
+downloaded.
 
 A downloaded archive is checked against the release's published checksum before
-it is installed. A mismatch fails the upgrade outright (`checksum mismatch`) and
-leaves both the binary and `lattice.json` untouched.
+it is installed. A mismatch fails the upgrade with `checksum mismatch for
+<asset>`, prints both digests, and leaves the binary and `lattice.json`
+untouched.
 
-Re-running `lattice upgrade` for a version that is already pinned and already
-installed downloads nothing. Lattice still relinks `.lattice/bin/lattice` to it
-and reports `already on <version>`, which fixes a stale symlink left behind by a
-branch switch.
+`rm -rf .lattice` removes every locally installed Lattice build.
 
-## The version-drift check
+## What happens when the running binary is not the pinned one
 
-Once a version is pinned, every other command compares it against the binary
-that was invoked — a branch switch, a fresh clone, or a colleague's `lattice
-upgrade` leaves you holding a different build than the repo pins. What happens
-next depends on where that binary came from.
+A branch switch, a fresh clone, or a colleague's `lattice upgrade` can leave
+you holding a build the repo does not pin. What Lattice does next depends on
+where your binary came from.
 
-**A binary Lattice installed under `.lattice/bin`** is switched automatically:
-the invocation installs the pinned version if needed, relinks
-`.lattice/bin/lattice` to it, and hands the command over to it in place, so it
-runs as if you had invoked the pinned build directly. The switch is already
-underway by the time anything prints:
+**A binary Lattice installed under `.lattice/bin`** is switched
+automatically. The invocation installs the pinned version if needed, relinks
+`.lattice/bin/lattice`, and hands the command over in place, so it runs as if
+you had invoked the pinned build directly:
 
 ```text
-◆ lattice  0.1.0 · this repo pins 0.2.0 · switching
+❖ lattice 0.1.0 · this repo pins 0.2.0 · switching
 ```
 
-If the pinned version cannot be installed (no network, no matching release),
-the command fails rather than silently running the wrong one:
+If the pinned version cannot be installed, the command fails rather than run
+the wrong one:
 
 ```text
 this repo pins lattice 0.2.0, which is not installed and could not be fetched.
 Run with --no-version-check to use lattice 0.1.0 anyway
 ```
 
-**Any other binary** — a `cargo install` build, a debug build on `PATH`, a
-package manager's copy — is never replaced or switched; Lattice does not
-overwrite a binary it did not put there. Instead, on an interactive terminal
-running `lattice run` or `lattice setup`, it prints a one-line advisory nag and
-proceeds with the version you invoked:
+**Any other binary** is never replaced. A `cargo install` build, a debug build
+on `PATH`, or a package manager's copy is left alone, because Lattice does not
+overwrite a binary it did not put there. On an interactive terminal running
+`lattice run` or `lattice setup`, it prints one advisory line and proceeds with
+the version you invoked:
 
 ```text
-◆ lattice 0.1.0 · this repo pins 0.2.0 · run `lattice upgrade 0.2.0`
+❖ lattice 0.1.0 · this repo pins 0.2.0 · run `lattice upgrade 0.2.0`
 ```
 
-The nag never blocks the run, and never appears in CI or raw output — see
-[Output and logging][output-modes] for how that mode is chosen.
+That line never blocks the run, and it never appears in CI or raw output. See
+[Output and logging][output-modes] for how the mode is chosen.
 
-### Silencing it
+### Turn the check off
 
-The automatic switch and the advisory nag read the same three opt-outs, checked
-in this order:
+The automatic switch and the advisory line read the same three opt-outs:
 
 | Opt-out | Scope |
 | --- | --- |
 | `--no-version-check` | This invocation only |
-| `LATTICE_NO_VERSION_CHECK` (any value) | Every invocation in this shell/environment |
+| `LATTICE_NO_VERSION_CHECK` (any value) | Every invocation in this environment |
 | `"settings": { "versionCheck": false }` in `lattice.json` | Every invocation in this repo, for everyone |
 
-With any of these set, a command runs as invoked, drift and all — no switch, no
-nag. `versionCheck` defaults to `true`.
+With any of these set, a command runs as invoked. No switch, no advisory line.
+`versionCheck` defaults to `true`.
 
-## `latticeVersion`: what it does and does not enforce
+## What `latticeVersion` does not do
 
 ```json
 {
@@ -128,28 +127,23 @@ nag. `versionCheck` defaults to `true`.
 }
 ```
 
-`latticeVersion` is read straight out of the JSON, before `lattice.json` is
-otherwise parsed or validated against the schema, so a config written for a
-newer schema can still say which version is able to read it.
+`latticeVersion` is read straight out of the JSON before `lattice.json` is
+parsed or validated, so a config written for a newer schema can still say which
+version is able to read it.
 
-Declaring it drives the switch and nag above, and it is the field `lattice
-upgrade` rewrites. It does not pin or validate anything about the *schema*
-`lattice.json` is written against — there is no per-version schema
-compatibility check beyond what this binary's own parser accepts. Nor does it
-block a command from running under a different version once the check is
-silenced. It is never required: a `lattice.json` with no `latticeVersion` has
-nothing to drift from.
+It does not pin or validate anything about the schema `lattice.json` is written
+against. There is no per-version schema compatibility check beyond what the
+running binary's own parser accepts. It also does not stop a command from
+running under a different version once the check is off. The field is never
+required: a `lattice.json` with no `latticeVersion` has nothing to drift from.
 
-## What an upgrade means for the cache
+## What an upgrade costs the cache
 
 The running Lattice version is one of the inputs hashed into every task's cache
-key, alongside its command, its input files, and its resolved toolchains.
-Changing the version changes every key, so the first run after an upgrade misses
-across the board: every task re-executes and repopulates the cache under its new
-key. Old entries are not lost; they stop being looked up, and are evicted like
-any other unused entry. See [Caching][caching] for the rest of what the key is
-built from and how eviction works.
+key. Changing the version changes every key, so the first run after an upgrade
+misses across the board and repopulates the cache under the new keys. The old
+entries are not lost. They stop being looked up, and they are evicted like any
+other unused entry. See [Caching][caching].
 
-[bins]: #local-binaries-under-latticebin
 [output-modes]: /lattice/docs/output-modes
 [caching]: /lattice/docs/caching

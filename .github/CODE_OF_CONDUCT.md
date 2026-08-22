@@ -1,24 +1,22 @@
-# Lattice — Community Code of Conduct
+# Lattice code of conduct
 
-**Project**: Lattice
-
-**Maintainers**: Ryan Mullin (Primary Maintainer)
-
-**Scope**: All project spaces, primarily GitHub repositories under Lattice & Co., including issues, pull requests, discussions, commits, documentation, the documentation site, and related communications.
+This code of conduct governs the Lattice project. Ryan Mullin is the primary
+maintainer.
 
 ## Purpose
 
 Lattice exists to build and maintain:
 
-- The Lattice build system — task running, dependency ordering, and content-addressed caching
-- The Lattice toolchain manager — engine resolution, version pinning, and provisioning
+- The Lattice build system: task running, dependency ordering, and content-addressed caching
+- The Lattice toolchain manager: engine resolution, version pinning, and provisioning
 - The documentation site at [latticeandcompany.github.io/lattice](https://latticeandcompany.github.io/lattice)
 
 This project is merit-driven and output-oriented. The objective is high-quality code and maintainable systems.
 
-## Scope of Application
+## Scope
 
-This Code of Conduct applies to:
+This Code of Conduct applies to every project space, primarily the GitHub repos
+under Lattice & Co. That includes:
 
 - GitHub Issues
 - Pull Requests
@@ -30,9 +28,9 @@ This Code of Conduct applies to:
 
 Private behavior outside project spaces is outside scope unless it directly affects project operations.
 
-## Standards of Conduct
+## Standards of conduct
 
-### Expected Behavior
+### Expected behavior
 
 Contributors are expected to:
 
@@ -43,7 +41,7 @@ Contributors are expected to:
 - Maintain clarity and efficiency in communication
 - Respect maintainer decisions
 
-## Prohibited Conduct
+### Prohibited conduct
 
 The following behaviors are prohibited:
 
@@ -57,7 +55,7 @@ The following behaviors are prohibited:
 - Attempts to coerce maintainers
 - Excessive drama or social manipulation
 
-## Tooling Advocacy
+## Tooling advocacy
 
 Issues and pull requests about tool support exist to make that support correct, not to argue that one language, package manager, or build tool is superior to another.
 
@@ -70,7 +68,7 @@ Advocacy for or against a specific tool is on-topic only when it bears on:
 
 Off-topic tool advocacy will be removed.
 
-## Political & Ideological Discussion
+## Political and ideological discussion
 
 Political discussion is permitted only if directly relevant to:
 
@@ -82,7 +80,7 @@ Political discussion is permitted only if directly relevant to:
 
 Unrelated ideological debate will be removed.
 
-## Meritocracy Statement
+## Meritocracy statement
 
 This project operates as a meritocracy.
 
@@ -90,7 +88,7 @@ This project operates as a meritocracy.
 - No contributor is evaluated based on personal identity characteristics.
 - No quotas, preferences, or symbolic representation systems are used.
 
-## Governance & Enforcement
+## Governance and enforcement
 
 ### Authority
 
@@ -106,7 +104,7 @@ Ryan reserves full discretion in:
 
 There is no voting system.
 
-### Enforcement Model
+### Enforcement model
 
 Enforcement may include:
 
@@ -118,7 +116,7 @@ Enforcement may include:
 
 Some violations may bypass warnings entirely.
 
-### Zero-Tolerance Violations
+### Zero-tolerance violations
 
 Immediate permanent removal may occur for:
 
@@ -138,7 +136,7 @@ Appeals may be submitted via:
 
 Appeals are reviewed solely by Ryan. Decisions after appeal are final.
 
-## Contributor Expectations
+## Contributor expectations
 
 By submitting a contribution, you agree that:
 
@@ -147,7 +145,7 @@ By submitting a contribution, you agree that:
 - You do not gain governance rights through contribution.
 - The project may change direction at any time.
 
-## Reporting Violations
+## Reporting violations
 
 To report misconduct:
 
@@ -162,9 +160,9 @@ Reports should include:
 
 Anonymous reports may not be actionable.
 
-Security vulnerabilities are **not** reported here — see [SECURITY.md](SECURITY.md).
+Security vulnerabilities are **not** reported here. See [SECURITY.md](SECURITY.md).
 
-## Final Authority Clause
+## Final authority clause
 
 Lattice and its maintainers reserve the right to:
 
