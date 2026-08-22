@@ -1,6 +1,6 @@
 ---
-import CopyCommand from './copyCommand';
-import { getStartedUrl, githubUrl, installCommand } from '../lib/nav';
+import PlatformCommand from './platformCommand';
+import { getStartedUrl, githubUrl, installCommand, windowsInstallCommand } from '../lib/nav';
 ---
 
 <section class="px-3 py-5">
@@ -14,7 +14,7 @@ import { getStartedUrl, githubUrl, installCommand } from '../lib/nav';
 				and <code>lattice run build</code> builds every workspace in it.
 			</p>
 			<div class="d-flex justify-content-center mb-4">
-				<CopyCommand client:visible command={installCommand} />
+				<PlatformCommand client:visible posix={installCommand} windows={windowsInstallCommand} />
 			</div>
 			<div class="d-flex flex-wrap gap-2 justify-content-center">
 				<a href={getStartedUrl} class="btn btn-contrast px-4">Get started</a>

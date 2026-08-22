@@ -4,6 +4,8 @@ interface CopyCommandProps {
 	command: string;
 	/** 'sm' is the compact hero line; 'md' is the one in the install card. */
 	size?: 'sm' | 'md';
+	/** The shell's prompt character. `$` is a variable sigil in PowerShell, not a prompt. */
+	prompt?: string;
 }
 
 // The install command is ~70 monospace characters, so both sizes pin a width and
@@ -16,7 +18,7 @@ const SIZES = {
 
 // Bootstrap input-group: the command sits in a readonly field with a copy button
 // appended. Keeps it a real form component rather than a bespoke box.
-const CopyCommand = ({ command, size = 'md' }: CopyCommandProps) => {
+const CopyCommand = ({ command, size = 'md', prompt = '$' }: CopyCommandProps) => {
 	const [copied, setCopied] = useState(false);
 	const { group, maxWidth, fontSize } = SIZES[size];
 
@@ -35,7 +37,7 @@ const CopyCommand = ({ command, size = 'md' }: CopyCommandProps) => {
 	return (
 		<div className={`input-group ${group}`.trim()} style={{ maxWidth }}>
 			<span className="input-group-text" style={mono} aria-hidden="true">
-				$
+				{prompt}
 			</span>
 			<input type="text" className="form-control" style={mono} value={command} readOnly aria-label="Command to copy" />
 			<button type="button" className="btn btn-outline-secondary" onClick={copy} aria-label={copied ? 'Command copied' : 'Copy command'}>

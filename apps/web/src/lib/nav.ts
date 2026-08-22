@@ -32,6 +32,9 @@ export const releasesUrl = `${githubUrl}/releases`;
 /** Shown in the hero and the install card, so it lives in one place. */
 export const installCommand = 'curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh';
 
+/** The PowerShell equivalent. `install.sh` also covers Git Bash, MSYS2 and WSL2. */
+export const windowsInstallCommand = 'irm https://latticeandcompany.github.io/lattice/install.ps1 | iex';
+
 /** Installs the agent skill in `skills/lattice/` into whichever agents the CLI finds. */
 export const skillInstallCommand = 'npx skills add latticeandcompany/lattice';
 

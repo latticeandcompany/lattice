@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import CopyCommand from './copyCommand';
+import PlatformCommand from './platformCommand';
 
 export interface CommandTab {
 	name: string;
 	command: string;
+	/** When set, the field follows the visitor's OS instead of always showing `command`. */
+	windowsCommand?: string;
 	/** One quiet line under the field, for a command whose label isn't self-explanatory. */
 	hint?: string;
 	/** Makes that line a link. Props cross an island boundary, so this stays a string. */
@@ -37,7 +40,11 @@ const CommandTabs = ({ tabs, size = 'md' }: CommandTabsProps) => {
 					</button>
 				))}
 			</div>
-			<CopyCommand command={tab.command} size={size} />
+			{tab.windowsCommand ? (
+				<PlatformCommand posix={tab.command} windows={tab.windowsCommand} size={size} />
+			) : (
+				<CopyCommand command={tab.command} size={size} />
+			)}
 			{tab.hint && (
 				<p className="command-tab__hint mt-2 mb-0">
 					{tab.hintHref ? <a href={tab.hintHref}>{tab.hint}</a> : tab.hint}

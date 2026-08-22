@@ -2,7 +2,7 @@
 import { Image } from 'astro:assets';
 import CommandTabs from './commandTabs';
 import { withBase } from '../lib/base';
-import { getStartedUrl, installCommand, skillInstallCommand } from '../lib/nav';
+import { getStartedUrl, installCommand, skillInstallCommand, windowsInstallCommand } from '../lib/nav';
 import go from '../assets/languages/go.png';
 import node from '../assets/languages/node.png';
 import nodeDark from '../assets/languages/node-dark.png';
@@ -104,7 +104,7 @@ const thread = (l: Lang) => {
 				client:load
 				size="sm"
 				tabs={[
-					{ name: 'CLI', command: installCommand },
+					{ name: 'CLI', command: installCommand, windowsCommand: windowsInstallCommand },
 					{
 						name: 'Agent skill',
 						command: skillInstallCommand,
