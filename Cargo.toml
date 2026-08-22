@@ -15,7 +15,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0-beta-2"
+version = "1.0.0-beta-3"
 edition = "2021"
 # The floor comes from the dependency tree: globset needs 1.88, and the dev tree's
 # jsonschema -> idna -> idna_adapter -> icu_* chain needs 1.86.
