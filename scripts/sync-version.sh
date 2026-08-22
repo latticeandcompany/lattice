@@ -180,11 +180,12 @@ if [ "$engines" != ">=$msrv.0" ]; then
 	fi
 fi
 
-for file in .github/README.md .github/CONTRIBUTING.md apps/web/src/content/docs/getting-started.md; do
+for file in .github/README.md .github/CONTRIBUTING.md \
+	apps/web/src/content/docs/getting-started.md apps/web/src/content/docs/installation.md; do
 	[ -f "$file" ] || continue
 
-	# The three shapes in use: "Rust 1.86+", "Rust 1.86 or newer", and
-	# CONTRIBUTING's "Rust stable (1.86+)".
+	# The three shapes in use: "Rust 1.88+", "Rust 1.88 or newer", and
+	# CONTRIBUTING's "Rust stable (1.88+)".
 	if sed -E "s|Rust stable \([0-9]+\.[0-9]+\+\)|Rust stable (${msrv}+)|g; \
 		s|Rust [0-9]+\.[0-9]+\+|Rust ${msrv}+|g; \
 		s|Rust [0-9]+\.[0-9]+ or newer|Rust ${msrv} or newer|g" \

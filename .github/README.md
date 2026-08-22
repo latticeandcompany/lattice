@@ -13,7 +13,7 @@
 
 ![Version](https://img.shields.io/github/v/release/latticeandcompany/lattice?label=version&include_prereleases&sort=semver)
 [![CI](https://img.shields.io/github/actions/workflow/status/latticeandcompany/lattice/ci.yml?branch=mega&label=CI&logo=githubactions&logoColor=white)](https://github.com/latticeandcompany/lattice/actions/workflows/ci.yml)
-![Rust](https://img.shields.io/badge/Rust-1.86+-000000?logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.88+-000000?logo=rust&logoColor=white)
 ![License](https://img.shields.io/github/license/latticeandcompany/lattice)
 
 </div>
@@ -59,7 +59,7 @@ the repo moves at once.
 
 To build from source instead, run
 `cargo install --git https://github.com/latticeandcompany/lattice lattice`, or
-clone the repo and run `cargo build --release`. Either way you need Rust 1.86 or
+clone the repo and run `cargo build --release`. Either way you need Rust 1.88 or
 later.
 
 ## Quick start
@@ -211,7 +211,7 @@ the skill contains and how to load it for a single session instead.
 
 ## Development
 
-Building Lattice needs Rust 1.86 or later with `rustfmt` and `clippy`. `apps/web`
+Building Lattice needs Rust 1.88 or later with `rustfmt` and `clippy`. `apps/web`
 and `apps/desktop` also need Node 26 or later.
 
 ```bash

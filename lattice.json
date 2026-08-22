@@ -13,10 +13,19 @@
     { "name": "lattice-project", "path": "crates/lattice-project", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-events", "lattice-config", "lattice-workspace"] },
     { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-project", "lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
     { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } },
-    { "name": "desktop", "path": "apps/desktop", "engines": { "node": ">=26" }, "dependsOn": ["lattice-project", "lattice-events"]}
+    {
+      "name": "desktop",
+      "path": "apps/desktop",
+      "engines": { "node": ">=26" },
+      "dependsOn": ["lattice-project", "lattice-events"],
+      "scripts": {
+        "dev": "npm run app",
+        "build": "npm run bundle"
+      }
+    }
   ],
   "engines": {
-    "cargo": ">=1.86.0"
+    "cargo": ">=1.88.0"
   },
   "globalDependencies": ["Cargo.toml"],
   "tasks": {

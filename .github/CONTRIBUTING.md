@@ -117,7 +117,7 @@ Hotfix authority remains with maintainers.
 
 ### Prerequisites
 
-- Rust stable, 1.86 or later, with `rustfmt` and `clippy`
+- Rust stable, 1.88 or later, with `rustfmt` and `clippy`
 - Node 26 or later with npm, only if you are touching `apps/web` or
   `apps/desktop`
 - A POSIX shell for the stress test

@@ -47,8 +47,8 @@ jobs:
       - name: MSRV
         if: ${{ !cancelled() }}
         run: |
-          rustup toolchain install 1.86 --profile minimal
-          cargo +1.86 check --workspace --exclude lattice-desktop --all-targets
+          rustup toolchain install 1.88 --profile minimal
+          cargo +1.88 check --workspace --exclude lattice-desktop --all-targets
 
       # The installer is the first thing a new user runs, and it runs under
       # whatever /bin/sh they have.

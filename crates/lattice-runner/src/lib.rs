@@ -95,7 +95,10 @@ pub struct RunInterrupted {
 
 impl std::fmt::Display for RunInterrupted {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "interrupted. Lattice stopped the tasks that were still running")
+		write!(
+			f,
+			"interrupted. Lattice stopped the tasks that were still running"
+		)
 	}
 }
 

@@ -82,7 +82,7 @@ and put it on `PATH`.
 
 ## Build from source
 
-Building from source needs Rust 1.86 or newer, the workspace `rust-version`.
+Building from source needs Rust 1.88 or newer, the workspace `rust-version`.
 Lattice is not published to crates.io, so `cargo install lattice` will not find
 it. Install from the repository:
 

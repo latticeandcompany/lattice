@@ -17,9 +17,10 @@ resolver = "2"
 [workspace.package]
 version = "1.0.0-beta-2"
 edition = "2021"
-# The floor comes from the dev tree: jsonschema -> idna -> idna_adapter -> icu_*.
+# The floor comes from the dependency tree: globset needs 1.88, and the dev tree's
+# jsonschema -> idna -> idna_adapter -> icu_* chain needs 1.86.
 # Verify with `cargo +<msrv> check --workspace --all-targets` before changing it.
-rust-version = "1.86"
+rust-version = "1.88"
 authors = ["Ryan Mullin"]
 license = "ISC"
 publish = false

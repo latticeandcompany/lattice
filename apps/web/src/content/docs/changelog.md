@@ -20,6 +20,14 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Rust 1.88 is the floor for a build from source — 2026-08-21
+
+Building Lattice from source now needs Rust 1.88, up from 1.86. Nothing in the
+code needed it: a dependency raised its own minimum, and cargo refuses to resolve
+a tree whose floor is below a dependency's. Installing a released binary is
+unaffected — it needs no Rust at all. See
+[Installation](/lattice/docs/installation).
+
 ## The CLI's messages, the desktop app's labels, and every doc — 2026-08-21
 
 Two lines a script might grep for changed:

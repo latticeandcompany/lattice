@@ -16,6 +16,25 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Rust 1.88 is the floor, and `desktop` builds the app — 2026-08-21
+
+`rust-version` in `[workspace.package]` is now 1.88, up from 1.86, and
+`engines.cargo` in `lattice.json` follows it to `>=1.88.0`. Nothing in the code
+needed it: `globset 0.4.20` raised its own `rust-version` to 1.88, and cargo
+refuses to resolve a tree whose floor is below a dependency's. The badge, the
+prose in the README, CONTRIBUTING and the installation page, and the CI MSRV job
+all say 1.88.
+
+The `desktop` workspace declares its own commands, so a Lattice run drives the
+Tauri app rather than only its frontend. `desktop:dev` is `npm run app`
+(`tauri dev`), which opens the real window and starts Vite itself through
+`beforeDevCommand`; `desktop:build` is `npm run bundle` (`tauri build`). Both
+used to resolve to the detected npm scripts, `vite` and `vite build`, so
+`lattice run dev` served the frontend at localhost:1420 and never opened a
+window. Nothing is declared under `outputs`: `apps/desktop/src-tauri` is a member
+of the root cargo workspace, so its artifacts land in the repo-root `target/`,
+and an `outputs` glob cannot name a path above its own workspace.
+
 ### The CLI's messages, the desktop app's labels, and every doc — 2026-08-21
 
 Two lines a script might grep for changed:

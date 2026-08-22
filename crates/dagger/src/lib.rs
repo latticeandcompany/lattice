@@ -161,12 +161,12 @@ pub fn build_execution_graph_selected(
 					// toolchain.
 					if !ws.auto && selected && root_tasks.contains(&task_name.as_str()) {
 						bail!(
-                            "workspace '{}' has \"auto\": false and declares no command for \
+							"workspace '{}' has \"auto\": false and declares no command for \
                              task '{}'. Add the command under this workspace's \"scripts\" \
                              map in lattice.json",
-                            ws.name,
-                            task_name
-                        );
+							ws.name,
+							task_name
+						);
 					}
 					continue;
 				}
@@ -239,8 +239,8 @@ pub fn build_execution_graph_selected(
 		}
 	}
 
-	let topo_order = toposort(&graph, None)
-		.map_err(|_| anyhow::anyhow!("the task graph has a cycle"))?;
+	let topo_order =
+		toposort(&graph, None).map_err(|_| anyhow::anyhow!("the task graph has a cycle"))?;
 
 	Ok(ExecutionGraph { graph, topo_order })
 }
