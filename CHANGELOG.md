@@ -23,7 +23,10 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 needed it: `globset 0.4.20` raised its own `rust-version` to 1.88, and cargo
 refuses to resolve a tree whose floor is below a dependency's. The badge, the
 prose in the README, CONTRIBUTING and the installation page, and the CI MSRV job
-all say 1.88.
+all say 1.88. Two `%`-and-compare checks in `lattice-config` became
+`u64::is_multiple_of`, which the raised floor made clippy ask for: the method
+stabilized in 1.87, so the lint had been suppressed on the old floor. Both render
+the same strings as before.
 
 The `desktop` workspace declares its own commands, so a Lattice run drives the
 Tauri app rather than only its frontend. `desktop:dev` is `npm run app`

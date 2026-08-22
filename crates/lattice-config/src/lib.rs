@@ -374,7 +374,7 @@ impl fmt::Display for Duration {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		let secs = self.0;
 		for (unit, name) in [(3600u64, "h"), (60, "m")] {
-			if secs % unit == 0 && secs >= unit {
+			if secs.is_multiple_of(unit) && secs >= unit {
 				return write!(f, "{}{}", secs / unit, name);
 			}
 		}
@@ -493,7 +493,7 @@ impl fmt::Display for CacheSize {
 			return write!(f, "0B");
 		}
 		for (unit, name) in [(TB, "TB"), (GB, "GB"), (MB, "MB"), (KB, "KB")] {
-			if bytes % unit == 0 {
+			if bytes.is_multiple_of(unit) {
 				return write!(f, "{}{}", bytes / unit, name);
 			}
 		}
