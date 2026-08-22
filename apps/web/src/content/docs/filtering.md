@@ -166,7 +166,7 @@ fail-fast behavior as above. With `--continue`, a failed phase is recorded and
 the next phase runs anyway:
 
 ```text
-$ lattice run lint build --sequentially --continue --no-cache -l
+$ lattice run lint build --sequentially --continue --no-cache -v
 lattice: running `lint` across 2 workspaces
 lattice: lib:lint: hash df4442eb2e737292
 lattice: app:lint: hash 5a5af3015e55e870

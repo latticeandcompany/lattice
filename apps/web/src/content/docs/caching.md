@@ -155,7 +155,7 @@ when you want one. Run [`lattice prune`](/lattice/docs/cli) to sweep by hand.
 
 Lattice hashes each part of the key separately and then hashes the parts
 together, which keeps the key one number while letting a miss name the part that
-moved. `lattice run build -l` reports it:
+moved. `lattice run build -v` reports it:
 
 ```text
 lattice: app:build: cache miss: inputs changed

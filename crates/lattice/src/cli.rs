@@ -29,11 +29,11 @@ To start, run `lattice init`. Then run `lattice run <task>`.",
 pub struct Cli {
 	/// Print raw `workspace:task:` lines instead of the live display.
 	#[arg(short, long, global = true)]
-	pub loquacious: bool,
-
-	/// Hidden alias for --loquacious.
-	#[arg(short, long, global = true, hide = true)]
 	pub verbose: bool,
+
+	/// Hidden alias for --verbose.
+	#[arg(short, long, global = true, hide = true)]
+	pub loquacious: bool,
 
 	/// Run this binary even when the repo pins another version.
 	#[arg(long, global = true)]
@@ -91,9 +91,9 @@ pub enum Commands {
 }
 
 impl Cli {
-	/// The effective loquacious flag from CLI flags alone (`-l` or hidden `-v`).
+	/// The effective loquacious flag from CLI flags alone (`-v` or hidden `-l`).
 	pub fn flag_loquacious(&self) -> bool {
-		self.loquacious || self.verbose
+		self.verbose || self.loquacious
 	}
 
 	/// Whether the pinned-version handover is skipped for this command.

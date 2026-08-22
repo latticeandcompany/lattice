@@ -20,6 +20,19 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Raw output is `-v`/`--verbose`, and `-l`/`--loquacious` is the hidden alias — 2026-08-21
+
+`--verbose` and `--loquacious` swapped roles. `-v`/`--verbose` is now the
+documented flag that prints raw `workspace:task:` lines instead of the live
+display. It is also the only spelling `lattice --help` lists.
+`-l`/`--loquacious` still parses and still does the same thing, but no help
+output mentions it.
+
+Nothing else changed. `settings.loquacious` keeps its name in `lattice.json`,
+and the flag and the setting still combine the same way: either one on its own
+turns raw output on. See [Output and logging](/lattice/docs/output-modes) and
+the [CLI reference](/lattice/docs/cli).
+
 ## Windows installs from a one-liner — 2026-08-21
 
 `install.ps1` is a PowerShell installer, published next to `install.sh`:

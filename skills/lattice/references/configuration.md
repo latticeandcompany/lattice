@@ -201,7 +201,7 @@ With an empty `tasks` map the tail reads `lattice.json defines no tasks`.
 | --- | --- | --- | --- | --- |
 | `maxCacheSize` | `string` | no | none | An integer plus `B`, `KB`, `MB`, `GB`, or `TB`, base 1024, case-insensitive. A bare integer of bytes works as a string. Enforced after every run, and used by `lattice prune` when `--max-size` is absent. Unset, the cache grows without limit. |
 | `cacheDir` | `string` | no | `".lattice/cache"` | Local cache directory, relative to the repo root. |
-| `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-l`. |
+| `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-v`. |
 | `versionCheck` | `boolean` | no | `true` | `false` disables the `latticeVersion` handover and the drift nag. |
 
 `maxCacheSize` must be a JSON string. `"10GB"` and `"1048576"` are both valid;

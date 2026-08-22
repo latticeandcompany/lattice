@@ -173,11 +173,11 @@ Four nodes, one edge. `utils` is the only workspace anything depends on, so
 `^build` expands to `utils:build` for `worker` and to nothing for the other
 three.
 
-Now run it for real. `-l` gives the plain line-by-line log instead of the live
+Now run it for real. `-v` gives the plain line-by-line log instead of the live
 display:
 
 ```text
-$ lattice run build -l
+$ lattice run build -v
 lattice: running `build` across 4 workspaces
 lattice: api:build: hash b00c22c209fa3dbc
 lattice: web:build: hash 19ac4ce220d5c90a
@@ -222,7 +222,7 @@ With nothing changed, the three workspaces that produced output come back from
 the cache:
 
 ```text
-$ lattice run build -l
+$ lattice run build -v
 lattice: running `build` across 4 workspaces
 lattice: web:build: hash 19ac4ce220d5c90a
 lattice: utils:build: hash 416602fcd8c04e1b
@@ -247,7 +247,7 @@ Edit one workspace's source and only that workspace misses. Appending a line to
 it because a task's key includes the keys of its prerequisites:
 
 ```text
-$ lattice run build -l
+$ lattice run build -v
 lattice: running `build` across 4 workspaces
 lattice: api:build: hash b00c22c209fa3dbc
 lattice: utils:build: hash 51e3891610471da7

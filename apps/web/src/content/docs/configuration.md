@@ -390,7 +390,7 @@ whenever anything in that directory changes.
 | --- | --- | --- | --- | --- |
 | `maxCacheSize` | `string` | no | none | Upper bound on the local cache size. Enforced after every run, and used by `lattice prune` when `--max-size` is absent. Unset, the cache grows without limit. |
 | `cacheDir` | `string` | no | `".lattice/cache"` | Directory for the local cache, relative to the repo root. Not validated. |
-| `loquacious` | `boolean` | no | `false` | With `true`, always use raw output, as `-l`/`--loquacious` does. |
+| `loquacious` | `boolean` | no | `false` | With `true`, always use raw output, as `-v`/`--verbose` does. |
 | `versionCheck` | `boolean` | no | `true` | With `true`, compare the running binary against `latticeVersion`. With `false`, skip the check. See [Upgrading](/lattice/docs/upgrading). |
 
 `maxCacheSize` is a string: an integer or decimal followed by `B`, `KB`, `MB`,

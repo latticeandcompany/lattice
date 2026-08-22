@@ -90,7 +90,7 @@ Streaming output works by appending lines forever. You cannot have both in one
 terminal, and a dev server's log is the reason the run is open, so the log wins.
 
 Inside that raw stream, a persistent task's lines print unconditionally, with or
-without `-l`. Other tasks stream only in loquacious mode and are otherwise
+without `-v`. Other tasks stream only under `-v` and are otherwise
 buffered and shown on failure. See
 [Output and logging](/lattice/docs/output-modes).
 

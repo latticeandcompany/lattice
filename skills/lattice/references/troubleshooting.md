@@ -4,14 +4,14 @@ Symptom first. Two commands answer most questions:
 
 - `lattice run <tasks> --dry-run` validates the config and prints each
   `workspace:task` next to the exact command that would be handed to the shell.
-- `lattice run <tasks> -l` runs for real and prints each task's hash and cache
+- `lattice run <tasks> -v` runs for real and prints each task's hash and cache
   outcome as plain lines.
 
-On a terminal without `-l` you get the live display, which prints none of the
-plain lines below. `-l` adds the trace lines: the run header, each task's hash,
+On a terminal without `-v` you get the live display, which prints none of the
+plain lines below. `-v` adds the trace lines: the run header, each task's hash,
 each cache-miss reason, each task's output, and each skipped task. The run
 summary, the full-cache line, and every `lattice: warning:` line print in plain
-output whether or not `-l` was passed.
+output whether or not `-v` was passed.
 
 ## `no lattice.json found in this directory or any parent`
 
@@ -90,7 +90,7 @@ an older release has to drop it.
 
 ## A task never hits the cache
 
-Something feeding the hash changes every run. Run with `-l`; the miss line names
+Something feeding the hash changes every run. Run with `-v`; the miss line names
 the component that moved:
 
 ```text
@@ -229,7 +229,7 @@ surfaces on a real run, or up front from `lattice setup`.
 ## The interactive display does not appear
 
 Output falls back to plain lines whenever stdout is not a terminal, `CI` is set
-to any value including the empty string, or `-l` was passed, or
+to any value including the empty string, or `-v` was passed, or
 `settings.loquacious` is `true`. On top of that, `lattice run` forces plain
 output whenever the tasks it was asked for pull a `persistent` task into their
 dependency closure. Redirecting into a file or a pipe is the most common
@@ -237,7 +237,7 @@ surprise.
 
 ## Color appears somewhere it should not
 
-Color is emitted only when stdout is a real terminal, in either mode. An `-l` run
+Color is emitted only when stdout is a real terminal, in either mode. A `-v` run
 at a shell colors each `workspace:task` label; the same run piped or redirected
 colors nothing. Set `NO_COLOR` to any value to suppress color everywhere without
 changing the output mode.
@@ -337,4 +337,4 @@ reprovisions on next need, and `.lattice/bin/` re-downloads the pinned release.
 You do not need to run `lattice init` again afterward.
 
 Before reporting a problem, gather `lattice version`,
-`lattice run <tasks> --dry-run`, and `lattice run <tasks> -l`.
+`lattice run <tasks> --dry-run`, and `lattice run <tasks> -v`.

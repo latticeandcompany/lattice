@@ -174,14 +174,15 @@ subcommand, before or after the subcommand name.
 
 | Flag | Short | Description |
 | --- | --- | --- |
-| `--loquacious` | `-l` | Print raw `workspace:task:` lines instead of the live display |
-| `--verbose` | `-v` | Hidden alias for `--loquacious` |
+| `--verbose` | `-v` | Print raw `workspace:task:` lines instead of the live display |
+| `--loquacious` | `-l` | Hidden alias for `--verbose` |
 | `--no-version-check` | — | Run this binary even when the repo pins another version |
 | `--theme <THEME>` | — | Shade the logo for a light or dark terminal. Takes `light` or `dark`. Any other value is a parse error |
 | `--release-base-url <URL>` | — | Base URL to download release archives from. A `file://` base works offline |
 
 `-V` and `--version` print the compiled-in binary version. They exist only on
-`lattice` itself, so `lattice run -V` is a parse error.
+`lattice` itself, so `lattice run -V` is a parse error. `-v` and `-V` differ
+only in case. Lowercase prints raw output. Uppercase prints the version.
 
 ## Exit codes
 
@@ -204,7 +205,7 @@ starts, though tasks already in flight run to completion. With `--continue`, the
 run summary is what's printed: a task count, a cached count, a failed count, and
 the elapsed time. A task skipped because a prerequisite failed is left out of
 the task count, and its `skipped (dependency failed)` line prints only under
-`-l`. `--sequentially` applies the same rule per phase.
+`-v`. `--sequentially` applies the same rule per phase.
 
 A `persistent: true` task that exits non-zero also counts in that summary and
 exits `1`, whether or not `--continue` was passed. It is found after the graph
@@ -218,7 +219,7 @@ working.
 
 | Variable | Flag to prefer | Effect | Counts as set when |
 | --- | --- | --- | --- |
-| `CI` | `-l` | Forces plain output | Present, any value, including empty |
+| `CI` | `-v` | Forces plain output | Present, any value, including empty |
 | `NO_COLOR` | — | Disables ANSI color. Nothing turns it back on | Present, any value |
 | `LATTICE_NO_VERSION_CHECK` | `--no-version-check` | Suppresses the drift nag and the handover to a pinned `latticeVersion` | Present, any value |
 | `LATTICE_THEME` | `--theme` | Takes `light` or `dark`, and shades the logo the same way `--theme` does. An unrecognized value falls through to `COLORFGBG` | Recognized value present |
@@ -235,7 +236,7 @@ same reason, a repo pinning an older version is the one case where the
 is passed through the handover, so a flag the pinned build does not know is a
 parse error there.
 
-`CI` and `-l` are independent triggers for the same plain output mode. Nothing
+`CI` and `-v` are independent triggers for the same plain output mode. Nothing
 forces the interactive display back on from inside `CI=1`.
 
 In plain output the `workspace:task` label leading each line is colored, one
@@ -263,7 +264,7 @@ shell Lattice runs in.
 
 Highest first:
 
-1. CLI flag: `-l`, `--no-version-check`, `--theme`, `--release-base-url`
+1. CLI flag: `-v`, `--no-version-check`, `--theme`, `--release-base-url`
 2. Environment variable: `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL`
 3. `settings` in `lattice.json`: `settings.loquacious`, `settings.versionCheck`
 4. Built-in default

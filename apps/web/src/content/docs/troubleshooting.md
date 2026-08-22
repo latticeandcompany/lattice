@@ -14,7 +14,7 @@ Three commands answer most of these, so reach for them before reading further:
 
 ```sh
 lattice run <task> --dry-run   # the graph and every resolved command, run nothing
-lattice run <task> -l          # hashes, cache decisions, and each task's output
+lattice run <task> -v          # hashes, cache decisions, and each task's output
 lattice version                # which binary actually ran
 ```
 
@@ -120,7 +120,7 @@ caught before any task starts, with the field and the value in the message. See
 
 ### A task misses the cache every run
 
-Run it with `-l` and read the two lines Lattice prints per task:
+Run it with `-v` and read the two lines Lattice prints per task:
 
 ```text
 lattice: ui:build: hash 26be571e2ec773a7
@@ -242,7 +242,7 @@ them run `lattice setup`.
 ### You expected the live display and got plain lines
 
 Lattice uses raw, line-by-line output whenever stdout is not a terminal, `CI` is
-set to any value, `-l`/`--loquacious` was passed, or `settings.loquacious` is
+set to any value, `-v`/`--verbose` was passed, or `settings.loquacious` is
 `true`. A run that pulls a `persistent: true` task into its graph is raw too,
 even at a terminal, so a dev server's output stays visible.
 
@@ -252,13 +252,13 @@ logging](/lattice/docs/output-modes).
 
 ### You wanted plain lines and got the live display
 
-Pass `-l`, set `settings.loquacious` to `true` in `lattice.json`, or set `CI` in
+Pass `-v`, set `settings.loquacious` to `true` in `lattice.json`, or set `CI` in
 the environment. Any one of them gives you the raw stream, which is also the
 readable form when you are piping `lattice run` into something else.
 
 ### Color shows up where it should not
 
-Color follows the terminal, not the output mode. An `-l` run at your shell has
+Color follows the terminal, not the output mode. A `-v` run at your shell has
 colored `workspace:task` labels and the same run redirected to a file has none.
 Escapes in something that is not a terminal mean whatever is running Lattice is
 presenting itself as one.
@@ -379,7 +379,7 @@ never touches `lattice.json` at the repo root, and you do not need to rerun
 | --- | --- |
 | `lattice version` | The version of the binary that actually ran, which matters when the repo pins one. |
 | `lattice run <tasks> --dry-run` | The graph and every resolved command, without running or caching anything. |
-| `lattice run <tasks> -l` | Every hash, every cache decision, and each task's full output. |
+| `lattice run <tasks> -v` | Every hash, every cache decision, and each task's full output. |
 
 For the models behind these symptoms, see [Driver
 detection](/lattice/docs/drivers), [Engines and

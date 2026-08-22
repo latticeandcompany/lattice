@@ -10,7 +10,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 /// `Interactive` is the default for humans attached to a terminal: it is the
 /// mode under which a live TUI is rendered. `Raw` is the line-by-line,
 /// ANSI-free stream used for CI, pipes, redirects, or when the user asks for it
-/// via `--loquacious`/`-l`.
+/// via `--verbose`/`-v`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
 	/// Full interactive terminal experience (TUI). The only mode that renders it.
@@ -37,7 +37,7 @@ pub fn detect_mode(stdout_is_tty: bool, loquacious: bool, ci_env: bool) -> Outpu
 /// Color is disabled when `NO_COLOR` is set (see <https://no-color.org/>) and
 /// whenever stdout is not a terminal, so a pipe, a redirect, or a CI log never
 /// receives an escape it would have to strip. A terminal in
-/// [`OutputMode::Raw`] — `-l`, or a persistent task forcing the stream — still
+/// [`OutputMode::Raw`] — `-v`, or a persistent task forcing the stream — still
 /// gets color: that is where the per-task label colors live.
 pub fn should_enable_color(mode: OutputMode, no_color_set: bool, stdout_is_tty: bool) -> bool {
 	if no_color_set {
@@ -414,7 +414,7 @@ fn fmt_secs(ms: u64) -> String {
 
 /// Line stream: `workspace:task: <message>`, one line per event. In loquacious
 /// mode it also prints `note()` trace lines and per-task output. This is the
-/// reporter used when there is no TTY, or `-l` or `settings.loquacious` is set.
+/// reporter used when there is no TTY, or `-v` or `settings.loquacious` is set.
 ///
 /// The `workspace:task` label carries a per-task color from [`LabelColors`] so
 /// interleaved lines can be told apart at a glance; nothing else in the line is
@@ -869,7 +869,7 @@ mod tests {
 
 	#[test]
 	fn raw_colors_only_on_a_terminal() {
-		// `-l` at a real shell: colored labels.
+		// `-v` at a real shell: colored labels.
 		assert!(should_enable_color(OutputMode::Raw, false, true));
 		// Piped, redirected, or a CI log: nothing to strip.
 		assert!(!should_enable_color(OutputMode::Raw, false, false));

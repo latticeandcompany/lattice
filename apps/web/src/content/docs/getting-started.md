@@ -175,7 +175,7 @@ has an entry.
 ## Run the task
 
 ```sh
-lattice run build -l
+lattice run build -v
 ```
 
 ```text
@@ -190,7 +190,7 @@ lattice: 1 tasks, 0 cached, 0 failed, 0.01s
 Your hash may differ from this one. It covers the platform, the shell, and the
 Lattice version as well as the task's inputs. `app/dist/index.txt` now exists.
 
-`-l` prints this plain line-by-line log. Drop it and a terminal gets a live
+`-v` prints this plain line-by-line log. Drop it and a terminal gets a live
 display of the same run instead. See [Output and
 logging](/lattice/docs/output-modes).
 
@@ -200,7 +200,7 @@ Nothing under `app/src` changed, so the second run does not execute the command
 at all:
 
 ```sh
-lattice run build -l
+lattice run build -v
 ```
 
 ```text

@@ -16,6 +16,22 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Raw output is `-v`/`--verbose`, and `-l`/`--loquacious` is the hidden alias — 2026-08-21
+
+`--verbose` and `--loquacious` swapped roles. `-v`/`--verbose` is now the
+documented flag that prints raw `workspace:task:` lines instead of the live
+display. It is also the only spelling `lattice --help` lists.
+`-l`/`--loquacious` still parses and still does the same thing, but no help
+output mentions it.
+
+Nothing else changed. `settings.loquacious` keeps its name in `lattice.json`,
+and the flag and the setting still combine the same way: either one on its own
+turns raw output on.
+
+`-v` and `-V` now differ only in case. Lowercase prints raw output. Uppercase
+prints the binary version and exists only on `lattice` itself, so
+`lattice run -V` is still a parse error.
+
 ### Windows installs from a one-liner, and every published platform is built on its own hardware — 2026-08-21
 
 `install.ps1` is a PowerShell installer, published next to `install.sh` on the

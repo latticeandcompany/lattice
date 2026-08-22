@@ -60,7 +60,7 @@ body:
     id: logs
     attributes:
       label: Output
-      description: Run it again with `-l` (`--loquacious`) for the plain line-by-line log and paste that here.
+      description: Run it again with `-v` (`--verbose`) for the plain line-by-line log and paste that here.
       render: shell
     validations:
       required: true

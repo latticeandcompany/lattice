@@ -191,7 +191,7 @@ api:build: done (0.01s)
 lattice: 2 tasks, 0 cached, 0 failed, 0.56s
 ```
 
-To see which of the two reasons applied, add `-l`. The miss line names the
+To see which of the two reasons applied, add `-v`. The miss line names the
 component that moved, `inputs changed` for `frontend` and
 `dependencies changed` for `api`. See [Caching](/lattice/docs/caching).
 
@@ -214,7 +214,7 @@ the filter still pulls `frontend:build` in and `api` never serves a bundle that
 was not built:
 
 ```text
-$ lattice run serve --filter api -l
+$ lattice run serve --filter api -v
 lattice: running `build+serve` across 2 workspaces
 lattice: frontend:build: hash 4a12ab5673815fee
 frontend:build: cache hit [4a12ab56]

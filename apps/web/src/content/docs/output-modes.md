@@ -23,7 +23,7 @@ none of them can be reversed once it applies:
 
 - stdout is not a terminal, so a pipe, a redirect, or a CI step.
 - `CI` is set to any value, including the empty string.
-- You passed `-l`, or its long form `--loquacious`.
+- You passed `-v`, or its long form `--verbose`.
 - `lattice.json` sets `settings.loquacious`.
 - The run pulls a `persistent: true` task into its graph. A dev server streams
   for as long as it is up, and the live display repaints in place, so it cannot
@@ -40,7 +40,7 @@ everyone's shell history:
 }
 ```
 
-There is no flag that forces the live display back on. `-l` on the command line
+There is no flag that forces the live display back on. `-v` on the command line
 beats a `false` setting, because the two are combined with OR.
 
 ## What each mode prints for the same event
@@ -50,15 +50,15 @@ Read across a row to translate a line you have in front of you.
 
 | Event | Raw | Interactive |
 | --- | --- | --- |
-| The run starts | ``lattice: running `build` across 4 workspaces`` (`-l` only) | `❖ lattice  build  · 4 workspaces` |
+| The run starts | ``lattice: running `build` across 4 workspaces`` (`-v` only) | `❖ lattice  build  · 4 workspaces` |
 | A task starts | `ui:build: running` | `⠋ ui:build  running…` |
 | It finishes | `ui:build: done (1.02s)` | `✓ ui:build  1.02s` |
 | It comes back from cache | `ui:build: cache hit [5341be25]` | `● ui:build  cache hit [5341be25]` |
 | It fails | `ui:build: FAILED` | `✗ ui:build  FAILED` |
-| A prerequisite failed, so it never starts | `web:build: skipped (dependency failed)` (`-l` only) | `○ web:build  skipped (dependency failed)` |
+| A prerequisite failed, so it never starts | `web:build: skipped (dependency failed)` (`-v` only) | `○ web:build  skipped (dependency failed)` |
 | A persistent task exits cleanly | `docs:dev: exited (code 0) after 2.02s` | raw only |
 | A persistent task exits non-zero | `docs:dev: EXITED (code 1) after 2.02s` | raw only |
-| A trace line | `lattice: ui:build: hash 5341be25…` (`-l` only) | `ui:build: hash 5341be25…`, dim |
+| A trace line | `lattice: ui:build: hash 5341be25…` (`-v` only) | `ui:build: hash 5341be25…`, dim |
 | A warning | `lattice: warning: ui:build: …` | `warn ui:build: …` |
 | The run ends | `lattice: 4 tasks, 0 cached, 0 failed, 3.08s` | `❖  4 tasks · 0 cached · 0 failed  3.08s` |
 | Every task came back from cache | `lattice: full cache, nothing to run` | `❖❖❖ FULL CACHE` |
@@ -195,7 +195,7 @@ lattice: full cache, nothing to run
 banner, under the same rule and with no color, so a CI log can be grepped for
 it.
 
-Without `-l`, a task's own output is collapsed here too. A failure is the
+Without `-v`, a task's own output is collapsed here too. A failure is the
 exception: the captured lines print underneath the `FAILED` marker, each still
 carrying the task's label.
 
@@ -209,15 +209,15 @@ lattice: 2 tasks, 1 cached, 1 failed, 1.03s
 ```
 
 Nothing named `web:build` or `api:build` appears. In raw mode a skipped task is
-silent unless you pass `-l`.
+silent unless you pass `-v`.
 
 ## Turn on the hash and cache-miss lines
 
-`-l` adds three things to the raw stream: the run header, the per-task trace
+`-v` adds three things to the raw stream: the run header, the per-task trace
 lines, and every task's own stdout and stderr as it is produced.
 
 ```text
-$ lattice run build -l
+$ lattice run build -v
 lattice: running `build` across 4 workspaces
 lattice: docs:build: hash 944775197435b927
 lattice: ui:build: hash 26be571e2ec773a7
@@ -247,12 +247,12 @@ Here an edit to `ui`'s source moved `inputs`, and `web` and `api` then missed on
 component name covers, see [Cache
 internals](/lattice/docs/cache-internals).
 
-A failing run under `-l` prints the failed task's output twice: once live, as
+A failing run under `-v` prints the failed task's output twice: once live, as
 the process produces it, and once more in the replay that follows the `FAILED`
 marker.
 
 ```text
-$ lattice run build --continue -l
+$ lattice run build --continue -v
 lattice: running `build` across 4 workspaces
 lattice: ui:build: hash b64234148e6c7a2d
 lattice: docs:build: hash 944775197435b927
@@ -267,9 +267,9 @@ api:build: skipped (dependency failed)
 lattice: 2 tasks, 1 cached, 1 failed, 1.03s
 ```
 
-At a terminal, `-l` is also one of the mode triggers, so it is how you get this
+At a terminal, `-v` is also one of the mode triggers, so it is how you get this
 stream at an interactive shell rather than the live display. In a pipe or a CI
-job you are already in raw mode, and `-l` only adds the extra lines. See [Run
+job you are already in raw mode, and `-v` only adds the extra lines. See [Run
 Lattice in CI](/lattice/docs/continuous-integration).
 
 ## Follow one task down a screen of eight
@@ -296,13 +296,13 @@ status here is carried by color alone.
 ## Turn color off
 
 Color follows the terminal, not the mode. Both modes color when stdout is a real
-terminal and neither does when it is not, so an `-l` run at your shell has
+terminal and neither does when it is not, so a `-v` run at your shell has
 colored labels and the same run redirected to a file emits no escapes at all.
 
 To suppress color at a terminal, set `NO_COLOR` to any value:
 
 ```sh
-NO_COLOR=1 lattice run build -l
+NO_COLOR=1 lattice run build -v
 ```
 
 The layout does not change, only the escapes. Lattice decides about color once
@@ -320,7 +320,7 @@ In raw mode the two streams split like this:
 | Line | Stream |
 | --- | --- |
 | `running`, `cache hit`, `done`, `exited (code 0)`, the summary | stdout |
-| `skipped` and trace lines, both `-l` only | stdout |
+| `skipped` and trace lines, both `-v` only | stdout |
 | `FAILED`, `EXITED (…)`, `lattice: warning: …` | stderr |
 | A task's own output | whichever stream the task wrote it to |
 
@@ -331,7 +331,7 @@ goes to stderr, so redirecting stdout away still leaves the failure dump on the
 terminal.
 
 Two kinds of line sit outside the per-task events. A trace line carries hashing,
-cache, and toolchain detail; raw mode drops it without `-l`, and interactive
+cache, and toolchain detail; raw mode drops it without `-v`, and interactive
 mode shows it dim either way. A warning always prints in both modes, prefixed
 `lattice: warning:` in raw and labeled with a yellow `warn` in interactive.
 

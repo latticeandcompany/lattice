@@ -153,10 +153,10 @@ lattice run lint test --continue       # keep going past a failure, still exit 1
 lattice run build --concurrency 4      # cap parallelism; default is the CPU count
 lattice run build --no-cache           # neither read nor write the cache this run
 lattice run build --force              # re-run and overwrite the stored entry
-lattice run build -l                   # raw workspace:task: lines, not the live display
+lattice run build -v                   # raw workspace:task: lines, not the live display
 ```
 
-`-l` (`--loquacious`) is worth passing whenever you need to read or grep the
+`-v` (`--verbose`) is worth passing whenever you need to read or grep the
 output. It prints each task's hash and cache outcome as plain lines. Output is
 already in that mode when stdout is not a terminal or `CI` is set to any value,
 so a command run programmatically usually gets it for free.
@@ -287,7 +287,7 @@ cached regardless. The cache lives in `.lattice/cache` (move it with
 entries down to it. With no budget set, the cache grows without limit and
 `lattice prune --max-size <size>` sweeps it by hand.
 
-**Debugging a miss:** run with `-l`. Each miss names the component that moved:
+**Debugging a miss:** run with `-v`. Each miss names the component that moved:
 
 ```text
 lattice: web:build: hash a1b2c3d4e5f6a7b8
@@ -401,7 +401,7 @@ directory (`.lattice/cache`, or `settings.cacheDir`) with a rolling key, and set
 `lattice prune --max-size <size>` before saving to apply a different limit in CI
 than locally. `--continue` is the right shape for a CI run: it reports every
 failure in one pass and still exits `1`. `CI` being set already forces plain
-output, so `-l` is redundant there.
+output, so `-v` is redundant there.
 
 Give tasks that can hang a `timeout`, so a stuck run fails instead of burning the
 job's whole budget and saving no cache. A cancelled job sends `SIGTERM`: Lattice
@@ -412,7 +412,7 @@ distinguishing from `1` if the pipeline branches on the exit code.
 
 - `lattice run <tasks> --dry-run` confirms the config parses and the commands are
   right. It does not validate engines; only a real run or `lattice setup` does.
-- `lattice run <tasks> -l` is a real run, with each task's hash and cache outcome
+- `lattice run <tasks> -v` is a real run, with each task's hash and cache outcome
   on its own line.
 - Run it a second time. Every task should report a cache hit, and the run should
   end with `lattice: full cache, nothing to run`. That line prints only when

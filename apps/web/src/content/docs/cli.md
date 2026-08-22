@@ -131,7 +131,7 @@ In that message, the backticks at the end hold the task names you passed, joined
 by spaces. Neither message is a failure. See [Selecting what
 runs](/lattice/docs/filtering) for how `--filter` and `--dry-run` shape the
 graph, and [Persistent tasks](/lattice/docs/persistent-tasks) for why a
-persistent task in the graph forces raw output whatever `-l` says.
+persistent task in the graph forces raw output whatever `-v` says.
 
 ## `lattice setup`
 
@@ -173,7 +173,7 @@ Setup skips a workspace's install step when no lockfile in it is newer than
 `.lattice-setup-marker`, the empty file Lattice writes there after a successful
 install. `--force` reinstalls regardless. A workspace with no detected driver
 and no `engines` is skipped without a message. One with `engines` but no package
-manager reports that under `-l`:
+manager reports that under `-v`:
 
 ```text
 lattice: web: toolchains ready. This workspace has no package manager to install
@@ -398,8 +398,8 @@ after the subcommand name.
 
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--loquacious` | `-l` | — | off | Print raw `workspace:task:` lines instead of the live display |
-| `--verbose` | `-v` | — | off | Hidden alias for `--loquacious` |
+| `--verbose` | `-v` | — | off | Print raw `workspace:task:` lines instead of the live display |
+| `--loquacious` | `-l` | — | off | Hidden alias for `--verbose` |
 | `--no-version-check` | — | — | off | Run this binary even when the repo pins another version |
 | `--theme` | — | `light` \| `dark` | detected | Shade the logo for a light or dark terminal |
 | `--release-base-url` | — | `<URL>` | GitHub releases | Base URL to download release archives from. A `file://` base works offline |
@@ -413,12 +413,13 @@ ANSI `7` or `15` as light. With no signal at all it uses the dark shade.
 downloads. An invocation in a repo pinning a version that is not installed
 fetches it too, under whatever command you typed.
 
-`--verbose` and `-v` spell one hidden alias for `--loquacious`. Neither appears
+`--loquacious` and `-l` spell one hidden alias for `--verbose`. Neither appears
 in any `--help` output.
 
 `-h` and `--help` work on `lattice` and on every subcommand. `-V` and
 `--version` print the compiled-in binary version and exist only on `lattice`
-itself, so `lattice run -V` is a parse error.
+itself, so `lattice run -V` is a parse error. `-v` and `-V` differ only in case.
+Lowercase prints raw output. Uppercase prints the version.
 
 ## Option precedence
 
@@ -427,12 +428,12 @@ order, highest first.
 
 | Source | Examples |
 | --- | --- |
-| CLI flag | `-l`, `--no-version-check`, `--theme`, `--release-base-url`, `--max-size` |
+| CLI flag | `-v`, `--no-version-check`, `--theme`, `--release-base-url`, `--max-size` |
 | Environment variable | `LATTICE_NO_VERSION_CHECK`, `LATTICE_THEME`, `LATTICE_RELEASE_BASE_URL` |
 | `settings` in `lattice.json` | `settings.loquacious`, `settings.versionCheck`, `settings.maxCacheSize`, `settings.cacheDir` |
 | Built-in default | — |
 
-Not every setting has all four sources. `--loquacious` has a flag and
+Not every setting has all four sources. `--verbose` has a flag and
 `settings.loquacious`, and no variable of its own. `--theme` has a flag and
 `LATTICE_THEME`, and no `settings` entry.
 

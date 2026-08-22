@@ -604,24 +604,24 @@ t_grepfile "$PROD/services/api/dist/api.txt" "faketool 1.4.2" "provisioned tool 
 lat "$PROD" run build --no-cache --concurrency 1 ; t_ok "run --concurrency 1 exits 0"
 lat "$PROD" run build --no-cache --concurrency 4 ; t_ok "run --concurrency 4 exits 0"
 
-lat "$PROD" run build --filter core --no-cache -l ; t_ok "run -l (loquacious) exits 0"
+lat "$PROD" run build --filter core --no-cache -v ; t_ok "run -v (loquacious) exits 0"
 t_has "loquacious emits hash trace" "hash"
-t_hasnt "piped -l emits no ANSI escapes" "$TRUECOLOR"
-lat "$PROD" run build --filter core --no-cache -v ; t_ok "hidden -v alias exits 0"
+t_hasnt "piped -v emits no ANSI escapes" "$TRUECOLOR"
+lat "$PROD" run build --filter core --no-cache -l ; t_ok "hidden -l alias exits 0"
 
-# Label colors: `-l` at a real terminal paints each `workspace:task` label its
+# Label colors: `-v` at a real terminal paints each `workspace:task` label its
 # own color, and every task in the run gets a different one. Piped (asserted
 # above) and under NO_COLOR, the same run emits nothing to strip.
 if [ "$PTY_OK" = "1" ]; then
-  ptylat "" "$PROD" run build --no-cache -l
-  t_has "-l under a pty colors the workspace:task label" "$TRUECOLOR"
+  ptylat "" "$PROD" run build --no-cache -v
+  t_has "-v under a pty colors the workspace:task label" "$TRUECOLOR"
   HUES="$(printf '%s\n' "$OUTPUT" | grep -o "$TRUECOLOR"'[0-9;]*m' | sort -u | wc -l | tr -d ' ')"
   if [ "${HUES:-0}" -ge 2 ]; then
     pass "each task's label gets a distinct color ($HUES in the run)"
   else
     fail "each task's label gets a distinct color" "only $HUES distinct | $(snip)"
   fi
-  ptylat "NO_COLOR=1" "$PROD" run build --no-cache -l
+  ptylat "NO_COLOR=1" "$PROD" run build --no-cache -v
   t_hasnt "NO_COLOR suppresses label color under a pty" "$TRUECOLOR"
 else
   say "  ${YEL}skip${RST} label-color assertions (no \`script\` to allocate a pty)"
@@ -629,17 +629,17 @@ fi
 
 lat "$PROD" run build --filter core --no-cache --no-version-check ; t_ok "--no-version-check accepted"
 
-# -l so the CI reporter streams task output (echoed markers) we assert on.
-lat "$PROD" run test  --no-cache -l ; t_ok "run test (full) exits 0"
+# -v so the CI reporter streams task output (echoed markers) we assert on.
+lat "$PROD" run test  --no-cache -v ; t_ok "run test (full) exits 0"
 t_has "test ran downstream of build" "core-test-ok"
-lat "$PROD" run lint  -l ; t_ok "run lint exits 0"
+lat "$PROD" run lint  -v ; t_ok "run lint exits 0"
 t_has "lint ran"  "core-lint-ok"
-lat "$PROD" run clean -l ; t_ok "run clean exits 0"
+lat "$PROD" run clean -v ; t_ok "run clean exits 0"
 t_has "clean ran" "core-clean-ok"
 
 # Stacked commands: one invocation, one combined graph. lint + test + build run
 # together; test's build dependency runs once, ahead of test.
-lat "$PROD" run lint test build --no-cache -l ; t_ok "run lint test build (stacked) exits 0"
+lat "$PROD" run lint test build --no-cache -v ; t_ok "run lint test build (stacked) exits 0"
 t_has "stacked run ran lint"  "core-lint-ok"
 t_has "stacked run ran test"  "core-test-ok"
 t_has "stacked run built"     "core:build"
@@ -649,7 +649,7 @@ lat "$PROD" run build definitely-not-a-task ; t_bad "stacked run rejects an unkn
 t_has "unknown stacked task names the offender" "definitely-not-a-task"
 
 # --sequentially: each task's graph runs to completion before the next, in order.
-lat "$PROD" run lint test -s --no-cache -l ; t_ok "run lint test --sequentially exits 0"
+lat "$PROD" run lint test -s --no-cache -v ; t_ok "run lint test --sequentially exits 0"
 t_has "sequential run ran lint"  "core-lint-ok"
 t_has "sequential run ran test"  "core-test-ok"
 lat "$PROD" run lint build --sequentially --dry-run ; t_ok "sequential --dry-run exits 0"
@@ -664,7 +664,7 @@ sect "persistent tasks"
 
 DEVLOG="$ENVROOT/dev.log"
 : > "$DEVLOG"
-# No -l: a run that pulls in a persistent task auto-selects raw, line-by-line
+# No -v: a run that pulls in a persistent task auto-selects raw, line-by-line
 # output so the dev server's streaming output stays visible.
 ( cd "$PROD" && exec "$BIN" run dev --filter docs ) > "$DEVLOG" 2>&1 &
 BG_PID=$!
@@ -744,8 +744,8 @@ JSON
 lat "$FAILREPO" run build ; t_bad "fail-fast: failing task yields non-zero exit"
 t_has "fail-fast surfaces the failure" "FAILED"
 
-# -l so skip notices and streamed output are visible for assertions.
-lat "$FAILREPO" run test --continue -l ; t_bad "--continue still exits non-zero when a task failed"
+# -v so skip notices and streamed output are visible for assertions.
+lat "$FAILREPO" run test --continue -v ; t_bad "--continue still exits non-zero when a task failed"
 t_has "--continue skips downstream of failure" "a:test: skipped"
 t_has "--continue runs independent work"        "b-test-ran"
 
@@ -1123,7 +1123,7 @@ t_grepfile "$GDEP/app/out.txt" '"mode":"TWO"' "the restored output is not the pr
 
 # The miss names the component that moved, rather than reporting a bare miss.
 w "$GDEP/shared.config.json" '{"mode":"three"}'
-lat "$GDEP" -l run build ; t_has "a miss names globalDependencies as the cause" "globalDependencies changed"
+lat "$GDEP" -v run build ; t_has "a miss names globalDependencies as the cause" "globalDependencies changed"
 
 # --- globalEnv -------------------------------------------------------------
 GENV="$ENVROOT/globalenv"; mkdir -p "$GENV/app"
@@ -1136,7 +1136,7 @@ JSON
 late "STRESS_GLOBAL=one" "$GENV" run build ; t_ok "globalEnv: prime run exits 0"
 late "STRESS_GLOBAL=one" "$GENV" run build ; t_has "globalEnv: same value hits"  "cache hit"
 late "STRESS_GLOBAL=two" "$GENV" run build ; t_hasnt "globalEnv: changed value misses" "cache hit"
-late "STRESS_GLOBAL=two" "$GENV" -l run build --force ; t_ok "globalEnv: --force run exits 0"
+late "STRESS_GLOBAL=two" "$GENV" -v run build --force ; t_ok "globalEnv: --force run exits 0"
 
 # --- a miss with nothing to compare against --------------------------------
 NEVER="$ENVROOT/neverrun"; mkdir -p "$NEVER/app"
@@ -1145,7 +1145,7 @@ cat > "$NEVER/lattice.json" <<'JSON'
                     "scripts": { "build": "echo hi > out.txt" } } ],
   "tasks": { "build": { "outputs": ["out.txt"] } } }
 JSON
-lat "$NEVER" -l run build ; t_has "a task that never ran says so instead of naming a component" "nothing cached"
+lat "$NEVER" -v run build ; t_has "a task that never ran says so instead of naming a component" "nothing cached"
 
 # --- dependsOn that names nothing ------------------------------------------
 # Both used to build no edge at all, so the ordering the config was written to
@@ -1392,13 +1392,13 @@ cat > "$NEST/lattice.json" <<'JSON'
 JSON
 
 NESTPATH="PATH=$NEST/bin:$PATH"
-late "$NESTPATH" "$NEST" run build -l ; t_ok "passthrough cold run exits 0"
+late "$NESTPATH" "$NEST" run build -v ; t_ok "passthrough cold run exits 0"
 t_has "inner runner was invoked"        "turbo-stub: build complete"
 t_has "downstream ran after the nested repo" "api-built"
 t_file "$NEST/frontend/packages/site/dist/bundle.js" "inner runner produced its artifacts"
 t_nofile "$NEST/.lattice/toolchains" "passthrough repo provisions no toolchains"
 
-late "$NESTPATH" "$NEST" run build -l ; t_ok "passthrough warm run exits 0"
+late "$NESTPATH" "$NEST" run build -v ; t_ok "passthrough warm run exits 0"
 t_has "nested repo caches as one unit" "frontend:build: cache hit"
 t_hasnt "a hit never invokes the inner runner" "turbo-stub"
 
@@ -1408,7 +1408,7 @@ t_file "$NEST/frontend/packages/ui/dist/bundle.js" "hit restored the inner artif
 
 w "$NEST/frontend/packages/ui/src/index.js" "ui v2 CHANGED
 "
-late "$NESTPATH" "$NEST" run build -l ; t_ok "passthrough run after inner edit exits 0"
+late "$NESTPATH" "$NEST" run build -v ; t_ok "passthrough run after inner edit exits 0"
 t_hasnt "an inner source edit busts the nested key" "frontend:build: cache hit"
 t_has   "the busted key re-invokes the inner runner" "turbo-stub: build complete"
 
@@ -1781,7 +1781,7 @@ done
 
 # --- the flag surface ----------------------------------------------------
 # Both directions: nothing the binary offers goes undocumented, and nothing the
-# skill documents is imaginary. `--verbose` is the single exception — a hidden
+# skill documents is imaginary. `--loquacious` is the single exception — a hidden
 # alias, documented as hidden, absent from every --help by design.
 for c in $BIN_CMDS; do
   lat "$ENVROOT" "$c" --help
@@ -1797,7 +1797,7 @@ $OUTPUT"
   done
 done
 for f in $(grep -ohE '\-\-[a-z][a-z-]+' "$SKILL" "$SKILLCLI" | sort -u); do
-  case "$f" in --verbose | --help | --version) continue ;; esac
+  case "$f" in --loquacious | --help | --version) continue ;; esac
   if printf '%s\n' "$ALLHELP" | grep -qF -- "$f"; then
     pass "\`$f\` exists, as the skill says"
   else

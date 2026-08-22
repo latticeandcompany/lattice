@@ -16,7 +16,7 @@ variables in the environment of the commands it spawns.
 
 | Variable | Flag | Effect | Counts as set when |
 | --- | --- | --- | --- |
-| `CI` | `-l`/`--loquacious` | Forces [raw output](/lattice/docs/output-modes) instead of the interactive display. | Present, any value, including empty |
+| `CI` | `-v`/`--verbose` | Forces [raw output](/lattice/docs/output-modes) instead of the interactive display. | Present, any value, including empty |
 | `NO_COLOR` | none | Disables ANSI color. Nothing in `lattice.json` or on the command line turns color back on once this is set. | Present, any value, including empty |
 | `LATTICE_NO_VERSION_CHECK` | `--no-version-check` | Suppresses both the version-drift nag and the automatic switch to a pinned `latticeVersion`. `settings.versionCheck: false` does the same for the whole repo. See [Upgrading](/lattice/docs/upgrading). | Present, any value, including empty |
 | `LATTICE_SWITCHED_FROM` | none | Set by Lattice on the process it hands an invocation to after a version switch, so that process does not switch again. Not meant to be set by hand. | Present, any value |
@@ -37,7 +37,7 @@ whitespace-only value as unset and fall back to the default, so an inherited
 `LATTICE_RELEASE_BASE_URL=` does not break the default download path. A blank
 value passed to the matching flag is treated the same way.
 
-`CI` and `-l`/`--loquacious` are independent triggers of the same raw mode.
+`CI` and `-v`/`--verbose` are independent triggers of the same raw mode.
 Neither overrides the other, and nothing forces interactive mode back on from
 inside a `CI=1` environment. See [Output and
 logging](/lattice/docs/output-modes) for the rest of how the output mode is

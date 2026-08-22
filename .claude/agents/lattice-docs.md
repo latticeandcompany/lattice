@@ -169,7 +169,7 @@ Persistent tasks are never cached; `cache: false` opts a task out.
 ## 3.5 Output modes (`lattice-output`)
 
 `detect_mode(tty, loquacious, ci)` → `Raw` if not a TTY, or `CI` is set, or
-`--loquacious`/`-l`; otherwise `Interactive`. The runner is presentation-free: it
+`--verbose`/`-v`; otherwise `Interactive`. The runner is presentation-free: it
 emits typed `TaskEvent`s and calls `Reporter` hooks — `InteractiveReporter` (live
 TUI) or `CiReporter` (plain, greppable lines). Color only in `Interactive` and
 only without `NO_COLOR`.
@@ -192,7 +192,7 @@ collapsed and is surfaced on failure.
 | `lattice completions <shell>` | Shell completion script to stdout |
 | `lattice version` | Version info |
 
-Global: `-l/--loquacious` (raw stream; `-v` is a hidden alias),
+Global: `-v/--verbose` (raw stream; `-l/--loquacious` is a hidden alias),
 `--no-version-check`. Bare `lattice` prints the branded splash and points at
 `--help`. Precedence is flag > env > `settings` > default. The version-drift nag
 is advisory only, interactive-only, and suppressible by flag, by
@@ -248,7 +248,7 @@ plain factual bullets. Like this:
 ### Runner
 - A `lattice run` that pulls in a persistent task now defaults to raw line-by-line
   output instead of the live TUI, so the process's streaming output stays visible;
-  this previously required `-l` (`--loquacious`)
+  this previously required `-v` (`--verbose`)
 - Non-persistent runs on a terminal still get the interactive TUI
 ```
 

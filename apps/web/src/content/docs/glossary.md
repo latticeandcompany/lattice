@@ -144,7 +144,7 @@ false hit. See [Cache internals](/lattice/docs/cache-internals).
 Which of two presentations `lattice run` uses: **interactive**, a live terminal
 display that settles into a summary, or **raw**, a plain stream of
 `workspace:task:` lines. Lattice picks raw when stdout is not a terminal, when
-`CI` is set, when `-l`/`--loquacious` or `settings.loquacious` applies, or when
+`CI` is set, when `-v`/`--verbose` or `settings.loquacious` applies, or when
 the run pulls in a [persistent task](#persistent-task). See [Output and
 logging](/lattice/docs/output-modes).
 
