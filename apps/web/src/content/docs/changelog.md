@@ -20,6 +20,22 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## A persistent task that exits the moment it starts no longer hangs the run — 2026-08-21
+
+`persistent: true` on a command that exits straight away could leave the run
+waiting for a shutdown signal that was never coming. This is the typo case: a
+dev server that dies on `port already in use` reported its exit, and then
+nothing else happened until the caller gave up.
+
+The runner counts persistent children to know when to stop holding the run open.
+A child that dies instantly has its exit queued while its start is still
+travelling back through the join handle, and `tokio::select!` takes whichever of
+the two is ready without preferring either. When the exit won that race, the
+counter was already at zero and clamped there. The start that arrived afterwards
+raised it to one, and nothing ever brought it back down. The counter is signed
+now, so both orders reach the same total. See
+[Persistent tasks](/lattice/docs/persistent-tasks).
+
 ## Raw output is `-v`/`--verbose`, and `-l`/`--loquacious` is the hidden alias — 2026-08-21
 
 `--verbose` and `--loquacious` swapped roles. `-v`/`--verbose` is now the

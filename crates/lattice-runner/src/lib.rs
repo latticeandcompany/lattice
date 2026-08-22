@@ -465,10 +465,18 @@ enum TaskOutcome {
 /// Hand one message to the reporter, keeping the two counters a persistent
 /// child's exit moves: it stops holding the run open, and any exit that is not a
 /// clean zero is a failure the summary has to show.
+///
+/// `live_persistent` is signed because the exit can be counted before the start
+/// is. A child that dies the instant it is spawned has its `PersistentExited`
+/// queued while `TaskOutcome::Persistent` is still travelling back through the
+/// join handle, and `tokio::select!` picks whichever of the two is ready without
+/// preferring either. Going to -1 and back to 0 leaves the same net count as the
+/// other order; clamping at 0 here instead loses the exit, and the run then waits
+/// on a shutdown signal for a child that is already dead.
 fn forward(
 	reporter: &dyn Reporter,
 	msg: RunnerMsg,
-	live_persistent: &mut usize,
+	live_persistent: &mut isize,
 	failed: &mut usize,
 ) {
 	match msg {
@@ -478,7 +486,7 @@ fn forward(
 			code,
 			duration_ms,
 		} => {
-			*live_persistent = live_persistent.saturating_sub(1);
+			*live_persistent -= 1;
 			if code != Some(0) {
 				*failed += 1;
 			}
@@ -727,7 +735,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let mut skipped = 0usize;
 	let mut first_failure: Option<String> = None;
 	// Persistent children started and not yet reported as exited.
-	let mut live_persistent = 0usize;
+	let mut live_persistent = 0isize;
 
 	let mut ready: Vec<usize> = schedule.initial_ready();
 
@@ -1516,6 +1524,40 @@ mod tests {
 		fn note(&self, _msg: &str) {}
 		fn warn(&self, _msg: &str) {}
 		fn finish(&self) {}
+	}
+
+	/// The counter has to survive a `PersistentExited` that lands before the
+	/// matching `TaskOutcome::Persistent` is counted. A child that exits the
+	/// instant it starts produces exactly that order often enough that a clamp at
+	/// zero left the run waiting on a shutdown signal for an already-dead child.
+	#[test]
+	fn a_persistent_exit_counted_before_its_start_nets_to_zero() {
+		let reporter = RecordingReporter::new();
+		let mut live_persistent = 0isize;
+		let mut failed = 0usize;
+
+		forward(
+			&reporter,
+			RunnerMsg::PersistentExited {
+				workspace: "app".into(),
+				task: "dev".into(),
+				code: Some(1),
+				duration_ms: 0,
+			},
+			&mut live_persistent,
+			&mut failed,
+		);
+		assert_eq!(
+			live_persistent, -1,
+			"the exit has to be recorded, not clamped"
+		);
+
+		live_persistent += 1;
+		assert_eq!(
+			live_persistent, 0,
+			"a child that started and exited holds nothing open"
+		);
+		assert_eq!(failed, 1, "a non-zero exit is a failure the summary shows");
 	}
 
 	fn ws(name: &str, root: &std::path::Path, commands: &[(&str, &str)]) -> Workspace {

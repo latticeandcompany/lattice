@@ -322,5 +322,10 @@ jobs:
           [ -f '.lattice/bin/lattice.exe' ] || { echo 'no stable lattice.exe'; exit 1; }
           [ ! -L '.lattice/bin/lattice.exe' ] || { echo 'stable path is a symlink'; exit 1; }
 
-          ./.lattice/bin/lattice.exe version --json | tee /dev/stderr |
-            grep -F '"target":"x86_64-pc-windows-msvc"'
+          # Not `| tee /dev/stderr |`: Git Bash has no /dev/stderr to open, and
+          # under `pipefail` that failure fails the step even though the install
+          # worked. Hold the JSON in a variable so it is still echoed on the way
+          # past.
+          json="$(./.lattice/bin/lattice.exe version --json)"
+          echo "$json"
+          printf '%s' "$json" | grep -F '"target":"x86_64-pc-windows-msvc"'
