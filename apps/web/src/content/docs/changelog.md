@@ -20,6 +20,31 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Windows installs from a one-liner — 2026-08-21
+
+`install.ps1` is a PowerShell installer, published next to `install.sh`:
+
+```powershell
+irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
+```
+
+It resolves a version the same way `install.sh` does — `$env:LATTICE_VERSION`,
+then `latticeVersion` in `lattice.json`, then the newest release — verifies the
+download against the release checksums, and writes
+`.lattice\bin\lattice-<version>.exe` with a copy at `.lattice\bin\lattice.exe`.
+The stable path is a copy rather than a symlink because Windows withholds the
+privilege a symlink needs, which is what `lattice upgrade` has always done there.
+It adds `.lattice\bin` to your user `PATH`, asking first when it has a terminal
+to ask on, and skipping the edit when it does not unless you pass `-AssumeYes`.
+
+`install.sh` no longer refuses Git Bash, MSYS2 and Cygwin. Those are POSIX shells
+over a native Windows filesystem, so it now installs the Windows binary there
+rather than turning you away. Under WSL2 nothing changes: `uname` reports Linux
+and the Linux binary is what gets installed, which is right for a repo you build
+from WSL2 and is not a Windows install. On Windows on ARM both installers take
+the x64 build, which Windows runs under emulation, and say so while they do it.
+See [Installation](/lattice/docs/installation).
+
 ## Rust 1.88 is the floor for a build from source — 2026-08-21
 
 Building Lattice from source now needs Rust 1.88, up from 1.86. Nothing in the

@@ -61,6 +61,11 @@ Moving between versions already on disk is a symlink swap, so switching
 branches or undoing an upgrade costs nothing. Only a missing version is
 downloaded.
 
+On Windows every name carries `.exe`, and `lattice.exe` is a copy of the
+versioned binary rather than a symlink, because Windows withholds the privilege
+a symlink needs. The swap is a file replacement, so it fails while that copy is
+running. Close any running `lattice` and upgrade again.
+
 A downloaded archive is checked against the release's published checksum before
 it is installed. A mismatch fails the upgrade with `checksum mismatch for
 <asset>`, prints both digests, and leaves the binary and `lattice.json`

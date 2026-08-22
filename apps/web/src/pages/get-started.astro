@@ -52,6 +52,8 @@ web:build: cache hit [d97c6e8a]
 lattice: 2 tasks, 2 cached, 0 failed, 0.00s
 lattice: full cache, nothing to run`;
 
+const windowsInstallCommand = 'irm https://latticeandcompany.github.io/lattice/install.ps1 | iex';
+
 const next = [
 	{
 		name: 'Installation',
@@ -87,7 +89,7 @@ const next = [
 			</h1>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
 				Six steps from a repo with no Lattice in it to a build that comes back from cache the second time
-				you run it. You need a POSIX shell and the tools your workspaces already use.
+				you run it. You need a terminal and the tools your workspaces already use.
 			</p>
 		</div>
 	</section>
@@ -108,11 +110,17 @@ const next = [
 						line in your shell config. To skip that line, pass <code>--no-modify-path</code> and call
 						<code>./.lattice/bin/lattice</code> directly.
 					</p>
+					<p>
+						That script covers macOS, Linux, and Windows under Git Bash. In PowerShell, run the
+						Windows installer instead:
+					</p>
+					<pre class="step__code"><code>{windowsInstallCommand}</code></pre>
 					<p class="mb-0">
-						On Windows, run the script inside WSL2. For a native install, take the
-						<code>x86_64-pc-windows-msvc</code> archive from the
-						<a href={releasesUrl} target="_blank" rel="noopener noreferrer">releases page</a>
-						and put <code>lattice.exe</code> on your <code>PATH</code>.
+						It writes the same <code>.lattice\bin</code> and adds that directory to your user
+						<code>PATH</code>, asking first. Every published build is listed on the
+						<a href={releasesUrl} target="_blank" rel="noopener noreferrer">releases page</a>. See
+						<a href={withBase('/docs/installation')}>Installation</a> for the switches both
+						installers take.
 					</p>
 				</div>
 			</li>

@@ -80,7 +80,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15-intel
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: x86_64-unknown-linux-musl
@@ -161,10 +161,13 @@ jobs:
           sha256sum lattice-*.tar.gz >"lattice-${{ needs.version.outputs.version }}-checksums.txt"
           cat "lattice-${{ needs.version.outputs.version }}-checksums.txt"
 
-      # Shipped as an asset as well as from the docs site, so the one-liner has a
-      # second, versioned home.
-      - name: Include the installer
-        run: cp apps/web/public/install.sh assets/install.sh
+      # Shipped as assets as well as from the docs site, so the one-liners have a
+      # second, versioned home. Two of them because Windows has two kinds of shell:
+      # install.sh covers Git Bash and WSL2, install.ps1 covers PowerShell.
+      - name: Include the installers
+        run: |
+          cp apps/web/public/install.sh assets/install.sh
+          cp apps/web/public/install.ps1 assets/install.ps1
 
       - name: Publish the release
         env:

@@ -16,6 +16,52 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Windows installs from a one-liner, and every published platform is built on its own hardware — 2026-08-21
+
+`install.ps1` is a PowerShell installer, published next to `install.sh` on the
+docs site and as a release asset:
+
+```powershell
+irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
+```
+
+It resolves a version the same way `install.sh` does — `$env:LATTICE_VERSION`,
+then `latticeVersion` in `lattice.json`, then the newest release — verifies the
+download against the release checksums, and writes
+`.lattice\bin\lattice-<version>.exe` with a copy at `.lattice\bin\lattice.exe`.
+The stable path is a copy rather than a symlink because Windows withholds the
+privilege a symlink needs, which is what `lattice upgrade` has always done there.
+It adds `.lattice\bin` to the user `PATH`, asking first when it has a terminal to
+ask on, and skipping the edit entirely when it does not unless `-AssumeYes` is
+passed. The `PATH` is read and written straight through `HKCU\Environment`
+preserving the value kind, so a `REG_EXPAND_SZ` entry such as
+`%USERPROFILE%\bin` is not silently frozen into a literal path, and `setx`, which
+truncates at 1024 characters, is not involved.
+
+`install.sh` no longer refuses Git Bash, MSYS2 and Cygwin. Those report a
+`MINGW*`/`MSYS*`/`CYGWIN*` `uname`, and they are POSIX shells over a native
+Windows filesystem, so the installer now targets `x86_64-pc-windows-msvc` there,
+carries the `.exe` through every name, and copies rather than links the stable
+path. It still turns away a bare `Windows_NT` and points at `install.ps1`. Under
+WSL2 nothing changes: `uname` reports Linux and the Linux binary is what gets
+installed, which is correct for a repo built from WSL2 and is not a Windows
+install. On Windows on ARM both installers take the x64 build and say so, because
+no `aarch64-pc-windows-msvc` build is published.
+
+`x86_64-apple-darwin` is now built on `macos-15-intel` instead of `macos-latest`.
+`macos-latest` has been arm64 since `macos-14`, so that target had been
+cross-compiled and could not be run by the job producing it.
+
+CI gained the platforms it was shipping blind. `build`/`test` now runs on macOS
+arm64, macOS x86_64, arm64 Linux and Windows alongside the existing x86_64 Linux
+job; before this, macOS was never built or tested at all and arm64 Linux was
+first compiled during a release tag. `cfg(unix)` covers macOS at compile time and
+hides nothing that differs at runtime. The desktop app builds on Linux, macOS and
+Windows rather than Linux alone, since Tauri's webview is webkit2gtk, WKWebView
+and WebView2 respectively. A new `installers` job runs `install.ps1` under
+PowerShell and `install.sh` under Git Bash against a locally staged release,
+which is the first time either installer has been executed by CI on any platform.
+
 ### Rust 1.88 is the floor, and `desktop` builds the app — 2026-08-21
 
 `rust-version` in `[workspace.package]` is now 1.88, up from 1.86, and

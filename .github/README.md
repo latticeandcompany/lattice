@@ -31,12 +31,17 @@ version, so every machine builds against the same one.
 
 ## Install
 
-macOS and Linux. On Windows, use WSL2.
-
 Run this from the root of the repo you want to use Lattice in:
 
 ```sh
 curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
+```
+
+That covers macOS, Linux, and Windows under Git Bash, MSYS2, or Cygwin. In
+PowerShell:
+
+```powershell
+irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
 ```
 
 The installer checks the download against its published sha256 and writes the
@@ -49,8 +54,13 @@ and run the binary as `./.lattice/bin/lattice` instead:
 curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh -s -- --no-modify-path
 ```
 
-To uninstall, run `rm -rf .lattice` and delete the `lattice` line from the shell
-config the installer names when it finishes.
+`install.ps1` adds `.lattice\bin` to your user `PATH` rather than to a shell
+config, and asks first when it has a terminal to ask on. Set
+`$env:LATTICE_NO_PATH = '1'` to skip that.
+
+To uninstall, delete `.lattice` and drop the `PATH` entry: the `lattice` line
+from the shell config the installer names when it finishes, or the
+`.lattice\bin` entry in your user `PATH` on Windows.
 
 If the repo already has a `lattice.json`, you get the version its
 `latticeVersion` names. `lattice upgrade 0.2.0` moves the repo to another version

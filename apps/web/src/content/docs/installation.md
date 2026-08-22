@@ -7,8 +7,8 @@ order: 2
 
 # Installation
 
-Lattice is a single binary. The install script puts it in `.lattice/bin/` inside
-the repo you install it into.
+Lattice is a single binary. The installer puts it in `.lattice/bin/` inside the
+repo you install it into.
 
 ## Install with the script
 
@@ -17,6 +17,9 @@ From the root of the repo you want to use Lattice in:
 ```sh
 curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
 ```
+
+This runs anywhere there is a POSIX shell, Git Bash and WSL2 included. In
+PowerShell, run [`install.ps1`](#install-on-windows) instead.
 
 The script downloads the archive for your platform, checks its SHA-256 against
 the release's published checksums file, and refuses to install on a mismatch.
@@ -60,6 +63,74 @@ installed binary reads that pin and switches to it if it differs, so a branch
 that bumps the pin takes effect on the next command with no re-install step.
 See [Upgrading](/lattice/docs/upgrading).
 
+## Install on Windows
+
+Windows has two kinds of shell, and an installer for each.
+
+In PowerShell:
+
+```powershell
+irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
+```
+
+In Git Bash, MSYS2, or Cygwin, use `install.sh`. It recognizes those
+environments and installs the Windows binary rather than the Linux one:
+
+```sh
+curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
+```
+
+Either one checks the download against the release's published checksums, then
+writes `.lattice\bin\lattice-<version>.exe` and puts a copy of it at
+`.lattice\bin\lattice.exe`. Windows withholds the privilege a symlink needs, so
+the stable path is a copy rather than a link. `lattice upgrade` replaces it the
+same way.
+
+`install.ps1` needs `tar.exe`, which ships with Windows 10 1803 and later. On an
+older build, install Git for Windows and run `install.sh` from Git Bash.
+
+Which version it installs is resolved exactly as above, with
+`$env:LATTICE_VERSION` standing in for `$LATTICE_VERSION`:
+
+```powershell
+$env:LATTICE_VERSION = '0.2.0'
+irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
+```
+
+### PATH on Windows
+
+`install.ps1` adds `.lattice\bin` to your user `PATH`, so PowerShell, `cmd`, and
+anything else you open afterwards resolve a bare `lattice`. On a terminal it
+asks before it writes:
+
+```text
+Add C:\src\myrepo\.lattice\bin to your user PATH? [Y/n]:
+```
+
+Decline and it prints the one line that puts the directory on `PATH` for the
+current session instead. A non-interactive run has no one to ask, so it skips
+the edit unless you pass `-AssumeYes` or set `$env:LATTICE_ASSUME_YES = '1'`.
+Either way, open a new shell before the change takes effect.
+
+To skip the edit outright, set `$env:LATTICE_NO_PATH = '1'`. The `-NoModifyPath`
+switch does the same, but `irm | iex` cannot forward arguments to the script it
+runs, so a switch has to go through a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://latticeandcompany.github.io/lattice/install.ps1))) -NoModifyPath
+```
+
+`install.sh` under Git Bash appends its `PATH` line to `~/.bashrc`, which only
+Git Bash reads. PowerShell and `cmd` never see it. Run `install.ps1` if you want
+the Windows user `PATH` set.
+
+### WSL2 gets you the Linux binary
+
+Inside WSL2, `uname` reports Linux and `install.sh` installs the Linux archive.
+That is the right binary for a repo you build from WSL2, and it is not a Windows
+install. Nothing on the Windows side can run it. If you also want `lattice` in
+PowerShell, install there too.
+
 ## Supported platforms
 
 | Platform | Target triple |
@@ -74,11 +145,9 @@ See [Upgrading](/lattice/docs/upgrading).
 aarch64 Linux is published for glibc only. On an aarch64-musl host, build from
 source.
 
-The install script needs a POSIX shell. On Windows, run it inside WSL2, where
-`uname` reports Linux and the script installs the matching Linux archive.
-Native Windows has no scripted installer: download the
-`x86_64-pc-windows-msvc` archive from the release page, extract `lattice.exe`,
-and put it on `PATH`.
+No `aarch64-pc-windows-msvc` build is published. On Windows on ARM, both
+installers take the x64 build, which Windows runs under emulation, and say so
+while they do it.
 
 ## Build from source
 
@@ -170,15 +239,24 @@ root:
   schema.json  the lattice.json JSON Schema (committed)
 ```
 
+On Windows those binaries carry an `.exe` extension and `lattice.exe` is a copy
+rather than a symlink, as above.
+
 To remove every binary, cached result, and provisioned toolchain:
 
 ```sh
 rm -rf .lattice
 ```
 
-The one file outside the repo is the shell config the install script appended
-its `PATH` line to. Delete that line by hand. The script names the file it
-edited in its own output.
+```powershell
+Remove-Item -Recurse -Force .lattice
+```
+
+The one thing outside the repo is the `PATH` entry. `install.sh` appends a line
+to a shell config and names the file it edited in its own output, so delete that
+line by hand. `install.ps1` writes your user `PATH` instead: remove the
+`.lattice\bin` entry from it, under Environment Variables or with
+`[Environment]::SetEnvironmentVariable('Path', ..., 'User')`.
 
 ## Next
 

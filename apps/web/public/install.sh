@@ -12,6 +12,9 @@
 # or set LATTICE_NO_PATH=1. To remove it: rm -rf .lattice, and delete the lattice
 # line from the shell config named at the end of the install.
 #
+# This runs anywhere there is a POSIX shell, Git Bash and WSL2 included. In
+# PowerShell, use install.ps1 instead.
+#
 # Which version it installs, in order:
 #   1. $LATTICE_VERSION, if set
 #   2. latticeVersion from ./lattice.json — the committed config is the lockfile,
@@ -60,6 +63,10 @@ fi
 os="$(uname -s)"
 arch="$(uname -m)"
 
+# Empty everywhere but Windows, where it is part of the binary's name rather
+# than a decoration: PATH resolution there is by extension.
+EXE=''
+
 case "$os" in
 	Darwin)
 		case "$arch" in
@@ -83,8 +90,28 @@ case "$os" in
 			*) die "unsupported Linux architecture: $arch" ;;
 		esac
 		;;
-	MINGW* | MSYS* | CYGWIN* | Windows_NT)
-		die 'this installer needs a POSIX shell. On Windows, run it inside WSL2'
+	MINGW* | MSYS* | CYGWIN*)
+		# Git Bash, MSYS2 and Cygwin are POSIX shells over a native Windows
+		# filesystem, so what belongs here is the Windows binary -- not the Linux
+		# one, which is what installing under WSL2 gets you.
+		EXE='.exe'
+		case "$arch" in
+			x86_64) TARGET='x86_64-pc-windows-msvc' ;;
+			aarch64 | arm64)
+				# No aarch64-pc-windows-msvc build is published yet. Windows on ARM
+				# runs x64 binaries under emulation, so this works -- say so rather
+				# than let it look like a native build.
+				TARGET='x86_64-pc-windows-msvc'
+				say "${DIM}no native arm64 build yet — installing the x64 build, which Windows runs under emulation${RST}"
+				;;
+			*) die "unsupported Windows architecture: $arch" ;;
+		esac
+		;;
+	Windows_NT)
+		die 'this installer needs a POSIX shell. Run it from Git Bash or WSL2, or
+       use install.ps1 in PowerShell:
+
+         irm https://latticeandcompany.github.io/lattice/install.ps1 | iex'
 		;;
 	*)
 		die "unsupported operating system: $os"
@@ -161,7 +188,7 @@ case "$VERSION" in
 esac
 
 BIN_DIR='.lattice/bin'
-VERSIONED="$BIN_DIR/lattice-$VERSION"
+VERSIONED="$BIN_DIR/lattice-$VERSION$EXE"
 ASSET="lattice-$VERSION-$TARGET.tar.gz"
 CHECKSUMS="lattice-$VERSION-checksums.txt"
 
@@ -193,8 +220,8 @@ else
 	say "✓ checksum verified"
 
 	tar -xzf "$TMP/$ASSET" -C "$TMP" || die "could not extract $ASSET"
-	extracted="$(find "$TMP" -type f -name lattice -perm -u+x | head -n1)"
-	[ -n "$extracted" ] || die "$ASSET contains no lattice binary"
+	extracted="$(find "$TMP" -type f -name "lattice$EXE" | head -n1)"
+	[ -n "$extracted" ] || die "$ASSET contains no lattice$EXE binary"
 
 	# Replace rather than write in place: overwriting a running binary is what
 	# "Text file busy" is, and on macOS it invalidates a cached code signature.
@@ -204,10 +231,28 @@ else
 fi
 
 # --- link --------------------------------------------------------------------
-# Relative target, swapped through a rename, so the repo stays movable and no
-# invocation can catch .lattice/bin/lattice missing.
-ln -sfn "lattice-$VERSION" "$BIN_DIR/.lattice.link-tmp-$$"
-mv -f "$BIN_DIR/.lattice.link-tmp-$$" "$BIN_DIR/lattice"
+if [ -n "$EXE" ]; then
+	# Symlinks need a privilege Windows does not grant by default, so the stable
+	# path is a copy there -- the same thing `lattice upgrade` does. A running
+	# .exe cannot be overwritten but can be renamed out of the way, which is what
+	# makes replacing the binary you are currently running work at all.
+	PID=$$
+	# A previous run leaves one behind whenever the binary it was replacing was
+	# still running, which is the case that made the rename necessary.
+	rm -f "$BIN_DIR"/.lattice.old-*"$EXE" 2>/dev/null || true
+	if [ -e "$BIN_DIR/lattice$EXE" ]; then
+		evicted="$BIN_DIR/.lattice.old-$PID$EXE"
+		mv -f "$BIN_DIR/lattice$EXE" "$evicted" 2>/dev/null ||
+			die "could not replace $BIN_DIR/lattice$EXE; close any running lattice and try again"
+		rm -f "$evicted" 2>/dev/null || true
+	fi
+	cp -f "$VERSIONED" "$BIN_DIR/lattice$EXE"
+else
+	# Relative target, swapped through a rename, so the repo stays movable and no
+	# invocation can catch .lattice/bin/lattice missing.
+	ln -sfn "lattice-$VERSION" "$BIN_DIR/.lattice.link-tmp-$$"
+	mv -f "$BIN_DIR/.lattice.link-tmp-$$" "$BIN_DIR/lattice"
+fi
 
 # Machine-local and ephemeral; never a commit.
 if [ -f .gitignore ] && ! grep -q '^\.lattice/bin/$' .gitignore; then
@@ -291,6 +336,11 @@ else
 
 	if [ -n "$EDITED" ]; then
 		PATH_NOTE="${DIM}added .lattice/bin to PATH in${RST}${EDITED} ${DIM}— open a new shell to use it${RST}"
+		# That line is read by this shell and no other. PowerShell and cmd resolve
+		# PATH from the environment, which install.ps1 is what edits.
+		[ -z "$EXE" ] ||
+			PATH_NOTE="$PATH_NOTE
+${DIM}  for PowerShell and cmd, install.ps1 sets the user PATH instead${RST}"
 	elif [ -n "$FOUND" ]; then
 		PATH_NOTE="${DIM}already in${RST}${FOUND} ${DIM}— open a new shell to use it${RST}"
 	else
@@ -302,7 +352,7 @@ fi
 if [ "$ON_PATH" -eq 1 ]; then
 	RUN='lattice'
 else
-	RUN='./.lattice/bin/lattice'
+	RUN="./.lattice/bin/lattice$EXE"
 fi
 
 say ''

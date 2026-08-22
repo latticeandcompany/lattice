@@ -11,7 +11,7 @@ env:
 
 jobs:
   check:
-    name: fmt · clippy · test
+    name: fmt · clippy · test (linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -50,23 +50,50 @@ jobs:
           rustup toolchain install 1.88 --profile minimal
           cargo +1.88 check --workspace --exclude lattice-desktop --all-targets
 
-      # The installer is the first thing a new user runs, and it runs under
-      # whatever /bin/sh they have.
-      - name: Shellcheck the installer
+      # The installers are the first thing a new user runs, and install.sh runs under
+      # whatever /bin/sh they have. Both are exercised for real in `installers` below;
+      # these two steps just fail fast, on the cheapest runner.
+      - name: Shellcheck the POSIX installer
         if: ${{ !cancelled() }}
         run: shellcheck --shell=sh apps/web/public/install.sh
+
+      - name: The PowerShell installer parses
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/apps/web/public/install.ps1", [ref] $null, [ref] $errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host $_ }
+            exit 1
+          }
+          Write-Host 'install.ps1 parses'
 
       - name: Versions agree everywhere they are written by hand
         if: ${{ !cancelled() }}
         run: scripts/check-versions.sh
 
-  # The release matrix publishes a Windows binary, so a Windows build has to be
-  # something CI proves rather than something the release job discovers. Shell
-  # and PATH handling differ there, and nothing else in this workflow exercises
-  # either.
-  windows:
-    name: build · test (windows)
-    runs-on: windows-latest
+  # Every platform the release matrix publishes for, built and tested on its own
+  # architecture. `check` above already covers x86_64 Linux; these are the rest.
+  # Without them, macOS and arm64 Linux are first compiled during a tag build --
+  # and `cfg(unix)` hides nothing that actually differs between Linux and macOS
+  # at runtime: temp-directory symlinks, process groups, PATH resolution.
+  test:
+    name: build · test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos arm64
+            os: macos-latest
+          - name: macos x86_64
+            os: macos-15-intel
+          - name: linux arm64
+            os: ubuntu-24.04-arm
+          - name: windows x86_64
+            os: windows-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -80,14 +107,27 @@ jobs:
         run: cargo build --workspace --exclude lattice-desktop --all-targets
 
       - name: Test
+        if: ${{ !cancelled() }}
         run: cargo test --workspace --exclude lattice-desktop
 
-  # The desktop app. Split out because it needs a webview toolchain, and because
-  # `generate_context!` embeds the frontend at compile time -- so the bundle has to
+  # The desktop app, on every platform it can be bundled for. Tauri's webview is a
+  # different implementation on each -- webkit2gtk, WKWebView, WebView2 -- so a
+  # Linux-only job proves the Rust compiles and nothing about the other two.
+  # `generate_context!` embeds the frontend at compile time, so the bundle has to
   # exist before cargo runs, even for a check.
   desktop:
-    name: desktop
-    runs-on: ubuntu-latest
+    name: desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+          - name: macos
+            os: macos-latest
+          - name: windows
+            os: windows-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -101,7 +141,10 @@ jobs:
         with:
           key: desktop
 
+      # Only Linux needs these: macOS has WKWebView in the system and Windows
+      # runners ship the WebView2 runtime.
       - name: Install webview and bundler dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
@@ -117,7 +160,9 @@ jobs:
         run: npm ci
         working-directory: apps/desktop
 
+      # Platform-independent, so one runner is enough to prove it.
       - name: Type-check and test the frontend
+        if: runner.os == 'Linux'
         run: |
           npm run check
           npm run test
@@ -138,5 +183,144 @@ jobs:
       # The brand tokens are copied rather than shared, because there is no npm
       # workspace root to share them through. This is what keeps the copies honest.
       - name: The brand tokens have not drifted
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: node scripts/checkBrandTokens.mjs
+
+  # Windows has two installers because it has two kinds of shell, and neither had
+  # ever been run by anything. They are served a real archive from a local HTTP
+  # server rather than github.com: no published release to depend on, no
+  # unauthenticated API rate limit to flake on, and the staged layout is the one
+  # release.yml produces.
+  installers:
+    name: installers (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the binary the installers will install
+        run: cargo build --locked --bin lattice
+
+      - name: Stage a release
+        id: stage
+        shell: bash
+        run: |
+          version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml |
+            sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+          [ -n "$version" ] || { echo 'no workspace version'; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+          stem="lattice-$version-x86_64-pc-windows-msvc"
+          dir="release/v$version"
+          mkdir -p "$dir/$stem/completions"
+          cp target/debug/lattice.exe "$dir/$stem/"
+          cp LICENSE "$dir/$stem/"
+          tar -czf "$dir/$stem.tar.gz" -C "$dir" "$stem"
+          rm -rf "${dir:?}/$stem"
+          (cd "$dir" && sha256sum ./*.tar.gz >"lattice-$version-checksums.txt")
+
+          # Enough of the GitHub releases payload for the no-lattice.json path.
+          printf '{"tag_name":"v%s"}\n' "$version" >release/latest.json
+
+      # The server lives inside the step that needs it: a process backgrounded in
+      # one step is not guaranteed to survive into the next on Windows.
+      - name: install.ps1
+        shell: pwsh
+        env:
+          LATTICE_RELEASE_BASE_URL: http://127.0.0.1:8000
+          LATTICE_RELEASE_LATEST_URL: http://127.0.0.1:8000/latest.json
+          LATTICE_RELEASE_LIST_URL: http://127.0.0.1:8000/latest.json
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = "$env:GITHUB_WORKSPACE/apps/web/public/install.ps1"
+          $version = '${{ steps.stage.outputs.version }}'
+
+          $server = Start-Process python -ArgumentList '-m', 'http.server', '8000' `
+            -WorkingDirectory "$env:GITHUB_WORKSPACE/release" -PassThru -NoNewWindow
+          try {
+            $up = $false
+            foreach ($_ in 1..30) {
+              try {
+                Invoke-WebRequest 'http://127.0.0.1:8000/latest.json' -UseBasicParsing | Out-Null
+                $up = $true; break
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $up) { throw 'the staging server never came up' }
+
+            $before = [Environment]::GetEnvironmentVariable('Path', 'User')
+
+            # No lattice.json here, so this also covers resolving the newest release.
+            New-Item -ItemType Directory -Force -Path 'fixtures/untouched' | Out-Null
+            Push-Location 'fixtures/untouched'
+            & $installer -NoModifyPath
+            if (-not (Test-Path ".lattice\bin\lattice-$version.exe")) { throw 'no versioned binary' }
+            $out = & '.\.lattice\bin\lattice.exe' --version
+            if ("$out" -notmatch [regex]::Escape($version)) { throw "--version said: $out" }
+            Pop-Location
+
+            if ([Environment]::GetEnvironmentVariable('Path', 'User') -ne $before) {
+              throw '-NoModifyPath edited the user PATH'
+            }
+
+            # A pinned lattice.json is the ordinary case: the config is the lockfile.
+            New-Item -ItemType Directory -Force -Path 'fixtures/pinned' | Out-Null
+            Push-Location 'fixtures/pinned'
+            "{`"latticeVersion`": `"$version`"}" | Set-Content -LiteralPath 'lattice.json'
+            & $installer -AssumeYes
+            & '.\.lattice\bin\lattice.exe' version --json
+            $expected = (Resolve-Path '.lattice\bin').Path
+            Pop-Location
+
+            if (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -notcontains $expected) {
+              throw "the user PATH is missing $expected"
+            }
+            Write-Host "user PATH gained $expected"
+          } finally {
+            Stop-Process -InputObject $server -Force -ErrorAction SilentlyContinue
+          }
+
+      # `shell: bash` on a Windows runner is the bash from Git for Windows, which is
+      # exactly the MINGW environment install.sh used to refuse.
+      - name: install.sh in Git Bash
+        shell: bash
+        env:
+          LATTICE_RELEASE_BASE_URL: http://127.0.0.1:8000
+          LATTICE_RELEASE_LATEST_URL: http://127.0.0.1:8000/latest.json
+          LATTICE_RELEASE_LIST_URL: http://127.0.0.1:8000/latest.json
+        run: |
+          set -eu
+          version='${{ steps.stage.outputs.version }}'
+          echo "uname -s reports: $(uname -s)"
+
+          # GITHUB_WORKSPACE arrives as a Windows path even in bash.
+          ws="$(cygpath -u "$GITHUB_WORKSPACE")"
+
+          cd "$ws/release"
+          python -m http.server 8000 >server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          up=''
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/latest.json >/dev/null 2>&1; then up=1; break; fi
+            sleep 1
+          done
+          [ -n "$up" ] || { echo 'the staging server never came up'; cat server.log; exit 1; }
+
+          mkdir -p "$ws/fixtures/gitbash"
+          cd "$ws/fixtures/gitbash"
+          printf '{"latticeVersion": "%s"}\n' "$version" >lattice.json
+
+          sh "$ws/apps/web/public/install.sh" --no-modify-path
+
+          [ -f ".lattice/bin/lattice-$version.exe" ] || { echo 'no versioned binary'; exit 1; }
+          # A copy, not a symlink: Windows does not grant the privilege for one.
+          [ -f '.lattice/bin/lattice.exe' ] || { echo 'no stable lattice.exe'; exit 1; }
+          [ ! -L '.lattice/bin/lattice.exe' ] || { echo 'stable path is a symlink'; exit 1; }
+
+          ./.lattice/bin/lattice.exe version --json | tee /dev/stderr |
+            grep -F '"target":"x86_64-pc-windows-msvc"'

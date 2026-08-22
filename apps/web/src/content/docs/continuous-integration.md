@@ -24,6 +24,19 @@ The binary lands at `.lattice/bin/lattice`. Call it by that path, or add
 `.lattice/bin` to the job's `PATH` yourself. See
 [Installation](/lattice/docs/installation).
 
+On a Windows runner, the same script works in a `bash` step, and `install.ps1`
+works in a PowerShell one:
+
+```powershell
+$env:LATTICE_NO_PATH = '1'
+irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
+```
+
+A CI shell is not interactive, so `install.ps1` leaves the user `PATH` alone
+whether or not you set that variable. Setting it says so out loud, and stops the
+job depending on how the runner reports interactivity. The binary is at
+`.lattice\bin\lattice.exe`.
+
 ## Run `lattice setup` as its own step
 
 `lattice run` does not install dependencies or provision toolchains. Put
@@ -46,15 +59,15 @@ versions](/lattice/docs/pinning-tool-versions).
 `lattice run` and `lattice setup` pick their output mode the same way
 everywhere. Lattice prints raw, line-by-line output when stdout is not a
 terminal, when the `CI` environment variable is set, or when you pass
-`-l`/`--loquacious`. A CI job satisfies the first two at once: a step's stdout
+`-v`/`--verbose`. A CI job satisfies the first two at once: a step's stdout
 is not a terminal, and GitHub Actions sets `CI` in every job.
 
-`CI` and `-l` are interchangeable as mode triggers. `-l` additionally turns on
+`CI` and `-v` are interchangeable as mode triggers. `-v` additionally turns on
 per-task output and hash trace lines. Somewhere that does not set `CI`, such as
-an SSH session driving a build, pass `-l`:
+an SSH session driving a build, pass `-v`:
 
 ```sh
-lattice run build -l
+lattice run build -v
 ```
 
 Color follows the terminal rather than the mode, so a CI log is free of escape
@@ -90,7 +103,7 @@ lattice run lint test build --continue
 
 The run still exits `1` if anything failed. The summary line carries the failed
 count, and each task skipped because a prerequisite failed prints
-`skipped (dependency failed)` under `-l`.
+`skipped (dependency failed)` under `-v`.
 
 ## Cap parallelism on a small runner
 
