@@ -308,3 +308,73 @@ samp {
 		scroll-behavior: auto;
 	}
 }
+
+// ===== Lattice Desktop =====
+// Crimson is the desktop product's accent. It appears on the product word and on
+// the one primary action per view, never on structure. The home page band and the
+// /desktop route both use these, so they live here rather than in either one.
+.desktop-wordmark {
+	font-size: 1.35rem;
+	font-weight: 500;
+	letter-spacing: var(--wordmark-tracking);
+	color: var(--text);
+}
+
+// `lattice` stays ink or paper and only the product word takes the accent.
+.desktop-wordmark__product {
+	color: var(--crimson-500);
+}
+
+[data-bs-theme='dark'] .desktop-wordmark__product {
+	color: var(--crimson-300);
+}
+
+.desktop-accent {
+	color: var(--crimson-500);
+}
+
+[data-bs-theme='dark'] .desktop-accent {
+	color: var(--crimson-300);
+}
+
+// The desktop product's primary action. Against paper, crimson has the contrast to
+// carry paper-colored text. Against ink it has to lighten, and then it needs ink
+// text back.
+.btn-desktop {
+	background: var(--crimson-500);
+	color: var(--paper);
+	border: 1px solid var(--crimson-500);
+}
+
+.btn-desktop:hover,
+.btn-desktop:focus {
+	background: var(--crimson-700);
+	border-color: var(--crimson-700);
+	color: var(--paper);
+}
+
+[data-bs-theme='dark'] .btn-desktop {
+	background: var(--crimson-300);
+	border-color: var(--crimson-300);
+	color: var(--ink);
+}
+
+[data-bs-theme='dark'] .btn-desktop:hover,
+[data-bs-theme='dark'] .btn-desktop:focus {
+	background: var(--crimson-500);
+	border-color: var(--crimson-500);
+	color: var(--paper);
+}
+
+// A card that is itself a link. The arrow moves on hover, so the whole card reads
+// as the target rather than just the title. Used by get-started and /desktop.
+.next-card__arrow {
+	font-size: 0.9rem;
+	color: var(--text-muted);
+	transition: transform 0.15s ease;
+}
+
+.next-card:hover .next-card__arrow {
+	transform: translateX(0.2rem);
+	color: var(--focus);
+}

@@ -16,9 +16,23 @@ The engine is linked into the app, so the window and the CLI share one
 scheduler, one cache, and one set of driver rules. There is nothing the two can
 disagree about.
 
+## Install it
+
+Every release publishes a bundle for each platform. The
+[Lattice Desktop page](/lattice/desktop) lists them all: a `.dmg` for Apple
+Silicon and Intel Macs, an installer and an `.msi` for Windows, and a `.deb`, an
+`.rpm`, and an AppImage for Linux on x86_64 and aarch64.
+
+The bundles are not code-signed, so macOS and Windows both stop the first launch
+and ask you to confirm. The download page names the warning each one shows, says
+what to click, and publishes a checksum for every file.
+
+If the repo has no config yet, install the CLI and run `lattice init` first. The
+app needs a `lattice.json` before it can open a project.
+
 ## Build and run it from a clone
 
-No installer is published yet. Build it yourself:
+To run the app from source instead:
 
 ```sh
 cd apps/desktop
@@ -30,8 +44,10 @@ That starts the frontend dev server, compiles the Rust backend, and opens the
 window. The first compile takes a while and later ones are incremental.
 
 To produce an installer for your own platform, run `npm run bundle` instead. It
-writes an `.app` and a `.dmg` on macOS, an `.msi` on Windows, and a `.deb` and
-an AppImage on Linux.
+writes an `.app` and a `.dmg` on macOS, an installer and an `.msi` on Windows,
+and a `.deb`, an `.rpm`, and an AppImage on Linux. The release workflow builds
+the same targets, so a local bundle matches a published one except for the file
+name.
 
 Either command needs the platform's webview toolchain. macOS and Windows have
 one already. On Debian or Ubuntu, install what CI installs:

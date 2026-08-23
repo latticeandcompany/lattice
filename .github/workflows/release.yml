@@ -136,9 +136,138 @@ jobs:
           name: archive-${{ matrix.target }}
           path: lattice-*.tar.gz
 
+  # The desktop app, bundled natively on every platform it ships for. Nothing here
+  # is cross-compiled. Tauri's webview is a different implementation per platform,
+  # and linuxdeploy cannot build an ARM AppImage from an x86 host, so every row runs
+  # on its own hardware. Linux pins 24.04 rather than -latest, so the glibc floor of
+  # the .deb, the .rpm and the .AppImage moves only when this file says so.
+  desktop:
+    name: desktop (${{ matrix.name }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+            expect: 1
+          - name: macos-x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+            expect: 1
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi,nsis
+            expect: 2
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+            expect: 3
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+            expect: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.target }}
+
+      # Only Linux needs these: macOS has WKWebView in the system and the Windows
+      # runners ship the WebView2 runtime.
+      - name: Install the webview and bundler dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install the frontend dependencies
+        run: npm ci
+        working-directory: apps/desktop
+
+      # `tauri build` runs the frontend build itself, through beforeBuildCommand.
+      # The tauri CLI passes everything after the second `--` to cargo. That is the
+      # only way to get `--locked` in, and a release must not quietly resolve a new
+      # dependency. The CLI archives above are built the same way.
+      #
+      # The bundles are unsigned. There is no Developer ID and no Windows publisher
+      # certificate, so no step here reads a signing secret, and the download page
+      # tells the reader what their OS will say on first launch.
+      - name: Bundle
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+        working-directory: apps/desktop
+
+      # Two names for one file. The versioned name is the archive. The bare name is
+      # what the download page links to through /releases/latest/download, which
+      # resolves only an exact asset name and so cannot carry a version in it.
+      #
+      # Tauri names its output after the product and the version, as in
+      # Lattice_1.0.0_aarch64.dmg, and spells the architecture differently in each
+      # format. So this finds every bundle by globbing its directory rather than by
+      # predicting its name.
+      - name: Stage the bundles under a stable and a versioned name
+        shell: bash
+        run: |
+          set -eu
+          shopt -s nullglob
+          version='${{ needs.version.outputs.version }}'
+          name='${{ matrix.name }}'
+          bundle='target/${{ matrix.target }}/release/bundle'
+          mkdir -p staged
+          staged=0
+
+          stage() {
+            cp "$1" "staged/lattice-desktop-$name$2"
+            cp "$1" "staged/lattice-desktop-$version-$name$2"
+            staged=$((staged + 1))
+            echo "  $(basename "$1")  ->  lattice-desktop-$name$2"
+          }
+
+          for f in "$bundle"/dmg/*.dmg; do stage "$f" .dmg; done
+          for f in "$bundle"/msi/*.msi; do stage "$f" .msi; done
+          for f in "$bundle"/nsis/*-setup.exe; do stage "$f" -setup.exe; done
+          for f in "$bundle"/deb/*.deb; do stage "$f" .deb; done
+          for f in "$bundle"/rpm/*.rpm; do stage "$f" .rpm; done
+          for f in "$bundle"/appimage/*.AppImage; do stage "$f" .AppImage; done
+
+          # If a bundle fails to build without failing the job, the download page is
+          # left with a link to an asset name that does not exist, which GitHub
+          # answers with a 404. Fail the release here instead.
+          if [ "$staged" -ne '${{ matrix.expect }}' ]; then
+            echo "staged $staged bundles, expected ${{ matrix.expect }}" >&2
+            find "$bundle" -maxdepth 2 -type f >&2 || true
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.name }}
+          path: staged/
+
   publish:
     name: publish
-    needs: [version, build]
+    needs: [version, build, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -153,6 +282,12 @@ jobs:
           path: assets
           merge-multiple: true
 
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: assets
+          merge-multiple: true
+
       # One checksums file covers the whole release: the installer fetches it once
       # and finds the line for the platform it is on.
       - name: Checksum every archive
@@ -160,6 +295,18 @@ jobs:
         run: |
           sha256sum lattice-*.tar.gz >"lattice-${{ needs.version.outputs.version }}-checksums.txt"
           cat "lattice-${{ needs.version.outputs.version }}-checksums.txt"
+
+      # A separate file from the CLI checksums, because install.sh greps that file
+      # for its own archive and has no business reading .dmg lines. This lists both
+      # names of every bundle: the download page hands out the bare name, the
+      # archive keeps the versioned name, and the two are the same bytes.
+      - name: Checksum every desktop bundle
+        working-directory: assets
+        run: |
+          sha256sum lattice-desktop-*.dmg lattice-desktop-*.msi lattice-desktop-*.exe \
+            lattice-desktop-*.deb lattice-desktop-*.rpm lattice-desktop-*.AppImage \
+            >"lattice-desktop-${{ needs.version.outputs.version }}-checksums.txt"
+          cat "lattice-desktop-${{ needs.version.outputs.version }}-checksums.txt"
 
       # Shipped as assets as well as from the docs site, so the one-liners have a
       # second, versioned home. Two of them because Windows has two kinds of shell:

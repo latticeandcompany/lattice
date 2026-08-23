@@ -1,5 +1,5 @@
 import type { CollectionEntry } from 'astro:content';
-import { withBase } from './base';
+import { withBase } from './base.ts';
 
 export interface DocLink {
 	title: string;

@@ -1,4 +1,4 @@
-import { withBase } from './base';
+import { withBase } from './base.ts';
 
 export interface NavLink {
 	name: string;
@@ -10,7 +10,7 @@ export const navLinks: NavLink[] = [
 	{ name: 'Docs', href: withBase('/docs') },
 	{ name: 'For agents', href: withBase('/for-agents') },
 	{ name: 'Why Lattice', href: withBase('/#why') },
-	{ name: 'Desktop', href: withBase('/#desktop') },
+	{ name: 'Desktop', href: withBase('/desktop') },
 	{ name: 'GitHub', href: 'https://github.com/latticeandcompany/lattice', external: true },
 ];
 
@@ -18,6 +18,9 @@ export const githubUrl = 'https://github.com/latticeandcompany/lattice';
 
 /** The parent-company site. The footer lockup points here, not at this site's own home. */
 export const parentSiteUrl = 'https://latticeandcompany.github.io';
+
+/** The Lattice Desktop route: marketing, and the downloads for every platform. */
+export const desktopUrl = withBase('/desktop');
 
 /** Every "Get started" call to action on the site lands here. */
 export const getStartedUrl = withBase('/get-started');

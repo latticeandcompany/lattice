@@ -5,8 +5,9 @@
 # version from CARGO_PKG_VERSION and `lattice init` writes that into new configs,
 # so those cannot drift. These can:
 #
-#   lattice.json           latticeVersion   (this repo dogfooding itself)
-#   apps/web/package.json  version
+#   lattice.json               latticeVersion   (this repo dogfooding itself)
+#   apps/web/package.json      version
+#   apps/desktop/package.json  version
 #   lattice.json           engines.cargo    (must match rust-version)
 #   .github/README.md      the Rust badge   (must match rust-version)
 #
@@ -61,6 +62,13 @@ else bad "lattice.json latticeVersion is $v, want $CARGO_VERSION"; fi
 v="$(json_field apps/web/package.json version)"
 if [ "$v" = "$CARGO_VERSION" ]; then good "apps/web/package.json version = $v"
 else bad "apps/web/package.json version is $v, want $CARGO_VERSION"; fi
+
+# tauri.conf.json carries no version of its own, and the desktop crate inherits the
+# workspace version, so a bundle always reports what Cargo.toml says. This
+# package.json is the one copy of the version that can drift.
+v="$(json_field apps/desktop/package.json version)"
+if [ "$v" = "$CARGO_VERSION" ]; then good "apps/desktop/package.json version = $v"
+else bad "apps/desktop/package.json version is $v, want $CARGO_VERSION"; fi
 
 # --- 2. Cargo.lock agrees for every workspace crate --------------------------
 # A forgotten `cargo update -w` after a bump makes --locked release builds fail.

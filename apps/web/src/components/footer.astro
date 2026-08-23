@@ -1,6 +1,6 @@
 ---
 import Rosette from './rosette';
-import { getStartedUrl, githubUrl, licenseUrl, parentSiteUrl, releasesUrl } from '../lib/nav';
+import { desktopUrl, getStartedUrl, githubUrl, licenseUrl, parentSiteUrl, releasesUrl } from '../lib/nav';
 import { withBase } from '../lib/base';
 
 const year = new Date().getFullYear();
@@ -13,6 +13,7 @@ const columns = [
 		links: [
 			{ name: 'Get started', href: getStartedUrl },
 			{ name: 'Why Lattice', href: withBase('/#why') },
+			{ name: 'Desktop', href: desktopUrl },
 			{ name: 'Docs', href: withBase('/docs') },
 			{ name: 'For agents', href: withBase('/for-agents') },
 		],

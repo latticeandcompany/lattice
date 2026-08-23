@@ -1,0 +1,395 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Rosette from '../components/rosette.tsx';
+import DownloadPicker from '../components/downloadPicker.tsx';
+import { platforms, downloadUrl } from '../lib/desktop.ts';
+import { licenseUrl, releasesUrl } from '../lib/nav.ts';
+import { withBase } from '../lib/base.ts';
+
+// Crimson is this product's accent, so it carries the product word and the one
+// primary action. Everything structural stays monochrome, as it does site-wide.
+//
+// The four headings match the home page band's, because they name the same four
+// things. The bodies go one detail deeper than the band does.
+
+interface Capability {
+	title: string;
+	body: string;
+	/** Captured from the app, not written for the page. Re-capture rather than edit. */
+	sample?: string;
+}
+
+const capabilities: Capability[] = [
+	{
+		title: 'Every task in one list',
+		body: 'Every workspace in the repo, with the tasks it can run. Lattice names the tool it picked for each one, so a workspace headed for the wrong driver shows up before you start it.',
+	},
+	{
+		title: 'Watch the graph fill in',
+		body: 'The graph is drawn in dependency order and fills in as your build moves through it, so you can see where a run stopped. Click any task to isolate it with everything it depends on and everything that depends on it.',
+	},
+	{
+		title: 'Edit the config without editing JSON',
+		body: 'Workspaces, tasks, and tool versions as a form. The same parser a run uses checks every edit as you type, so you can\'t save a config the CLI would reject.',
+	},
+	{
+		title: 'Find out why a task re-ran',
+		body: 'When a task misses the cache, the app names the part of the key that moved: the inputs, the toolchain, the command, or a task it depends on. You get a reason instead of a bare hash.',
+		sample: 'cache miss: toolchain, inputs changed',
+	},
+];
+
+const firstLaunch = [
+	{
+		os: 'macOS',
+		icon: 'bi-apple',
+		body: 'macOS refuses the app the first time and says it can\'t verify the developer. Open <strong>System Settings &rsaquo; Privacy &amp; Security</strong>, find the message about Lattice, and click <strong>Open Anyway</strong>.',
+		commandNote: 'From a terminal, this does the same thing:',
+		command: 'xattr -dr com.apple.quarantine /Applications/Lattice.app',
+	},
+	{
+		os: 'Windows',
+		icon: 'bi-windows',
+		body: 'SmartScreen shows <strong>Windows protected your PC</strong>. Click <strong>More info</strong>, then <strong>Run anyway</strong>. Windows shows this warning for any installer without a signature it recognizes.',
+	},
+	{
+		os: 'Linux',
+		icon: 'bi-tux',
+		body: 'The .deb and .rpm install like any other package. An AppImage needs the executable bit first:',
+		command: 'chmod +x lattice-desktop-linux-x86_64.AppImage\n./lattice-desktop-linux-x86_64.AppImage',
+	},
+];
+---
+
+<Layout
+	title="Lattice Desktop · Run and inspect your monorepo"
+	description="A desktop app for Lattice. Run your tasks, watch the graph fill in, edit lattice.json as a form, and find out why a task re-ran. Downloads for macOS, Windows, and Linux."
+>
+	<section class="desktop-hero px-3">
+		<div class="mx-auto text-center" style="max-width: 46rem;">
+			<div class="d-inline-flex align-items-center gap-2 mb-4">
+				<Rosette client:visible size="2.5rem" />
+				<span class="desktop-wordmark">
+					lattice <span class="desktop-wordmark__product">desktop</span>
+				</span>
+			</div>
+
+			<h1 class="desktop-hero__title fw-bold mb-3">The power of Lattice. To your desktop.</h1>
+
+			<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 38rem;">
+				Lattice Desktop brings a beautiful user interface to your monorepo. Run every task, watch the graph fill in, edit lattice.json as a form, and find out why a task re-ran.
+			</p>
+
+			<DownloadPicker client:load />
+		</div>
+	</section>
+
+	<section class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
+		<div class="mx-auto" style="max-width: 52rem;">
+			{
+				capabilities.map((capability) => (
+					<article class="capability">
+						<h2 class="capability__title">{capability.title}</h2>
+						<p class="capability__body">{capability.body}</p>
+						{capability.sample && (
+							<pre class="capability__sample"><code>{capability.sample}</code></pre>
+						)}
+					</article>
+				))
+			}
+		</div>
+	</section>
+
+
+	<section id="downloads" class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
+		<div class="mx-auto" style="max-width: 52rem;">
+			<h2 class="fw-bold mb-3" style="font-size: clamp(1.75rem, 3.5vw, 2.25rem); letter-spacing: -0.02em;">
+				Download Now
+			</h2>
+
+			{
+				platforms.map((platform) => (
+					<div class="platform">
+						<h3 class="platform__name">
+							<i class={`bi ${platform.icon}`} aria-hidden="true" />
+							{platform.label}
+						</h3>
+						<ul class="platform__list list-unstyled mb-0">
+							{platform.downloads.map((download) => (
+								<li class="download">
+									<a class="download__link" href={downloadUrl(download.asset)}>
+										{download.format}
+									</a>
+									<span class="download__note">{download.note}</span>
+									<code class="download__asset">{download.asset}</code>
+								</li>
+							))}
+						</ul>
+					</div>
+				))
+			}
+		</div>
+	</section>
+
+	<section id="first-launch" class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
+		<div class="mx-auto" style="max-width: 52rem;">
+			<h2 class="fw-bold mb-3" style="font-size: clamp(1.75rem, 3.5vw, 2.25rem); letter-spacing: -0.02em;">
+				Safety
+			</h2>
+			<p class="mb-5" style="color: var(--text-muted);">
+				These builds aren't signed. Verify the checksum below if you'd rather not take that on trust.
+			</p>
+
+			{
+				firstLaunch.map((entry) => (
+					<div class="launch">
+						<h3 class="launch__os">
+							<i class={`bi ${entry.icon}`} aria-hidden="true" />
+							{entry.os}
+						</h3>
+						<div>
+							<p class="launch__body" set:html={entry.body} />
+							{entry.commandNote && <p class="launch__body mb-2">{entry.commandNote}</p>}
+							{entry.command && <pre class="launch__code"><code>{entry.command}</code></pre>}
+						</div>
+					</div>
+				))
+			}
+
+			<div class="verify">
+				<h3 class="verify__title">Verify what you downloaded</h3>
+				<p class="launch__body">
+					Every release publishes a checksums file listing each bundle under both the name you
+					downloaded and its versioned name. Hash your copy:
+				</p>
+				<pre class="launch__code"><code>shasum -a 256 lattice-desktop-macos-aarch64.dmg</code></pre>
+				<p class="launch__body mb-0">
+					Then find the matching line in <code>lattice-desktop-&lt;version&gt;-checksums.txt</code> on the <a href={releasesUrl} target="_blank" rel="noopener noreferrer">releases page</a>.
+				</p>
+			</div>
+		</div>
+	</section>
+
+	<section class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
+		<div class="mx-auto" style="max-width: 52rem;">
+			<div class="row g-3">
+				<div class="col-12 col-sm-6">
+					<a href={withBase('/docs/desktop-app')} class="card h-100 text-decoration-none next-card">
+						<div class="card-body p-4">
+							<span class="d-flex align-items-center gap-2 fw-bold mb-2" style="color: var(--text);">
+								The desktop app guide
+								<i class="bi bi-arrow-right next-card__arrow" aria-hidden="true"></i>
+							</span>
+							<span class="d-block" style="color: var(--text-subtle); line-height: 1.6;">
+								Opening a project, the four-step setup walkthrough, the graph, and building the app
+								from a clone.
+							</span>
+						</div>
+					</a>
+				</div>
+				<div class="col-12 col-sm-6">
+					<a href={withBase('/get-started')} class="card h-100 text-decoration-none next-card">
+						<div class="card-body p-4">
+							<span class="d-flex align-items-center gap-2 fw-bold mb-2" style="color: var(--text);">
+								Start with the CLI
+								<i class="bi bi-arrow-right next-card__arrow" aria-hidden="true"></i>
+							</span>
+							<span class="d-block" style="color: var(--text-subtle); line-height: 1.6;">
+								The app needs a lattice.json to open a project. Six steps from an empty repo to a
+								build that comes back from cache.
+							</span>
+						</div>
+					</a>
+				</div>
+			</div>
+		</div>
+	</section>
+</Layout>
+
+<style>
+	.desktop-hero {
+		padding-top: clamp(3.5rem, 10vh, 6rem);
+		padding-bottom: clamp(3rem, 8vh, 5rem);
+	}
+	.desktop-hero__title {
+		font-size: clamp(2.5rem, 6vw, 4rem);
+		letter-spacing: -0.03em;
+		line-height: 1.05;
+	}
+	.desktop-hero__meta {
+		font-size: 0.9rem;
+		line-height: 1.9;
+		color: var(--text-muted);
+	}
+
+	/* Vertical rhythm alone separates the four, so they read as one column of prose
+	   rather than four cards. */
+	.capability {
+		padding-bottom: 3rem;
+	}
+	.capability:last-child {
+		padding-bottom: 0;
+	}
+	.capability__title {
+		margin: 0 0 0.75rem;
+		font-size: clamp(1.35rem, 2.6vw, 1.75rem);
+		font-weight: 700;
+		letter-spacing: -0.01em;
+	}
+	.capability__body {
+		margin: 0;
+		color: var(--text-subtle);
+		line-height: 1.7;
+	}
+	/* The app's own words for a miss, so the page and the window agree. */
+	.capability__sample {
+		margin: 1rem 0 0;
+		padding: 0.7rem 0.9rem;
+		border: 1px solid var(--border-subtle);
+		border-radius: 6px;
+		background: var(--surface-2);
+		font-family: 'DM Mono', monospace;
+		font-size: 0.82rem;
+		color: var(--text-muted);
+		overflow-x: auto;
+	}
+
+	.platform + .platform {
+		margin-top: 2.5rem;
+	}
+	.platform__name {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin: 0 0 0.75rem;
+		padding-bottom: 0.6rem;
+		border-bottom: 1px solid var(--border-subtle);
+		font-size: 1.05rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+	}
+	.platform__name .bi {
+		color: var(--text-muted);
+	}
+
+	/* Format, then what distinguishes it, then the file you will actually get. The
+	   asset name is shown because it is the thing to check against the checksums. */
+	.download {
+		display: grid;
+		grid-template-columns: 11rem 1fr auto;
+		align-items: baseline;
+		column-gap: 1.25rem;
+		padding: 0.7rem 0;
+	}
+	.download + .download {
+		border-top: 1px solid var(--border-subtle);
+	}
+	.download__link {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		font-weight: 500;
+		text-decoration: none;
+		color: var(--crimson-500);
+	}
+	:global([data-bs-theme='dark']) .download__link {
+		color: var(--crimson-300);
+	}
+	.download__link:hover {
+		text-decoration: underline;
+	}
+	.download__note {
+		color: var(--text-subtle);
+		line-height: 1.6;
+	}
+	.download__asset {
+		font-family: 'DM Mono', monospace;
+		font-size: 0.76rem;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+
+	.launch {
+		display: grid;
+		grid-template-columns: 7.5rem 1fr;
+		column-gap: 2rem;
+		padding-bottom: 2.5rem;
+	}
+	.launch__os {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 700;
+	}
+	.launch__os .bi {
+		color: var(--text-muted);
+	}
+	.launch__body {
+		margin: 0 0 0.75rem;
+		color: var(--text-subtle);
+		line-height: 1.7;
+	}
+	.launch__body:last-child {
+		margin-bottom: 0;
+	}
+	.launch__code {
+		margin: 0;
+		padding: 0.7rem 0.9rem;
+		border: 1px solid var(--border-subtle);
+		border-radius: 6px;
+		background: var(--surface-2);
+		font-family: 'DM Mono', monospace;
+		font-size: 0.8rem;
+		line-height: 1.7;
+		overflow-x: auto;
+	}
+	.verify {
+		padding-top: 2rem;
+		border-top: 1px solid var(--border-subtle);
+	}
+	.verify__title {
+		margin: 0 0 0.75rem;
+		font-size: 1.15rem;
+		font-weight: 700;
+	}
+	.verify :global(code) {
+		font-family: 'DM Mono', monospace;
+		font-size: 0.85em;
+		color: var(--text);
+	}
+
+	/* The picker is React, so Astro's scoping does not reach it. */
+	:global(.download-primary) {
+		display: inline-flex;
+		align-items: center;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0 0.6rem;
+	}
+	:global(.download-primary__format) {
+		font-family: 'DM Mono', monospace;
+		font-size: 0.75rem;
+		opacity: 0.75;
+	}
+	:global(.download-picker__hint) {
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+
+	@media (max-width: 575.98px) {
+		.launch {
+			grid-template-columns: 1fr;
+			row-gap: 0.75rem;
+		}
+		.download {
+			grid-template-columns: 1fr;
+			row-gap: 0.25rem;
+		}
+		.download__asset {
+			white-space: normal;
+			word-break: break-all;
+		}
+	}
+</style>
