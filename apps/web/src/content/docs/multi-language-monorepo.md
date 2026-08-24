@@ -122,9 +122,9 @@ fingerprint the driver table recognizes for Go, so at `auto: true` there is no
 candidate and the run halts:
 
 ```text
-Error: workspace 'worker' has an ambiguous or undeclared task driver.
-No task driver could be detected (no lockfile, wrapper, or native declaration).
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'worker' has an ambiguous or undeclared driver.
+Lattice detected no driver. The directory holds no lockfile, no wrapper, and no native declaration.
+Declare the driver in lattice.json, under this workspace:
   "engines": { "node": ">=0.0.0" }
 ```
 

@@ -169,11 +169,53 @@ lattice setup api web
 lattice setup --force
 ```
 
-Setup skips a workspace's install step when no lockfile in it is newer than
-`.lattice-setup-marker`, the empty file Lattice writes there after a successful
-install. `--force` reinstalls regardless. A workspace with no detected driver
-and no `engines` is skipped without a message. One with `engines` but no package
-manager reports that under `-v`:
+Setup rejects a name no workspace declares before it provisions anything:
+
+```text
+Error: workspace 'wbe' is not declared in the `workspaces` array in lattice.json. Declared workspaces: api, web
+```
+
+Setup skips a workspace's install step when no lockfile that governs it is
+newer than the marker that records the last successful install. `--force`
+reinstalls regardless.
+
+The lockfiles that govern a workspace are the ones in its own directory and in
+every directory above it, up to the repo root. A hoisted npm, pnpm, or yarn
+workspace tree keeps its only lockfile at the root, so such a workspace
+directory often holds no lockfile of its own. A root lockfile that a `git pull`
+moved now reinstalls that workspace. Setup used to check only the workspace's own
+directory, so the everyday hoisted layout reported `dependencies up to date`
+forever and the next build failed on a dependency nothing had installed.
+`--force` was the only way out.
+
+The marker is one file per workspace under `.lattice/setup`, named for the
+workspace's path relative to the repo root with `/` written `%2F` and a literal
+`%` written `%25`:
+
+| Workspace path | Marker |
+| --- | --- |
+| `apps/web` | `.lattice/setup/apps%2Fweb.marker` |
+| `apps-web` | `.lattice/setup/apps-web.marker` |
+| `.`, the repo root itself | `.lattice/setup/.marker` |
+
+Encoding the separator rather than replacing it keeps `apps/web` and `apps-web`
+apart, so two workspaces can never share a marker and an install in one can
+never mark the other up to date. The marker used to be a `.lattice-setup-marker`
+in each workspace directory. A marker an older version of Lattice left there
+still counts, so an upgrade mid-project reinstalls nothing, and setup deletes
+that file once an install succeeds. `lattice init` writes both `.lattice/setup/` and
+`.lattice-setup-marker` to `.gitignore`, and nothing under `.lattice` reaches a
+cache key, so the marker no longer moves the key of a task that declares no
+`inputs`.
+
+Lattice shows the install command's output as it runs, indented four spaces,
+with no flag needed. The command gets no stdin, so an installer that stops to ask
+for a password or a confirmation fails with its own message instead of waiting on
+a prompt nothing displays. Supply the credential through the environment, or run
+that installer once yourself outside Lattice.
+
+A workspace with no detected driver and no `engines` is skipped without a
+message. One with `engines` but no package manager reports that under `-v`:
 
 ```text
 lattice: web: toolchains ready. This workspace has no package manager to install
@@ -190,14 +232,20 @@ lattice init [OPTIONS]
 ```
 
 Creates a `lattice.json` and a `.lattice/schema.json` in the current directory.
-Commit the schema file. `init` also adds three lines to `.gitignore`, which keep
+Commit the schema file. `init` also adds five lines to `.gitignore`, which keep
 Lattice's per-machine artifacts out of version control:
 
 ```text
 .lattice/cache/
 .lattice/toolchains/
 .lattice/bin/
+.lattice/setup/
+.lattice-setup-marker
 ```
+
+`init` lists `.lattice/` a directory at a time because the committed
+`.lattice/schema.json` stays tracked. The last line covers a marker an older
+version of Lattice left inside a workspace directory.
 
 `init` reads the repo before it writes anything. Every directory holding one of
 these manifests becomes a proposed workspace:
@@ -297,11 +345,25 @@ and base 1024, or a bare integer of bytes. With neither `--max-size` nor
 ```
 
 `prune` also reclaims what nothing can read: artifacts left without metadata by
-an interrupted run, metadata that no longer parses, and the staging files beside
-them. With `settings.maxCacheSize` set, every run already holds the cache to it,
-so `prune` covers sweeping by hand and enforcing a limit other than the one in
-the config. See [Cache internals](/lattice/docs/cache-internals) for eviction
-order and the on-disk layout.
+an interrupted run, metadata that never recorded a digest, metadata that no
+longer parses, and the staging files beside them. With `settings.maxCacheSize`
+set, every run already holds the cache to it, so `prune` covers sweeping by hand
+and enforcing a limit other than the one in the config. See [Cache
+internals](/lattice/docs/cache-internals) for eviction order and the on-disk
+layout.
+
+`prune` reclaims a leftover only once it has sat untouched for at least an hour,
+so a `prune` right after an interrupted run frees nothing and reports `removed 0
+artifacts`. Until then the leftover's bytes still count against the limit. The
+wait is why two `lattice` processes can share one cache directory. A store in
+progress and a store that died halfway through leave the same files behind, so
+without the wait one process would finish its run and sweep away what the other
+was still writing.
+
+`prune` deletes `*.tar.gz`, `*.meta.json`, and `*.tmp` files in the cache
+directory, and removes no directories. For that reason, Lattice requires
+`settings.cacheDir` to name a directory inside the repo and never the repo
+root.
 
 ## `lattice upgrade`
 

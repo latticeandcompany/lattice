@@ -21,7 +21,7 @@ Each part can be used together or separately. You can use one and not the other.
 - We ship an agent skill at @skills/lattice — this is what other people's agents learn Lattice from. Change a command, a flag, a `lattice.json` field, or an error message, and it is part of the change, same as the docs. It is symlinked into `.agents/skills/` so we use the copy we publish
 - Write tests for all changes
 - A test that runs a task must get its command from `crates/lattice-testkit`, never write shell inline. A task body goes to the platform shell, and a POSIX one-liner silently stops testing anything on Windows
-- Look at @.agents/GLOBAL_AGENTS.md @.agents/CODESTYLE.md for how you should generally act
+- Look at @.agents/CODESTYLE.md for how you should generally act
 - Remain agnostic of the developer's choice. We never prescribe a tool, solution, or way of working for our end users. This is an engineering rule, not a talking point — build it, don't write copy about it
 - Use subagents and custom agents liberally
 - Ask questions frequently

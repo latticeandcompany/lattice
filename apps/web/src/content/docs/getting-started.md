@@ -55,9 +55,10 @@ next: declare a workspace in lattice.json
 ```
 
 `lattice.json` is the config. `.lattice/schema.json` is a committed JSON Schema
-your editor validates against as you type. In `.gitignore`, three lines are
+your editor validates against as you type. In `.gitignore`, five lines are
 appended and the existing content is left alone: `.lattice/cache/`,
-`.lattice/toolchains/`, and `.lattice/bin/`.
+`.lattice/toolchains/`, `.lattice/bin/`, `.lattice/setup/`, and
+`.lattice-setup-marker`.
 
 To scaffold over a `lattice.json` that already exists, add `--force`. Without
 it, `init` refuses.

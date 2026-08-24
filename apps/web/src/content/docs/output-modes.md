@@ -335,6 +335,20 @@ cache, and toolchain detail; raw mode drops it without `-v`, and interactive
 mode shows it dim either way. A warning always prints in both modes, prefixed
 `lattice: warning:` in raw and labeled with a yellow `warn` in interactive.
 
+## An invalid byte costs one character
+
+A task's output arrives as bytes. Lattice splits it on newlines and decodes each
+line as UTF-8, and anything invalid becomes the replacement character, U+FFFD. A
+compiler that emits a stray byte, or a tool that prints a filename in another
+encoding, costs you that one character and nothing else.
+
+Lattice used to drop the rest of that task's output at the first invalid byte.
+The line that explains a failure usually comes after the noise that caused it, so
+a failing task could report nothing at all.
+
+A trailing `\r` goes with the newline, so output from a Windows tool does not
+carry a `\r` into the display.
+
 ## Related pages
 
 - [Run dev servers](/lattice/docs/dev-servers) for the run that forces raw mode

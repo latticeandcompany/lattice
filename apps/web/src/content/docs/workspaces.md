@@ -54,10 +54,19 @@ unpacks the stored artifact.
 
 So a `path` has to stay inside the repo. An absolute path, or one that climbs
 out with `..`, is rejected during validation rather than at the moment a task
-would have written somewhere unexpected. Two workspaces also cannot share a
-name or resolve to the same directory, because a name is a cache identity and a
-directory is a blast radius, and sharing either would mean two tasks quietly
-overwriting each other's results.
+would have written somewhere unexpected. So is a path that resolves out of the
+repo. When Lattice discovers a workspace whose directory is a symlink to
+somewhere else on the disk, it refuses that workspace, because the directory a
+path resolves to is the one that bounds the task. A symlink that stays inside the
+repo is still a workspace.
+
+```text
+Error: workspace path 'app' resolves to /elsewhere/app, which is outside the repo root. A workspace directory has to be inside the repo
+```
+
+Two workspaces also cannot share a name or resolve to the same directory, because
+a name is a cache identity and a directory is a blast radius, and sharing either
+would mean two tasks quietly overwriting each other's results.
 
 The one thing that does not respect the boundary is a file above it. A base
 `tsconfig.json` at the repo root is read by tasks in several workspaces and can
@@ -75,9 +84,9 @@ What `auto` does not mean is that Lattice will produce an answer no matter what
 it finds. An empty directory stops the run before any task starts:
 
 ```text
-Error: workspace 'empty' has an ambiguous or undeclared task driver.
-No task driver could be detected (no lockfile, wrapper, or native declaration).
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'empty' has an ambiguous or undeclared driver.
+Lattice detected no driver. The directory holds no lockfile, no wrapper, and no native declaration.
+Declare the driver in lattice.json, under this workspace:
   "auto": false, "scripts": { "build": "<command>" }
 ```
 
@@ -85,9 +94,9 @@ A directory holding nothing but a bare `package.json` stops it too, and says
 what it saw:
 
 ```text
-Error: workspace 'bare' has an ambiguous or undeclared task driver.
-Candidate tools seen: pnpm, npm, yarn, bun
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'bare' has an ambiguous or undeclared driver.
+Candidate drivers: pnpm, npm, yarn, bun
+Declare the driver in lattice.json, under this workspace:
   "engines": { "pnpm": ">=0.0.0" }
 ```
 

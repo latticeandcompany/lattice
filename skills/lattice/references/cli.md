@@ -36,6 +36,11 @@ does not halt the run unless the filter matched that workspace.
 commands as written. An engine failure surfaces only on a real run, or under
 `lattice setup`.
 
+Before the graph is built, a warning names any workspace whose manifest declares
+a script map without one of the tasks being run. The task is not run there and
+drops out of the graph. The warning fires on `--dry-run` too, and `--filter` does
+not narrow it. `references/troubleshooting.md` covers the fixes.
+
 When every task the run scheduled came back from cache, a `FULL CACHE` banner
 follows the summary. In plain output the same condition prints
 `lattice: full cache, nothing to run`. It requires at least one task, zero
@@ -54,12 +59,43 @@ to set up every workspace. A repo with no workspaces still has its root
 | --- | --- | --- |
 | `--force` | off | Reinstall dependencies even when the lockfile has not changed |
 
-A workspace's install step is skipped when its lockfile is no newer than the
-last successful install, and the skip prints `dependencies up to date`. The
-comparison is against the mtime of the `.lattice-setup-marker` file that `setup`
-writes in the workspace after each successful install. `lattice init` does not
-add that file to `.gitignore`, so add it yourself: its first appearance moves
-the cache key of every task in that workspace that declares no `inputs`.
+A name that no workspace declares is refused before anything is provisioned:
+`workspace 'X' is not declared in the \`workspaces\` array in lattice.json.
+Declared workspaces: api, web`. An older release selected nothing and exited
+`0`.
+
+A workspace's install step is skipped when no lockfile governing it is newer
+than the last successful install. The skip prints `dependencies up to date`.
+The lockfiles governing a workspace are the one in its own directory and every
+one above it up to the repo root, so a single root lockfile in a hoisted npm,
+pnpm, or yarn tree invalidates every workspace under it. An older release checked
+only the workspace's own directory. That layout then reported
+`dependencies up to date` forever, and the next build failed on a dependency
+nothing had installed.
+
+The comparison is against the mtime of a marker file under `.lattice/setup`, one
+per workspace, named for the workspace's path relative to the repo root with `/`
+written `%2F` and a literal `%` written `%25`:
+
+| Workspace path | Marker |
+| --- | --- |
+| `apps/web` | `.lattice/setup/apps%2Fweb.marker` |
+| `apps-web` | `.lattice/setup/apps-web.marker` |
+| the repo root itself | `.lattice/setup/.marker` |
+
+Encoding the separator instead of replacing it means two paths can never share a
+marker. `lattice init` writes `.lattice/setup/` to `.gitignore`, and nothing
+under `.lattice` reaches a cache key, so the marker is invisible to hashing.
+Older releases wrote a `.lattice-setup-marker` inside each workspace directory.
+One of those still counts as a marker, so upgrading mid-project reinstalls
+nothing. `init` still ignores that name, and a successful install deletes the
+file. A marker that cannot be written is a warning that names the path, and the
+install runs again next time.
+
+Lattice streams the install command's output as it runs, indented four spaces,
+with no flag needed. The installer gets no stdin, so an installer that prompts
+for a password or a confirmation fails immediately with its own message rather
+than hanging on a prompt nothing displays.
 
 A workspace with no recognized driver and no `engines` is skipped silently. One
 with `engines` but no driver reports `toolchains ready. This workspace has no
@@ -69,9 +105,12 @@ package manager to install`. A driver Lattice has no installer for reports
 ## `lattice init [OPTIONS]`
 
 Creates `lattice.json`, a committed `.lattice/schema.json`, and the
-`.gitignore` lines that keep `.lattice/cache/`, `.lattice/toolchains/`, and
-`.lattice/bin/` out of version control. Existing `.gitignore` content is left
-alone.
+`.gitignore` lines that keep `.lattice/cache/`, `.lattice/toolchains/`,
+`.lattice/bin/`, `.lattice/setup/`, and `.lattice-setup-marker` out of version
+control. Existing `.gitignore` content is left alone. Two scanned directories
+that would flatten to the same suggested name get a `-2` suffix on the second,
+because a config with two workspaces of one name does not load. `a/b-c` and
+`a-b/c` both flatten to `a-b-c`.
 
 | Flag | Short | Default | Description |
 | --- | --- | --- | --- |
@@ -126,9 +165,20 @@ A size is an integer plus `B`, `KB`, `MB`, `GB`, or `TB` (case-insensitive, base
 With `settings.maxCacheSize` set, every run already holds the cache to it, so
 this command is for sweeping by hand or enforcing a different limit than the
 config's. It also reclaims what nothing can read: an artifact left without
-metadata by an interrupted run, a staging file beside it, and an entry whose
-metadata no longer parses. It removes no directories and no other files, so a
-`cacheDir` pointing somewhere shared keeps its other contents.
+metadata by an interrupted run, a staging file beside it, metadata that never
+recorded a digest, and an entry whose metadata no longer parses. It deletes
+`*.tar.gz`, `*.meta.json`, and `*.tmp` files only, and removes no directories.
+
+A leftover has to sit untouched for an hour before the sweep takes it. A `prune`
+straight after an interrupted run therefore reports `removed 0 artifacts`, and
+those bytes keep counting against the limit until the hour is up. A store in
+progress and a store that died halfway through leave the same files behind, so
+age is the only thing that separates them. Without the wait, two `lattice`
+processes sharing one checkout would delete each other's cache writes.
+
+`prune` deletes files in whatever directory `settings.cacheDir` names, so that
+value is validated at load. It has to name a directory inside the repo, and it
+cannot be the repo root.
 
 ## `lattice upgrade <VERSION>`
 
@@ -167,6 +217,15 @@ are never handed off to a pinned `latticeVersion`. `upgrade` is how the pin
 changes, so it has to run as invoked. The other two answer questions about this
 binary and this shell.
 
+Every other command checks `latticeVersion` and hands over to the version it
+names. Lattice validates the value first, so one that is not a version fails by
+name rather than becoming a download of a release that cannot exist:
+`lattice.json pins \`latticeVersion\` as "X", which is not a version. Write it
+like 0.2.0, or run \`lattice upgrade <version>\` to set it`. Lattice accepts and
+strips a leading `v`, so `"v1.0.0-beta-3"` and `"1.0.0-beta-3"` name the same
+release. When that release is the running build, the pin is a no-op instead of a
+failed download.
+
 ## Global flags
 
 Declared `global` in clap, so they parse on `lattice` itself and on every
@@ -197,6 +256,20 @@ On an interrupt every running task's process group gets `SIGTERM`, five seconds,
 then `SIGKILL`. A task that shelled out to a compiler or a server therefore
 takes the whole tree with it. `130` is distinct from `1` on purpose: a cancelled
 CI job is not a build that broke.
+
+Lattice watches for the signal through the whole run, not only while a persistent
+task holds the run open, so the first `Ctrl-C` and a `SIGTERM` both end the run
+wherever they land. A task stopped on the way out emits no `Failed` event and is
+not counted, so the events and the summary agree. Do not read `0 failed` as
+success. Read the exit code.
+
+A task whose children ignore `SIGTERM` gets `SIGKILL` when the grace period runs
+out, so a `timeout` on such a task reports up to five seconds late. An older
+release never reported the timeout at all, and the run went on waiting on pipes
+nothing would close.
+
+A task's output survives bytes that are not valid UTF-8, and each one renders as
+U+FFFD. An older release dropped everything after such a byte.
 
 A failing task always exits `1`, with or without `--continue`. Without
 `--continue`, the first failing task is printed as

@@ -58,6 +58,39 @@ command. If it is wrong, add or edit that workspace's `scripts` entry.
 `PATH` is adjusted, so it shows the command as written, not as it would resolve
 once a provisioned tool is first on `PATH`.
 
+## `x declares scripts but no "y", so the task was skipped`
+
+A workspace driven by `npm`, `pnpm`, `yarn`, `bun`, or `deno` can only run a task
+its manifest declares as a script. A task the manifest does not declare is not
+run there. The task drops out of the graph and the run carries on. The warning
+fires because the manifest declares a script map *without* that task, and a typo
+looks the same from the outside.
+
+The likeliest fix is the typo the message suggests. Otherwise add the script to
+the manifest, or add a `scripts` entry for the task in `lattice.json`, which
+overrides inference entirely. If the workspace has nothing to do for that task,
+the run is already correct. A types-only package with no `build` script has
+nothing to build.
+
+The warning is not a run failure. Do not paste a guessed command into `scripts`
+to silence it. An older release fabricated `npm run <task>` in exactly this case,
+and the fabricated command failed the build.
+
+`--filter` does not narrow the warning, so a filtered run can name a workspace it
+did not select. `lattice run <task> --dry-run` shows exactly which workspaces the
+task resolved in.
+
+## `x: package.json could not be parsed: ..., so every task it would have named was skipped`
+
+The manifest is there and unreadable. No script name can be read out of it, so
+nothing runs in that workspace. Fix the file. The same warning covers a manifest
+that cannot be read at all and one whose `scripts` (or deno's `tasks`) is not an
+object.
+
+Lattice strips comments from a `deno.json` or a `deno.jsonc`, so a comment is not
+the cause there. A `package.json` is parsed as strict JSON, the way npm parses
+it, so a comment in one *is* the cause.
+
 ## `workspace 'x' has "auto": false and declares no command for task 'y'`
 
 An `auto: false` workspace must declare a script for every task it takes part
@@ -128,10 +161,12 @@ Common causes, by component:
 - `inputs`: a glob matching a file that changes every run. A timestamp, a
   `.DS_Store`, generated output, or a tool's own state directory. Narrow
   `inputs`, or add the path to `ignore`.
-- `inputs` once, right after `lattice setup`: setup writes an empty
-  `.lattice-setup-marker` in each workspace it installs into. A task with no
-  declared `inputs` hashes it. Add `.lattice-setup-marker` to `.gitignore`.
-  `lattice init` does not add it for you.
+- `inputs` once, right after `lattice setup`, on an older release: setup used to
+  write a `.lattice-setup-marker` inside each workspace it installed into, and a
+  task with no declared `inputs` hashed it. The marker now lives under
+  `.lattice/setup`, which is never walked for a key, so the marker is no longer
+  a cause. The next successful install deletes a stale `.lattice-setup-marker`
+  left in a workspace.
 - `env`: a name whose value differs across shells or machines, such as an
   absolute path or a session id. Drop it unless the command's result genuinely
   depends on it.
@@ -139,6 +174,11 @@ Common causes, by component:
   the prerequisite instead.
 - `manifests`: a lockfile or manifest changed. Also expected after a dependency
   bump, and it happens whether or not the lockfile is listed in `inputs`.
+- `inputs` after a `chmod`: the executable bit of every hashed file is part of
+  the key, because the artifact restores file modes. Nothing else about the mode
+  counts, so a umask difference between machines does not move the key.
+- `environment` right after an upgrade: the Lattice version is part of every
+  key. One full miss per release is expected.
 
 ## A task hits the cache when it should not
 
@@ -148,9 +188,18 @@ omission warns. Widen the `inputs` glob, drop `inputs` entirely so the whole
 workspace is hashed, or add the missing `env` name.
 
 Declared `inputs` do **not** respect `.gitignore`. Only `.lattice`, `.git`,
-`.hg`, `.svn`, `.jj`, and symlinks are skipped. A task with no `inputs` is the
-opposite: that walk honors `.gitignore` in the workspace and in every ancestor
-directory, but not the user's global gitignore, and hidden files are hashed.
+`.hg`, `.svn`, and `.jj` are skipped. A task with no `inputs` is the opposite:
+that walk honors `.gitignore` in the workspace and in every ancestor directory,
+but not the user's global gitignore, and hidden files are hashed.
+
+Symlinks are hashed either way. A symlinked file contributes the path it points
+at, not the bytes on the other end, so re-pointing a link moves the key even
+when both targets hold the same content. The walk descends a symlinked
+*directory* when `inputs` is declared, so `inputs: ["vendor/**"]` reaches the
+real files behind a symlinked `vendor`. With no `inputs`, the walk does not
+descend a symlinked directory. That walk covers the whole workspace, and a
+followed link would pull an unrelated tree from elsewhere on the disk into the
+key.
 
 If the file is *above* the workspace, no `inputs` glob can reach it. Patterns
 are workspace-relative and `tasks` is shared across workspaces. Put the file in
@@ -187,6 +236,22 @@ the globs are wrong, or they are written relative to the repo root instead of
 the workspace. A task that legitimately produces no files, such as `test` or
 `lint`, should declare no `outputs` at all.
 
+## `outputs [...] matched only empty directories, so nothing was cached`
+
+```text
+lattice: warning: web:build: failed to cache outputs: outputs ["dist"] matched only empty directories, so nothing was cached. Check that the task writes its files where the patterns point
+```
+
+A pattern did match here, unlike the warning above, and everything it matched
+was a directory holding no files. A bare `outputs: ["dist"]` covers `dist/`
+itself, so an empty `dist/` counts as a match while the task has produced
+nothing.
+
+Look in the directory after a run. Either the command writes somewhere the
+patterns do not cover, or it produces nothing at all. Storing that archive would
+be worse than storing nothing. Every later run would hit it and restore an empty
+`dist/` over whatever an uncached run had put there.
+
 ## The output looks wrong after a cache hit
 
 A lookup is a hit only when the metadata parses, the artifact's byte length
@@ -201,6 +266,18 @@ is a warning, and the task re-runs:
 lattice: warning: web:build: failed to restore cached outputs: <reason>
 ```
 
+## `lattice prune` reports `removed 0 artifacts` with leftover files on disk
+
+Leftovers from an interrupted store are reclaimed only once they have sat
+untouched for an hour. Until then they stay put, and their bytes count against
+`settings.maxCacheSize`. Run `prune` again later, or delete the cache directory.
+
+A store in progress and a store that died halfway through leave the same files
+behind, so age is the only thing separating them. Without the wait, two
+`lattice` processes sharing one checkout would delete each other's cache writes.
+One process finishes its run and enforces the size limit while the other is
+still writing.
+
 ## An engine version check fails on one machine and not another
 
 That constraint is in validate-only mode: a version with no `installCmd`, so
@@ -213,6 +290,12 @@ installs its own copy under `.lattice/toolchains/` and no host `PATH` matters.
 Check the shape. An object with `versionCmd` but no `version` and no `installCmd`
 is host mode: nothing is installed and nothing is checked, not even that the
 tool exists. Add `version` to get a check, or `installCmd` to get an install.
+
+A `version` on a name outside the well-known table, with no `versionCmd`, is now
+an error in both validate-only and provisioned mode rather than a constraint
+nobody checked. A `pins.json` that records `0.0.0` came from an older release.
+That version was never installed, and it fed every cache key in the workspace.
+Such a toolchain now records `unknown`, so the first run after upgrading misses.
 
 ## `installCmd` provisioning fails partway
 
@@ -248,6 +331,13 @@ A `persistent: true` task in the closure is meant to block. Once every other
 task is done and the persistent ones are spawned, `lattice run` streams their
 output and waits. To get a run that terminates, do not request the persistent
 task; run its non-persistent prerequisites instead.
+
+Four things end such a run: the first `Ctrl-C`, a `SIGTERM`, the exit of every
+persistent task, or the failure of any task in the run. Lattice watches for the
+signal through the whole run, so a `Ctrl-C` that arrives while the builds ahead
+of the servers are still running ends the run there. Older releases needed a
+second `Ctrl-C` in that case, ignored `SIGTERM` until the CI runner force-killed
+the process, and went on waiting after a task failure.
 
 A run blocks only while a persistent task is actually up. Lattice waits on every
 persistent child, so one that exits stops holding the run open:
@@ -308,6 +398,34 @@ a match is included. A filter matching nothing prints
 
 If a prerequisite you expected is missing, check that the depending workspace
 lists it in `dependsOn` and that the task's own `dependsOn` carries the `^`.
+
+## `lattice setup` says `dependencies up to date` and the build fails on a missing dependency
+
+The marker recording the last install is newer than every lockfile governing the
+workspace. Those lockfiles are the one in the workspace and every one above it up
+to the repo root, so a single root lockfile in a hoisted npm, pnpm, or yarn tree
+invalidates every workspace under it.
+
+An older release checked only the workspace's own directory. In that layout a
+workspace directory holds no lockfile, so nothing could invalidate its marker.
+`lattice setup` reported `dependencies up to date` forever, and only `--force`
+recovered.
+
+## `lattice setup <name>` installed nothing and exited 0
+
+An older release selected nothing for a workspace name the config does not
+declare. Current releases refuse the name: `workspace 'X' is not declared in the
+\`workspaces\` array in lattice.json`, with the declared names listed. Check the
+name against the `workspaces` array.
+
+## `lattice setup` hangs, or the installer fails with no obvious reason
+
+The installer gets no stdin, so an installer that stops for a password, a token,
+or a confirmation reads end-of-file and exits non-zero. Its own output, shown as
+the install runs, says what it wanted. Supply the credential without a prompt,
+or run that installer once by hand outside Lattice. An older release let the
+installer inherit the terminal, so the installer blocked on a prompt nothing
+displayed and the command hung with no output.
 
 ## `lattice run` did nothing and exited 0
 

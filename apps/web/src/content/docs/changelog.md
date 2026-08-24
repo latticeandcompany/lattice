@@ -20,6 +20,296 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## A task's command is never invented, and a skipped task says so — 2026-08-23
+
+- A workspace driven from a manifest now only ever runs a script that manifest
+  declares. `npm`, `pnpm`, `yarn`, and `bun` read `scripts` in `package.json`,
+  and `deno` reads `tasks` in `deno.json` or `deno.jsonc`. A requested task the
+  manifest does not hold drops out of the graph and the run carries on. Lattice
+  used to fabricate `npm run <task>` for it, and the fabricated command failed
+  the build
+- The check could not tell four situations apart, and answered all of them the
+  same way: a driver that takes the task name on its command line, a manifest
+  that could not be read, a manifest that would not parse, and a manifest with no
+  script section. Each is now handled separately
+- A workspace whose manifest declares a script map that does not hold the task
+  being run is named in a warning, because a typo looks the same:
+  `web declares scripts but no "build", so the task was skipped. Did you mean
+  "biuld"?`. With no near miss to offer, the warning ends `Declare it in the
+  workspace's manifest, or under "scripts" in lattice.json, if the task should run
+  there`. Two or more such workspaces collapse into one line, `some tasks were
+  skipped: ...`, and each keeps its own suggestion
+- The noun after `declares` is the manifest's own word for the map, so a deno
+  workspace says `tasks`. The warning appears once per run, on `--dry-run` as
+  well as a real run, and covers only the tasks being run. `lattice run build`
+  says nothing about a missing `lint`. `--filter` does not narrow the warning, so
+  a manifest that should declare `build` and does not is reported even when this
+  run does not select that workspace
+- A manifest with no script map at all stays silent, and so does a workspace with
+  `auto: false`. A package that declares nothing is a finished configuration
+- A manifest Lattice cannot read is now reported rather than worked around, one
+  warning per workspace: `web: package.json could not be parsed: <reason>, so
+  every task it would have named was skipped`. The other two reasons are a file
+  that could not be read and a `scripts` that is not an object
+- Lattice strips `//` and `/* */` comments before it parses `deno.json` and
+  `deno.jsonc`, so a commented Deno config resolves its tasks instead of counting
+  as unparsable. `package.json` is still parsed as strict JSON, the way npm
+  parses it
+
+See [What a driver can run](/lattice/docs/drivers#what-a-driver-can-run) for
+where a command comes from, and
+[Errors](/lattice/docs/errors#a-task-was-skipped-because-the-manifest-declares-no-such-script)
+for every shape the warning takes.
+
+## A pinned toolchain no longer records a version it did not read — 2026-08-23
+
+- An engine whose version cannot be read, or that has no `versionCmd` and no
+  built-in rule, used to record `0.0.0`. That version was never installed, the
+  constraint was never checked, and the fabricated number went into `pins.json`
+  and into every cache key in the workspace
+- With a `version` constraint it is now an error: ``engine 'alpes' has the
+  version constraint '>=2' but no way to check what was installed. 'alpes' is not
+  a well-known engine, so add a `versionCmd` to it``. When the version command
+  ran and printed no number, the error is ``could not read a version from the
+  output of `<cmd>` after install, so the constraint '<cons>' cannot be checked``
+- With no constraint the recorded version is `unknown`, and the install hash is
+  what identifies the toolchain. The cache key's toolchain component reads
+  `<name>=unknown@<hash>` where it used to read `<name>=0.0.0@<hash>`, so those
+  keys move once
+- A staging directory is now stamped with the process id, so two `lattice setup`
+  runs that provision one engine at the same time each get their own. They used
+  to share one, clear it before use, and promote a tree assembled from both
+  installs. Staging left behind by a run that was killed is deleted once it is 24
+  hours old
+- An engine's `bin` has to be relative and inside the toolchain install. It is
+  checked when the config loads, and now also when a pin is read back out of
+  `pins.json`, so a hand-edited pin cannot put a directory Lattice never
+  provisioned in front of every command
+- Failing to build the pinned `PATH` is an error rather than a silent fall back
+  to the host's tool. All three places that build one report it: an engine's
+  version or install command, `lattice setup`'s dependency installer, and
+  spawning a task. The message is `the pinned toolchain cannot be put on PATH,
+  because a directory in it contains the character PATH is split on: <dirs>`, and
+  on a task it is reported as that task's failure. Lattice used to drop that
+  directory in silence, so the task ran against whatever version of the tool the
+  machine had while the run still reported a provisioned toolchain
+- A workspace directory that resolves outside the repo through a symlink is
+  refused: `workspace path 'app' resolves to <path>, which is outside the repo
+  root. A workspace directory has to be inside the repo`. The directory a path
+  resolves to is what bounds a task's inputs and outputs. A symlink that stays
+  inside the repo is still a workspace
+- `lattice init` can no longer propose two workspaces with the same name. The
+  path-based fallback flattened `a/b-c` and `a-b/c` to the same string, and a
+  config with two workspaces of one name does not load. The second now gets a
+  `-2` suffix
+
+See [Engines and provisioning](/lattice/docs/engines) for the install layout,
+[Cache internals](/lattice/docs/cache-internals) for the toolchain component of
+the key, and [Workspaces](/lattice/docs/workspaces) for the directory boundary.
+
+## A run ends on the first Ctrl-C, and a cancelled run reports no failures — 2026-08-23
+
+- `Ctrl-C` now ends a run that persistent tasks are holding open on the first
+  press. It needed a second press before, because the wait started listening only
+  after the graph had drained and so missed the signal that had already fired
+- `SIGTERM`, which is what a CI runner sends when a job is cancelled, now ends the
+  run. It previously hung until the runner force-killed it, so a cancelled job
+  lost the rest of its timeout
+- A task failure now ends a run a dev server is holding open, instead of waiting
+  for a signal only a person was going to send
+- A task whose children ignore the stop signal is escalated to a force kill when
+  the grace period runs out. A `timeout` on such a task therefore reports up to
+  five seconds late. It previously never reported at all, because the run went on
+  waiting on pipes nothing would close
+- A task's output survives a byte that is not valid UTF-8, rendered as U+FFFD.
+  Everything after such a byte used to be dropped for the rest of that task, and
+  the line explaining a failure usually comes after the noise that caused it
+- A task stopped as the run shuts down is no longer reported as a failure. The
+  events and the summary now agree: an interrupted run prints no `FAILED` line
+  for a task the interrupt stopped, above a summary that already said `0 failed`.
+  Read the exit code, `130`, rather than the summary
+
+See [Run dev servers](/lattice/docs/dev-servers#stop-everything),
+[Persistent tasks](/lattice/docs/persistent-tasks), and
+[Run Lattice in CI](/lattice/docs/continuous-integration#exit-codes).
+
+## `lattice setup` notices a lockfile above the workspace — 2026-08-23
+
+- A lockfile hoisted above a workspace now invalidates its install marker. Only
+  the workspace's own directory was checked before, so in the everyday npm, pnpm,
+  or yarn workspace tree, where the only lockfile sits at the repo root,
+  `lattice setup` printed `dependencies up to date` forever and the next build
+  failed on a dependency that had never been installed. Only `--force` recovered
+- The install marker moved out of the workspace directories. It is now one flat
+  file per workspace under `.lattice/setup`, named for the workspace's path
+  relative to the repo root with `/` written `%2F` and `%` written `%25`, so
+  `apps/web` gets `.lattice/setup/apps%2Fweb.marker`, `apps-web` gets
+  `.lattice/setup/apps-web.marker`, and the repo root as a workspace gets
+  `.lattice/setup/.marker`. Encoding the separator rather than replacing it means
+  two paths can never share a marker
+- A marker at the old `<workspace>/.lattice-setup-marker` path is still honored,
+  so upgrading mid-project reinstalls nothing. Lattice deletes that marker once an
+  install succeeds. `lattice init` writes `.lattice/setup/` to `.gitignore` and
+  keeps the legacy `.lattice-setup-marker` line
+- Nothing under `.lattice` is walked for a cache key, so the marker no longer
+  moves the key of a task that declares no `inputs`
+- A marker Lattice cannot write produces a warning naming the real path:
+  ``web: dependencies installed, but .lattice/setup/apps%2Fweb.marker could not
+  be written, so the next `lattice setup` will install again: <io error>``
+- `lattice setup <name>` with a name the config does not declare is refused. It
+  used to select nothing and exit `0`, so a typo in a CI script looked like a
+  clean run. The message is ``workspace 'X' is not declared in the `workspaces`
+  array in lattice.json. Declared workspaces: api, web``
+- `lattice setup` shows the installer's output as it runs, with no verbosity flag
+  needed
+- The installer no longer inherits the terminal's stdin. An installer that stops
+  for a password or a confirmation now fails immediately, and its own output says
+  what it wanted. It used to block on a prompt nothing displayed until the run was
+  killed. Supply the credential through the environment, or run that installer
+  once by hand outside Lattice
+- `latticeVersion` is validated before it becomes a URL and a filename. A value
+  that is not a version is refused by name instead of becoming a download of a
+  release that cannot exist: ``lattice.json pins `latticeVersion` as "X", which is
+  not a version. Write it like 0.2.0, or run `lattice upgrade <version>` to set
+  it``. A leading `v` is accepted and stripped, so `"v1.0.0-beta-3"` and
+  `"1.0.0-beta-3"` name one release, and either one naming the running build is a
+  no-op rather than a failed download
+
+See [`lattice setup`](/lattice/docs/cli#lattice-setup) for the marker layout
+and [Errors](/lattice/docs/errors#lattice-setup-failures) for the messages.
+
+## The desktop app shows output as it arrives — 2026-08-23
+
+- Task output appears within about a tenth of a second. Output moved only when 256
+  lines had piled up or a task changed state, so a dev server that prints one line
+  and then serves requests never showed that line at all
+- The graph fills in during a run rather than only once it ends
+- Closing a project, or switching to a different one, stops that project's run and
+  terminates its children. A run that kept going belonged to a project the window
+  no longer showed, could not be stopped from the window, and reported task names
+  from the wrong repo. Reopening the same project is a reload rather than a
+  switch, and leaves the run alone
+- Reloading the window reopens the project that was open and adopts a run still
+  going in the backend, so the panes redraw and **Stop** comes back. It used to
+  orphan that run
+- A config save that failed no longer reports **Saved**. `useApp().saveConfig`
+  resolves to a boolean saying whether the write landed
+- A task the app stopped is no longer shown as a failure, because the runner no
+  longer reports one
+
+See [The desktop app](/lattice/docs/desktop-app).
+
+## The cache no longer hides a change behind a symlink, a `chmod`, or an empty output directory — 2026-08-23
+
+The first run after this upgrade re-runs everything. Two of the fixes below widen
+what a cache key covers, so every key that exists today moves.
+
+- `inputs` pointing at a symlinked directory hashed zero files. The walk stopped
+  at any symlink, so `inputs: ["vendor/**"]` against a symlinked `vendor`
+  produced a key that could never change again, and the task hit cache forever
+  after its first run. A symlinked directory is now descended
+- Re-pointing a symlinked file left the key unchanged. A link now contributes the
+  path it points at instead of the bytes on the other end, so switching
+  `config/active.yaml` from `production.yaml` to `staging.yaml` moves the key even
+  when both files hold identical content
+- The two input walks treat a symlinked directory differently, on purpose. A
+  declared `inputs` descends one, because the pattern names the files behind it.
+  A task with no `inputs` does not, because that walk covers the whole workspace
+  and following the link would pull an arbitrary tree from elsewhere on the disk
+  into the key. Neither walk tracks where it has been. A depth cap of 64
+  directories ends a cycle
+- `chmod +x` on a hashed file did not move the key, so a hit restored the file
+  without its executable bit. The artifact preserves file modes, so that bit is
+  now hashed with every file's contents. Only that bit is hashed. The rest of the
+  mode is umask and platform noise that would make a key depend on which machine
+  computed it. Windows has no executable bit and reports every file as non-executable
+- A task whose `outputs` matched only empty directories stored a valid artifact
+  holding nothing. A bare `outputs: ["dist"]` matches `dist/` itself, so an empty
+  `dist/` read as a result. Every later run then hit that entry, and the restore
+  deleted whatever a real uncached run had produced. Lattice now refuses the
+  store: `outputs ["dist"] matched only empty directories, so nothing was cached.
+  Check that the task writes its files where the patterns point`. The existing
+  `no files matched outputs [...]` message is unchanged
+- A cache hit left behind directories the cached run never produced. Clearing
+  before a restore skipped directories, so a `dist/chunks/` from an earlier build
+  survived a hit from a run that never created it. Clearing now removes
+  directories too, deepest first and only when they are already empty, so a
+  matched directory still holding a file no pattern names is left alone
+- Two `lattice` processes sharing one checkout could delete each other's cache
+  writes. A store used to write its artifact before its metadata, and an artifact
+  with no metadata is exactly what an interrupted store leaves behind, so the
+  cleanup that runs at the end of every run under `settings.maxCacheSize` could
+  not tell a live store from an abandoned one. A store now writes its metadata
+  first, with no digest in it, and fills the digest in after the artifact lands
+- A leftover artifact, staging file, or entry with no digest is reclaimed only
+  once it has sat untouched for an hour. A store in progress and a store that
+  died halfway through leave the same files behind, so age is the only evidence
+  that separates them. Genuine debris now stays in the cache directory for up to
+  an hour longer than before, and counts against `settings.maxCacheSize` while it
+  does. A modification time in the future counts as recent, so a clock skewed
+  between machines sharing a cache directory never causes a deletion
+- An entry whose metadata records no digest is never a hit, and is never an
+  eviction candidate. Its bytes still count toward the size budget
+
+See [Caching](/lattice/docs/caching) for what a hit promises and
+[Cache internals](/lattice/docs/cache-internals) for the key's components, the
+store order, and the grace period.
+
+## `lattice.json` rejects the values it used to accept and then ignore — 2026-08-23
+
+Each of these was previously accepted and then silently did something other than
+what it said. Every one is now caught before any task runs.
+
+- A key written twice in `tasks`, `engines`, a workspace's `engines`, or a
+  workspace's `scripts` was last-wins and silent. In
+  `{"tasks": {"build": {"outputs": ["dist/**"]}, "build": {}}}` the `outputs`
+  declaration disappeared, so the task cached something different and Lattice
+  said nothing about it. The message is ``duplicate key `build` in tasks
+  (lattice.json line 1, column 58)``, then `Keep one of them: the second replaces
+  the first, so only the last would take effect`. Only those four maps were
+  affected. A repeated key anywhere else in the file was already rejected as a
+  repeated field
+- `timeout` has a maximum of 365 days, `31536000` seconds. An oversized value
+  used to saturate to the largest representable number of seconds. That deadline
+  overflows rather than arriving, so asking for a very long timeout produced no
+  timeout at all. The bundled JSON schema gained
+  `"maximum": 31536000` to match
+- A `timeout` written as a fractional JSON number, such as `1.5`, is rejected
+  rather than rounded up to `2`. The bundled schema has always declared that
+  field an integer and the parser disagreed with it. The string form is
+  unchanged: `"1500ms"` is still one second and `"1.5m"` is still ninety
+- `settings.cacheDir` is validated. It has to be non-empty, relative, inside the
+  repo, free of whitespace around a component, and not the repo root itself. It
+  was unchecked before, so an absolute or `../` value put the cache outside the
+  repo, and `"cacheDir": "."` pointed `lattice prune` at the top of the
+  repository, where it deleted the `*.tar.gz`, `*.meta.json`, and `*.tmp` files
+  it found
+- An engine's `bin` is validated on the same rules, against the toolchain install
+  directory. `{"bin": "/usr/bin"}` previously replaced the install path outright
+  and went on the front of every task's `PATH`, while Lattice still reported a
+  provisioned toolchain
+- A `scripts` key that names no declared task is an error, with a `Did you mean`
+  suggestion. A `scripts` entry only ever supplies the command for the root task
+  of the same name, so a typo like `biuld` was accepted, stored, and never used.
+  The workspace ran the command Lattice detected for it instead of the override
+  written under `scripts`
+- A workspace `path` with whitespace around a component is rejected. Windows
+  strips that whitespace and unix keeps it, so ` apps/web` named two different
+  directories depending on the platform
+- Lattice now judges path containment by the running platform's own rules as well
+  as by the text rules, so a spelling that resolves to a drive root or a
+  filesystem root is caught even where the text rules do not enumerate it
+- A path written with Windows separators, such as `apps\web`, still passes
+  validation and still fails when the directory is resolved. On unix that is one
+  filename rather than two components, so it cannot be judged an escape at load
+  time
+
+The bundled JSON schema and the committed `.lattice/schema.json` also describe
+the `bin`, `timeout`, and `cacheDir` rules, so an editor validating against the
+schema flags the same values the parser rejects. See
+[Configuration](/lattice/docs/configuration) for the field reference and
+[Errors](/lattice/docs/errors) for every message.
+
 ## A persistent task that exits the moment it starts no longer hangs the run — 2026-08-21
 
 `persistent: true` on a command that exits straight away could leave the run

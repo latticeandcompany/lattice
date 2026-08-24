@@ -73,6 +73,35 @@ and raised before any workspace is read. Delete the key, or correct it to the
 field the message names. See
 [Configuration](/lattice/docs/configuration#unknown-keys).
 
+### The same key written twice
+
+```text
+duplicate key `build` in tasks (lattice.json line 1, column 58)
+Keep one of them: the second replaces the first, so only the last would take effect
+```
+
+Raised while parsing, for a key that appears more than once in one of the four
+name-keyed maps: `tasks`, `engines`, a workspace's `engines`, or a workspace's
+`scripts`. Fatal. The container reads the way it does in the file: `tasks`,
+`engines`, `workspaces[0].engines`, or `workspaces[0].scripts`.
+
+The position is where the JSON parser finished the object, so it lands on the
+closing brace rather than on the repeated key. Search the container the message
+names for that key.
+
+Only the last value for a repeated key would survive, so a second `"build"`
+would discard the first one's `outputs`, `inputs`, and `env`. Delete whichever
+of the two you do not want.
+
+Everywhere else in the file, a repeated key is a repeated field on a fixed
+object, and serde reports it under `Caused by:`. A top-level key, a key inside
+`settings`, a key on a workspace entry, and a key inside one task all read like
+this:
+
+```text
+duplicate field `path` at line 1 column 52
+```
+
 ### Engine value in neither accepted form
 
 ```text
@@ -121,6 +150,23 @@ workspace 'esc' has a path '../outside' that points outside the repo root. Every
 The `path` climbs above the repo root with `..`. Fatal. The workspace directory
 bounds which files are hashed, which files the `outputs` globs match, and which
 files a cache hit clears before it unpacks, so it has to sit inside the repo.
+
+### Workspace path has whitespace around a directory name
+
+```text
+workspace 'web' has a path 'apps/web ' with leading or trailing whitespace around a directory name. Windows drops that whitespace and unix keeps it, so the path would name a different directory on each. Remove it
+```
+
+A component of the `path` begins or ends with a space or a tab. Fatal. Lattice
+rejects ` apps/web`, `apps/web `, and `apps/ web` alike. A `lattice.json` is
+committed and shared, so the check runs on every platform rather than on the one
+whose path rules the value happens to break.
+
+A path written with Windows separators, such as `apps\web`, passes this check.
+On unix that string is one filename rather than two path components, so the
+check finds no component with whitespace around it. The path fails later, when
+Lattice resolves the directory, with [`workspace path ... does not point to a
+directory`](#workspace-path-is-not-a-directory).
 
 ### Workspace `dependsOn` names an undeclared workspace
 
@@ -171,6 +217,85 @@ Two entries in the `workspaces` array share a `name`. Fatal. A second check for
 the same condition exists at the discovery stage with different text, but this
 one runs first, so this is the message you see. See [Duplicate workspace name or
 path at discovery](#duplicate-workspace-name-or-path-at-discovery).
+
+### `settings.cacheDir` does not name a usable directory
+
+```text
+`settings.cacheDir` is empty. Name a directory, like ".lattice/cache", or leave the key out to use that default
+```
+
+```text
+`settings.cacheDir` is '.', which is the repo root itself. Point it at a directory of its own, like ".lattice/cache" — `lattice prune` deletes cache archives and partial writes in whatever directory it names
+```
+
+```text
+`settings.cacheDir` is '/tmp/lattice', which is not relative to the repo root. Write it relative to the repo root, like ".lattice/cache"
+```
+
+```text
+`settings.cacheDir` is '../cache', which points outside the repo root. The cache directory must stay inside the repo
+```
+
+```text
+`settings.cacheDir` is 'build /cache', which has leading or trailing whitespace around a directory name. Windows drops that whitespace and unix keeps it, so the path would name a different directory on each. Remove it
+```
+
+All five fatal, raised during validation. Lattice owns the directory `cacheDir`
+names: `lattice prune` deletes the `*.tar.gz`, `*.meta.json`, and `*.tmp` files
+it finds there. The value therefore has to be relative, has to stay inside the
+repo, and cannot be `.`, `./`, or anything else that resolves to the repo root.
+`.lattice/cache` is the default. `.cache/lattice` also passes.
+
+### Engine `bin` does not stay inside the toolchain
+
+```text
+engine 'node' in root has an empty `bin`. Leave `bin` out to use the default of "bin", or name a directory inside the toolchain install
+```
+
+```text
+engine 'node' in root has a `bin` of '/usr/bin', which is not relative to the toolchain install. Write `bin` as a path inside the toolchain directory, like "bin"
+```
+
+```text
+engine 'node' in root has a `bin` of '../../..', which points outside the toolchain install. Write `bin` as a path inside the toolchain directory, like "bin"
+```
+
+```text
+engine 'node' in root has a `bin` of 'bin ', which has leading or trailing whitespace around a directory name. Windows drops that whitespace and unix keeps it, so the path would name a different directory on each. Remove it
+```
+
+All four fatal, raised during validation. `in root` becomes `in workspace
+'<name>'` for a per-workspace engine. Lattice joins `bin` to the toolchain's
+install directory and puts the result at the front of the `PATH` of every task
+that resolves that engine. An absolute value replaces the install path outright.
+The task then runs against a directory Lattice never provisioned, while the run
+still reports a provisioned toolchain. `bin` defaults to `"bin"`. `.`,
+`usr/local/bin`, and `bin/../libexec` are all accepted.
+
+### A `scripts` key names no declared task
+
+```text
+workspace 'core' declares a script 'biuld', but 'biuld' is not defined in `tasks`, so nothing would ever run it
+Did you mean `build`?
+Defined tasks: build, test
+```
+
+A key in a workspace's `scripts` map that has no matching key under the root
+`tasks` map. Fatal, raised during validation.
+
+A `scripts` entry supplies the command for the root task of the same name and
+does nothing else, so no configuration can reach a key outside `tasks`. An
+earlier version accepted and stored a typo like `biuld`. The workspace then ran
+the command Lattice detected for it, and no message mentioned the override.
+Correct the key to the task name, or add the task to `tasks`.
+
+`Did you mean` appears when a defined task name is within one or two edits of
+the key. With no `tasks` map at all there is nothing to suggest, so the last
+line names what to add instead:
+
+```text
+Add 'build' to `tasks` in lattice.json, or remove the script
+```
 
 ### Invalid cache size
 
@@ -224,10 +349,36 @@ unknown duration unit 'y' in '10y'. Use ms, s, m, or h
 duration '0s' must be greater than zero
 ```
 
+```text
+duration '99999h' is longer than the maximum of 365 days. Use a shorter duration, or leave `timeout` out to let the task run without a limit
+```
+
+```text
+duration of 18446744073709551615 seconds is longer than the maximum of 365 days. Use a shorter duration, or leave `timeout` out to let the task run without a limit
+```
+
+```text
+duration 1.5 is not a whole number of seconds. Write a whole number of seconds, or a duration string such as "90s", "1500ms", or "10m"
+```
+
 All fatal, and all arrive under `failed to parse lattice.json`. A valid duration
-is a number followed by `ms`, `s`, `m`, or `h`, or a bare number of seconds:
-`"10m"`, `"90s"`, `"90"`. A duration that rounds below one second is rejected
-rather than rounded to zero, which would kill the task the moment it started.
+is a number followed by `ms`, `s`, `m`, or `h`, or a bare whole number of
+seconds: `"10m"`, `"90s"`, `"90"`, `90`. A duration that rounds below one second
+is rejected rather than rounded to zero, which would kill the task the moment it
+started.
+
+The maximum is 365 days, `31536000` seconds. The two over-maximum messages
+differ only in the form the value was written in: the first covers a string, the
+second covers a JSON number. Past 365 days the seconds no longer fit the
+arithmetic the runner does on them. A deadline that overflows is never reached,
+so an oversized `timeout` used to mean no timeout at all. A `timeout` left out
+lets the task run without a limit.
+
+The fractional message covers the number form only. Lattice rejects `1.5` rather
+than rounding it up to `2`, because the bundled JSON schema has always declared
+this field an integer. An editor validating against that schema would have
+flagged the same value. The string form takes a fraction of a unit, so `"1.5m"`
+and `"90s"` both parse. `90.0` is a whole number of seconds and parses.
 
 ### `prune` has no limit to work to
 
@@ -294,6 +445,18 @@ workspace path 'apps/gone' does not point to a directory. A workspace path is on
 A configured `path` does not resolve to an existing directory. Fatal. See
 [Workspaces](/lattice/docs/workspaces).
 
+### Workspace path resolves outside the repo
+
+```text
+workspace path 'app' resolves to /elsewhere/app, which is outside the repo root. A workspace directory has to be inside the repo
+```
+
+The `path` is relative to the repo root and passes validation, and the directory
+it names is a symlink that points out of the repo. Fatal. A workspace directory
+bounds what its tasks read and write, and that bound follows the directory the
+path resolves to rather than the text of the path. A symlink that stays inside
+the repo is still a workspace.
+
 ### Duplicate workspace name or path at discovery
 
 ```text
@@ -344,6 +507,71 @@ Fatal. An `auto: true` workspace instead skips a task its driver does not
 provide. A `--filter`ed run holds only the matched workspaces to this check: one
 pulled in as a dependency is asked for the tasks its dependents need, not for
 the task you named.
+
+### A task was skipped because the manifest declares no such script
+
+An `auto` workspace whose driver reads its tasks out of a manifest can run only
+a script that manifest declares. A requested task the manifest does not declare
+drops out of the graph and does not run there. A package with nothing to build
+and a typo look the same from outside, so Lattice warns whenever a manifest
+declares a script map without the task you asked for:
+
+```text
+web declares scripts but no "build", so the task was skipped. Did you mean "biuld"?
+```
+
+The tail names the closest declared script when one is close enough to be a
+plausible typo. When no declared script is that close:
+
+```text
+web declares scripts but no "build", so the task was skipped. Declare it in the workspace's manifest, or under "scripts" in lattice.json, if the task should run there
+```
+
+Two or more skips collapse into one line, each carrying its own suggestion:
+
+```text
+some tasks were skipped: docs declares scripts but no "build"; web declares scripts but no "build" (did you mean "biuld"?). Declare each in the workspace's manifest, or under "scripts" in lattice.json, if the task should run there
+```
+
+The noun after `declares` is the manifest's own word for its script map:
+`scripts` for npm, pnpm, yarn, and bun, `tasks` for deno. Warnings, emitted once
+per run, on a real run and on `--dry-run` alike.
+
+Two things narrow the warning and one does not. It covers only the tasks you
+asked for, so `lattice run build` says nothing about a missing `lint`. It leaves
+out a workspace whose `auto` is `false`, because such a workspace infers no tasks
+at all. `--filter` does not narrow it. `lattice run build --filter api` can still
+name `web`, because Lattice reports a manifest that should declare `build` and
+does not, whether or not the run selected its workspace.
+
+A manifest with no script map at all draws no warning. A types-only package with
+no `build` script is a complete configuration, not a mistake.
+
+### A manifest could not be read
+
+One warning per workspace, whatever the reason:
+
+```text
+web: package.json could not be parsed: expected `,` or `}` at line 4 column 3, so every task it would have named was skipped
+```
+
+```text
+web: package.json could not be read: Permission denied (os error 13), so every task it would have named was skipped
+```
+
+```text
+web: package.json has a "scripts" that is not an object, so every task it would have named was skipped
+```
+
+The file name is the one that workspace's driver reads: `package.json`, or
+`deno.jsonc` when the directory holds one and `deno.json` otherwise. Warnings,
+not errors. The workspace runs nothing, and Lattice guesses no command for it.
+
+Lattice strips `//` and `/* */` comments before parsing a `deno.json` or a
+`deno.jsonc`, so a commented Deno config resolves its tasks. It parses a
+`package.json` as strict JSON, the way npm does, so a comment in a
+`package.json` is a parse failure and reads as `package.json could not be
+parsed`.
 
 ### A persistent task is depended on
 
@@ -450,7 +678,53 @@ engine 'alpes' provisioned 1.4.0, which does not satisfy the constraint '>=2.0.0
 The freshly installed tool reports a version the declared constraint rejects.
 The `installCmd` installed the wrong version.
 
-All five fatal. One more failure underlies both modes:
+```text
+engine 'alpes' has the version constraint '>=2' but no way to check what was installed. 'alpes' is not a well-known engine, so add a `versionCmd` to it
+```
+
+The install succeeded and the engine carries a `version`. There is no
+`versionCmd` and no built-in version command for that name, so nothing can check
+the constraint against the tool that was installed. Add a `versionCmd`, or drop
+the `version`.
+
+```text
+engine 'alpes': could not read a version from the output of `alpes --version` after install, so the constraint '>=2.0.0' cannot be checked:
+built from source
+```
+
+The version command ran and exited `0`, and its output held no recognizable
+number, so the constraint has nothing to test. The output follows on the next
+lines.
+
+Both of these used to record `0.0.0` and carry on. Nothing had installed that
+version, nothing had checked the constraint, and the fabricated number went into
+`pins.json` and into every cache key. With no `version` constraint there is
+nothing to fail on, so Lattice records the version as `unknown` and identifies
+the toolchain by its install hash.
+
+All seven fatal. Two more failures underlie both modes:
+
+```text
+the pinned toolchain cannot be put on PATH, because a directory in it contains the character PATH is split on: /repo:2/.lattice/toolchains/alpes/1.4.0-a1b2c3d4/bin
+```
+
+A toolchain directory holding `:` on unix, or `;` on Windows, cannot go on a
+`PATH`. The separator would split that one directory into two paths that do not
+exist. The fallback would be the inherited `PATH`, which runs whatever version of
+the tool the machine happens to have. Pinning exists to prevent that outcome, so
+every place that builds a pinned `PATH` fails instead:
+
+- Running an engine's version or install command. Fatal, and the message names
+  the one directory involved.
+- `lattice setup`'s dependency installer. Fatal, and the message lists every
+  prepended directory separated by `, `.
+- Spawning a task. Lattice reports the failure as that task's own, with this
+  message as its output, so the run stops or carries on under `--continue` like
+  any other failure. An earlier version dropped the pin without a word and ran
+  the task against the host's tool while still reporting a provisioned toolchain.
+
+Rename the directory, or move the repo somewhere without the separator in its
+path.
 
 ```text
 failed to spawn `alpes --version`
@@ -520,12 +794,23 @@ failed to cache outputs: no files matched outputs ["dist/**"], so nothing was ca
 ```
 
 ```text
+failed to cache outputs: outputs ["dist"] matched only empty directories, so nothing was cached. Check that the task writes its files where the patterns point
+```
+
+```text
 failed to cache outputs: failed to create cache dir /repo/.lattice/cache
 ```
 
-The second is the one you are most likely to hit: the task succeeded and
-declared `outputs`, and none of the patterns matched a file. Nothing is stored,
-so the next run misses again.
+The second and third are the ones you are most likely to hit. In both, the task
+succeeded, declared `outputs`, and produced no file the patterns cover, so
+Lattice stores nothing and the next run misses again.
+
+The two messages differ in what the patterns matched. `no files matched outputs`
+means they matched nothing at all. `matched only empty directories` means a
+pattern named a directory that exists and holds no files. A bare `outputs:
+["dist"]` against an empty `dist/` reads that way. Storing an archive of an empty
+directory would make every later run a hit that restores an empty `dist/` over
+whatever the last real run wrote, so Lattice refuses that case too.
 
 Each wraps one of the cache-storage errors, which never appear on their own:
 `failed to create cache dir <path>`, `failed to create artifact <path>`, `failed
@@ -587,7 +872,9 @@ exit. Any spawn error other than "not found" uses a shorter form:
 failed to spawn task: <os error>
 ```
 
-Both are reported as that task's failure.
+Both are reported as that task's failure. A task can also fail before its shell
+runs at all, when the workspace's pinned toolchain cannot go on the task's
+`PATH`. See [Provisioning failures](#provisioning-failures).
 
 ### A task overran its `timeout`
 
@@ -601,6 +888,12 @@ The duration is rendered in the largest exact unit, so `"timeout": "600s"`
 reports `10m`. The task counts as a failure, so the run then stops or carries on
 under `--continue` like any other failure. A persistent task has no effective
 timeout whatever `timeout` says.
+
+A task whose command ignores `SIGTERM`, or that backgrounded something still
+holding its output pipes, reports up to five seconds after the timeout itself.
+Those five seconds are the grace period, and Lattice kills the process group
+outright once it runs out. Such a task previously never reported at all. The run
+kept waiting on pipes that nothing was going to close.
 
 ### The run was interrupted
 
@@ -629,6 +922,16 @@ rather than a task failure. Report it.
 ### `lattice setup` failures
 
 ```text
+workspace 'wbe' is not declared in the `workspaces` array in lattice.json. Declared workspaces: api, web
+```
+
+A name passed to `lattice setup` that no workspace entry declares. Fatal, and
+raised before Lattice provisions or installs anything. The tail lists the
+declared names alphabetically, and becomes `lattice.json declares no workspaces`
+when the array is empty. `lattice setup` used to select nothing for an undeclared
+name and exit `0`, so a typo in a CI script looked like a clean run.
+
+```text
 web: `pnpm install` failed
 ```
 
@@ -642,6 +945,26 @@ setup failed in one or more workspaces
 ```
 
 Fatal. This is what makes `lattice setup` exit non-zero.
+
+```text
+web: dependencies installed, but .lattice/setup/apps%2Fweb.marker could not be written, so the next `lattice setup` will install again: Permission denied (os error 13)
+```
+
+The install succeeded and writing the marker that records it failed, so nothing
+remembers the install and the next `lattice setup` repeats it. A warning rather
+than an error, and the command still succeeds. The path is the workspace's own
+marker under `.lattice/setup`, and the error from the operating system follows
+the colon. See [`lattice setup`](/lattice/docs/cli#lattice-setup) for how the
+marker is named.
+
+An installer that wants to prompt is a third case. `lattice setup` gives the
+install command no stdin, so an installer that asks for a password or a
+confirmation reads end-of-file and exits non-zero. Its own message about what it
+wanted appears under `web: \`pnpm install\` failed`. The install command used to
+inherit the terminal and wait on a prompt nothing was showing, until something
+killed the run. Supply the credential without a prompt, through an environment
+variable or a configured keychain helper. Running the installer once yourself,
+outside Lattice, also works.
 
 ### Two conditions that are not errors
 
@@ -671,10 +994,22 @@ normal path.
 'v1.x' is not a version. Write it like 0.2.0
 ```
 
-The argument to `lattice upgrade`, or a `latticeVersion` a repo asks to switch
-to, did not parse as semver. Fatal. The `Caused by:` line carries the parser's
-own complaint, such as `unexpected character 'x' while parsing minor version
-number`.
+The argument to `lattice upgrade` did not parse as semver. Fatal. The
+`Caused by:` line carries the parser's own complaint, such as `unexpected
+character 'x' while parsing minor version number`.
+
+```text
+lattice.json pins `latticeVersion` as "1.x", which is not a version. Write it like 0.2.0, or run `lattice upgrade <version>` to set it
+```
+
+The same check against a repo's `latticeVersion`, run before the handover to a
+pinned build. Fatal, and it names the field and the file rather than failing on a
+download of a release that cannot exist. The `Caused by:` block carries the
+message shown above this one, `'1.x' is not a version. Write it like 0.2.0`, with
+the parser's complaint under that. Lattice accepts a `v` prefix and strips it, so
+`"v1.0.0-beta-3"` and `"1.0.0-beta-3"` pin the same release. When that release is
+the running build there is no handover to make, and the pin does nothing. A repo
+whose own tags carry the `v` prefix used to fail here on a download.
 
 ### No downloader available
 

@@ -32,7 +32,13 @@ to reports which. That comparison produces `cache miss: inputs changed`.
    an entry keyed under the old one.
 2. `command`. The fully resolved shell command for this task in this workspace.
 3. `toolchain`. The identity string of the workspace's resolved toolchains, empty
-   when the workspace declares no engines.
+   when the workspace declares no engines. One part per engine, in the order the
+   merged `engines` map holds them: `<name>=host` for an engine trusted on
+   `PATH`, `<name>=<version>@host` for one version-checked on the host, and
+   `<name>=<version>@<installHash>` for a provisioned one. A provisioned engine
+   with no way to read its version contributes `<name>=unknown@<installHash>`. It
+   used to contribute a fabricated `<name>=0.0.0@<installHash>`, so those keys
+   move once.
 4. `dependencies`. One entry per task this task depends on, each that task's own
    resolved cache key, sorted and deduplicated.
 5. `patterns`. The raw `inputs`, `outputs`, and `ignore` glob strings as
@@ -44,13 +50,14 @@ to reports which. That comparison produces `cache miss: inputs changed`.
    resolved value and an unset one a distinct marker, so declaring a name is
    itself a change to the key.
 7. `globalEnv`. The same, for the names listed in the repo-level `globalEnv`.
-8. `inputs`. One `path` and `content` pair per input file, sorted by path
-   relative to the workspace, with the file's full contents hashed in. The set is
-   the files matched by `inputs`, or every file in the workspace that the
-   applicable `.gitignore` files do not exclude when `inputs` is absent. In both
-   cases anything matched by `ignore` or by the task's own `outputs` is removed
-   first. `.lattice`, `.git`, `.hg`, `.svn`, and `.jj` are never walked, and
-   symlinks are not followed.
+8. `inputs`. One entry per input file, sorted by path relative to the
+   workspace. Each entry contributes the relative path, the file's executable
+   bit, and then either the full contents of the file or, for a symlink, the
+   path the link points at. The set is the files matched by `inputs`, or every
+   file in the workspace that the applicable `.gitignore` files do not exclude
+   when `inputs` is absent. In both cases anything matched by `ignore` or by the
+   task's own `outputs` is removed first. `.lattice`, `.git`, `.hg`, `.svn`, and
+   `.jj` are never walked.
 9. `manifests`. Three passes, in this order:
    - One `name` and `content` pair for each manifest present in the workspace. A
      resolved command is usually an indirection: `npm run build` names a script
@@ -90,6 +97,52 @@ Env pairs, input files, and dependency keys are sorted before hashing. Manifests
 and lockfiles are visited in their fixed table order. The key therefore does not
 depend on filesystem iteration order, on the order fields were declared in
 `lattice.json`, or on the order prerequisites finished in.
+
+### The executable bit
+
+Every file hashed anywhere in the key contributes one permission bit: whether
+any of the three execute bits is set. Components 8, 9, and 10 all include it.
+
+The stored artifact preserves file modes, so `chmod +x` on a script changes what
+a hit puts back, and the key has to move with it. The rest of the mode stays out
+on purpose. It carries the umask of whoever created the file, and it differs by
+platform, so hashing all of it would tie a key to the machine that computed it.
+Git tracks this same single bit, for this same reason.
+
+Windows has no executable bit. Every file there reports as non-executable, so
+the component is stable across runs on that platform.
+
+### Symlinks in the input set
+
+Lattice hashes a symlink as a thing in its own right. The entry records the
+target path as text, and nothing reads through the link. Re-pointing a link
+therefore moves the key even when the old and the new target hold identical
+bytes:
+
+```sh
+ln -sfn production.yaml config/active.yaml   # one key
+ln -sfn staging.yaml config/active.yaml      # a different key
+```
+
+Reading through the link instead would hash whatever sits on the other end,
+which can be a file outside the workspace, and it would lose the link itself.
+The artifact stores a symlink as a symlink, so the key has to describe one.
+
+The two input walks treat a symlink to a directory differently. Two walks with
+two rules is a wart, and one rule for both would be worse either way:
+
+- With `inputs` declared, the walk descends the link. `inputs: ["vendor/**"]`
+  against a symlinked `vendor` hashes the real files that pattern names, which is
+  the only reading of the pattern that means anything.
+- With `inputs` absent, the walk records the link and stops there. A task with no
+  `inputs` hashes its whole workspace, so descending would pull an arbitrary tree
+  from elsewhere on the disk into the key of every task that declares none.
+
+Neither walk tracks which paths it has already visited. A link that points at one
+of its own ancestors stops at the depth cap of 64 directories instead.
+
+The output walk descends nothing. A symlink is a leaf there, recorded as a link
+and archived as one.
 
 ### Key breakdowns
 
@@ -145,9 +198,10 @@ of `<key>.tar.gz` and `<key>.meta.json` pairs beside the `fingerprints/`
 directory.
 
 `lattice prune` removes cache entries, orphaned artifacts, and leftover staging
-files. It removes no directories. `cacheDir` can point at a directory Lattice
-does not own outright, and `.lattice` itself also holds the provisioned
-toolchains and the managed binary.
+files, though it removes a leftover only once that leftover has sat untouched for
+at least an hour. It removes no directories. `cacheDir` has to name a directory
+inside the repo, and it cannot name the repo root itself, because prune deletes
+archives and partial writes in whatever directory `cacheDir` names.
 
 Both files are written to a temporary name in the same directory and renamed
 into place. A rename is atomic, so a concurrent reader sees either the previous
@@ -185,9 +239,9 @@ declaring `outputs: ["dist/**"]` and `env: ["NODE_ENV"]`:
 | `durationMs` | How long the task took when this entry was written. |
 | `lastUsed` | RFC 3339 timestamp, set on write and refreshed on every hit. Drives eviction order. |
 | `env` | The resolved name and value pairs for the task's declared `env`, as they were when the key was computed. The key is a hash, so this is the only place those values remain legible. |
-| `outputDigest` | SHA-256 hex of the `.tar.gz` bytes, recorded when the artifact is written and checked on every lookup. |
+| `outputDigest` | SHA-256 hex of the `.tar.gz` bytes, recorded when the artifact is written and checked on every lookup. Empty while the store that wrote this file is still running. |
 | `outputs` | The task's `outputs` globs as they were when the entry was written. A restore clears what these match before unpacking. |
-| `artifactSize` | Byte length of the `.tar.gz`. Checked before the digest. |
+| `artifactSize` | Byte length of the `.tar.gz`. Checked before the digest. `0` while the store is still running. |
 
 `key` and `outputDigest` are both 64-character hex SHA-256 digests over different
 things. `key` is the identity computed from the components above.
@@ -204,14 +258,38 @@ the same thing. Directories and symlinks are recorded as themselves rather than
 flattened, so an empty output directory survives a round trip and a symlink comes
 back a symlink rather than a copy of its target.
 
-Entries are collected and added in sorted order. Once the archive is finished,
-its bytes are hashed into `outputDigest`, then the archive is renamed into place
-and the metadata is saved.
+Entries are collected and added in sorted order. A store then writes its files
+in this order:
 
-A task that declares `outputs` and matches none of them is not stored. An empty
-archive would verify on every later lookup, so the task would report a hit,
-restore nothing, and never run again. The runner surfaces the refusal as a
-warning and the run continues uncached.
+1. Write `<key>.meta.json` with `outputDigest` empty and `artifactSize` zero.
+2. Build the archive under a temporary name, hash its bytes, and rename it to
+   `<key>.tar.gz`.
+3. Write `<key>.meta.json` again, now carrying the digest and the size.
+
+Metadata comes first so that an artifact is never on disk without metadata
+naming it. Metadata with no digest in it is one of the things [prune
+reclaims](#lastused-bookkeeping-and-eviction-order), and prune runs at the end of
+every run that has a `settings.maxCacheSize` to enforce. A store that fails at
+step 2 or 3 deletes the metadata it wrote at step 1, so a failed store leaves
+nothing behind at the key.
+
+Lattice refuses two kinds of match rather than storing them, both because an
+archive with no files in it would verify on every later lookup. The task would
+then report a hit, restore nothing, and never run again. The runner reports
+either refusal as a warning, and the run continues uncached.
+
+```text
+no files matched outputs ["dist/**"], so nothing was cached. Check that the patterns are relative to the workspace, and that the task writes there
+```
+
+```text
+outputs ["dist"] matched only empty directories, so nothing was cached. Check that the task writes its files where the patterns point
+```
+
+The second case exists because a bare `dist` pattern expands to the directory
+itself plus everything under it. An empty `dist/` therefore matches even when the
+task produced nothing. Storing that archive would restore an empty `dist/` on
+every later hit and delete whatever the last uncached run had put there.
 
 A restore opens the tarball, deletes what the entry's recorded `outputs` match,
 then unpacks into the workspace. Clearing first is what makes a hit reproduce the
@@ -219,17 +297,26 @@ run: a file the task deleted stays deleted, and content-hashed names do not
 accumulate across builds. A hit produces files only. No process runs, so the
 entry's recorded `env` is not exported into anything.
 
+Clearing removes directories as well as files, deepest first, and removes a
+directory only when it is already empty. A directory the cached run never
+produced does not survive a hit. A matched directory that still holds a file no
+pattern names stays. With `outputs: ["dist/*.js"]`, a hit clears the JavaScript
+files and leaves a hand-written `dist/notes.txt` where it is.
+
 ## The lookup sequence
 
 A lookup runs these checks in order:
 
 1. Read and parse `<key>.meta.json`. A missing file is a miss. So is one that
    fails to parse.
-2. Check that `<key>.tar.gz` exists. Metadata with no tarball is a miss.
-3. Compare the tarball's length against `artifactSize`. A mismatch is a miss.
+2. Check that `outputDigest` is not empty. An empty one means the store that
+   wrote this metadata has not finished, so there is nothing to offer even when
+   an artifact is already sitting at the key. That is a miss.
+3. Check that `<key>.tar.gz` exists. Metadata with no tarball is a miss.
+4. Compare the tarball's length against `artifactSize`. A mismatch is a miss.
    This is the cheap check and it catches the common damage.
-4. Compute the tarball's SHA-256. An unreadable file is a miss.
-5. Compare that digest against `outputDigest`. A mismatch is a miss.
+5. Compute the tarball's SHA-256. An unreadable file is a miss.
+6. Compare that digest against `outputDigest`. A mismatch is a miss.
 
 A lookup returns an entry only when every check passes. A truncated download, a
 manually edited archive, or a half-written file from a crashed process makes the
@@ -244,16 +331,21 @@ a successful restore. It is the only field a refresh changes.
 Pruning enforces `settings.maxCacheSize`, or `--max-size` on `lattice prune`, in
 four steps:
 
-1. Reclaim what can never be read: artifacts with no metadata beside them, and
-   leftover temporary files. Both are left by an interrupted store. This happens
-   first, because pruning enumerates by metadata and would otherwise never see an
-   orphaned artifact.
+1. Reclaim what can never be read: artifacts with no metadata beside them,
+   metadata with an empty `outputDigest`, and leftover temporary files. All
+   three are what an interrupted store leaves behind. This happens first,
+   because pruning enumerates by metadata and would otherwise never see an
+   orphaned artifact. Prune touches a leftover only once its modification time
+   is at least an hour old. See [the one-hour grace
+   period](#the-one-hour-grace-period).
 2. Scan the cache directory for every `<key>.meta.json`, reading each entry's
    `lastUsed` and combined on-disk size. An entry whose metadata no longer parses
    is evicted here rather than aborting the prune.
 3. Stop if the total is at or under the limit.
 4. Otherwise sort entries by `lastUsed` ascending and delete the oldest first
-   until the running total is at or under the limit.
+   until the running total is at or under the limit. Prune skips an entry with an
+   empty `outputDigest`. Its bytes still count toward the total, and deleting it
+   would race the process that is writing it.
 
 Each eviction removes the metadata before the artifact. Without metadata the
 entry is already a miss, so a failure between the two deletions leaves something
@@ -267,6 +359,30 @@ was written goes first.
 A missing cache directory is not an error; the prune reports zero entries removed
 and zero bytes freed. With neither `--max-size` nor `settings.maxCacheSize` set,
 `lattice prune` fails rather than choosing a limit.
+
+### The one-hour grace period
+
+A store in progress and a store that died halfway through leave the same things
+on disk. Both have written metadata with no digest in it, or an archive under a
+temporary name, or an archive whose metadata has not caught up yet. Nothing in
+the directory says which is which.
+
+Modification time is the only signal there is. Prune reclaims a leftover only
+once that leftover is an hour or more old, and leaves anything younger alone on
+the assumption that a process is still working on it.
+
+Without the grace period, two `lattice` processes sharing one cache directory
+delete each other's writes. Two terminals in the same checkout, or two CI steps
+sharing a workspace, is enough. One process is mid-store while the other reaches
+the end of its run, enforces `settings.maxCacheSize`, sees a half-written entry,
+and removes it. The first process then finishes and records metadata pointing at
+an archive that is no longer there. An hour is a long time to leave real debris
+counting against the size budget, and it is still the cheaper of the two
+mistakes. A later prune clears the debris. An entry deleted out from under a live
+store costs that task a rerun.
+
+A modification time in the future counts as recent. Clocks drift on machines that
+share a cache directory, and a bad clock never becomes a reason to delete.
 
 ## Not part of the key
 

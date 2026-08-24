@@ -126,15 +126,24 @@ server the command backgrounded before quitting is not left holding a port.
 
 ## Stopping a run
 
-A run with no persistent task in its closure exits when its graph drains. No
-signal handling is involved.
+A run with no persistent task in its closure exits when its graph drains.
 
-A run whose persistent tasks are still up waits for Ctrl-C once every other task
-has finished, streaming output the whole time. On Ctrl-C on Unix, Lattice sends
-`SIGTERM` to each still-running child's process group, waits five seconds, then
-sends `SIGKILL` to whatever is left. On Windows there is no process group to
-signal, so the child and its descendants are taken down directly and there is
-nothing a grace period would achieve.
+A run whose persistent tasks are still up keeps waiting once every other task
+has finished, streaming output the whole time. Four things end that wait: you
+press `Ctrl-C`, a `SIGTERM` arrives, the last persistent task exits, or any task
+in the run fails. A failure ends the run rather than leaving the servers to hold
+it open with nothing left to schedule.
+
+Lattice listens for the signal for the whole run, not only while it is waiting,
+so the first `Ctrl-C` ends the run wherever it lands, including during the builds
+that run ahead of the servers. It used to take a second press in that case, and
+a `SIGTERM` never registered at all. A cancelled CI job hung until the runner
+force-killed it.
+
+On Unix, Lattice sends `SIGTERM` to each still-running child's process group,
+waits five seconds, then sends `SIGKILL` to whatever is left. On Windows there is
+no process group to signal, so the child and its descendants are taken down
+directly and there is nothing a grace period would achieve.
 
 The grace period is there because a dev server usually holds something an
 abrupt kill would strand: a TCP port, a socket file, a lock. Signalling the group
