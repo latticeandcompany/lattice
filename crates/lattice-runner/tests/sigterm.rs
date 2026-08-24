@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use dagger::build_execution_graph;
 use lattice_config::{LatticeConfig, PipelineTask};
-use lattice_events::{Reporter, TaskEvent};
+use lattice_events::{Reporter, RunSummary, TaskEvent};
 use lattice_runner::{execute_tasks, ExecuteOptions, RunInterrupted};
 use lattice_testkit as sh;
 use lattice_workspace::Workspace;
@@ -30,7 +30,7 @@ impl Reporter for StartWatcher {
 		}
 	}
 	fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
-	fn run_summary(&self, _total: usize, _cached: usize, _failed: usize, _elapsed_ms: u64) {}
+	fn run_summary(&self, _summary: RunSummary) {}
 	fn note(&self, _msg: &str) {}
 	fn warn(&self, _msg: &str) {}
 	fn finish(&self) {}

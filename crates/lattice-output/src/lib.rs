@@ -288,9 +288,14 @@ pub fn is_full_cache(total: usize, cached: usize, failed: usize) -> bool {
 
 /// The banner printed under the summary when the whole run came from cache,
 /// walking the teal ramp a character at a time.
+///
+/// It says `FULL POWER` rather than naming the cache. A "full cache" is the
+/// phrasing of a disk running out of room, which is the opposite of what just
+/// happened, and the summary line above already reports the hits and the time
+/// they saved. This line is the celebration.
 pub fn full_cache_banner() -> String {
 	paint_gradient(
-		&format!("{ROSETTE}{ROSETTE}{ROSETTE} FULL CACHE"),
+		&format!("{ROSETTE}{ROSETTE}{ROSETTE} FULL POWER"),
 		&TEAL_RAMP,
 	)
 }
@@ -371,7 +376,7 @@ pub fn switching_notice(binary_version: &str, pinned_version: &str) -> String {
 // `serde`, so a front end can consume a run without linking `console` and
 // `indicatif`. Re-exported here because this crate's two reporters are the
 // terminal implementations of that trait.
-pub use lattice_events::{CacheMiss, OutputLine, Reporter, TaskEvent};
+pub use lattice_events::{CacheMiss, OutputLine, Reporter, RunSummary, TaskEvent};
 
 /// Pick the reporter from detected mode. `Interactive` → [`InteractiveReporter`],
 /// else [`CiReporter`] (carrying `loquacious` so its trace lines turn on).
@@ -422,6 +427,26 @@ fn fmt_secs(ms: u64) -> String {
 	}
 }
 
+/// A stretch of saved time: `4.27s`, `4m 07s`, `14h 22m`.
+///
+/// Under a minute this is [`fmt_secs`] exactly, because that number sits beside
+/// the run's elapsed time and the two should be written the same way. Past a
+/// minute it parts ways with the clock form: `14:22:00` beside the word "saved"
+/// reads like a timestamp, and a savings figure is an estimate whose trailing
+/// seconds are not worth the width.
+pub fn fmt_span(ms: u64) -> String {
+	let total = (ms + 500) / 1000;
+	if total < 60 {
+		return fmt_secs(ms);
+	}
+	let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
+	if h > 0 {
+		format!("{h}h {m:02}m")
+	} else {
+		format!("{m}m {s:02}s")
+	}
+}
+
 /// Line stream: `workspace:task: <message>`, one line per event. In loquacious
 /// mode it also prints `note()` trace lines and per-task output. This is the
 /// reporter used when there is no TTY, or `-v` or `settings.loquacious` is set.
@@ -468,6 +493,7 @@ impl Reporter for CiReporter {
 				workspace,
 				task,
 				key,
+				..
 			} => {
 				println!(
 					"{}: cache hit [{}]",
@@ -565,16 +591,24 @@ impl Reporter for CiReporter {
 		}
 	}
 
-	fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64) {
+	fn run_summary(&self, s: RunSummary) {
+		// The savings tail is appended rather than inserted, so a log grepped for
+		// the counts reads the same as it always has.
+		let saved = if s.saved_ms > 0 {
+			format!(", {} saved", fmt_span(s.saved_ms))
+		} else {
+			String::new()
+		};
 		println!(
-			"lattice: {} tasks, {} cached, {} failed, {}",
-			total,
-			cached,
-			failed,
-			fmt_secs(elapsed_ms)
+			"lattice: {} tasks, {} cached, {} failed, {}{}",
+			s.total,
+			s.cached,
+			s.failed,
+			fmt_secs(s.elapsed_ms),
+			saved
 		);
-		if is_full_cache(total, cached, failed) {
-			println!("lattice: full cache, nothing to run");
+		if is_full_cache(s.total, s.cached, s.failed) {
+			println!("lattice: full power, nothing to run");
 		}
 	}
 
@@ -698,6 +732,7 @@ impl Reporter for InteractiveReporter {
 				workspace,
 				task,
 				key,
+				..
 			} => {
 				let line = format!(
 					"{} {} {} {}",
@@ -807,26 +842,38 @@ impl Reporter for InteractiveReporter {
 		})
 	}
 
-	fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64) {
-		let failed_str = if failed > 0 {
-			style(failed.to_string()).red().to_string()
+	fn run_summary(&self, s: RunSummary) {
+		let failed_str = if s.failed > 0 {
+			style(s.failed.to_string()).red().to_string()
 		} else {
-			style(failed.to_string()).dim().to_string()
+			style(s.failed.to_string()).dim().to_string()
 		};
 		let rule = style("─".repeat(self.term_width().min(52)))
 			.dim()
 			.to_string();
+		// Teal, where the elapsed time is dim: a partly-cached run is the common
+		// case, and the time it did not spend is the part worth the eye.
+		let saved = if s.saved_ms > 0 {
+			format!(
+				" {} {}",
+				style("·").dim(),
+				paint_teal(&format!("{} saved", fmt_span(s.saved_ms)))
+			)
+		} else {
+			String::new()
+		};
 		let line = format!(
-			"{}\n{}  {} tasks · {} cached · {} failed  {}",
+			"{}\n{}  {} tasks · {} cached · {} failed  {}{}",
 			rule,
 			paint_teal(ROSETTE),
-			style(total).bold(),
-			style(cached).green(),
+			style(s.total).bold(),
+			style(s.cached).green(),
 			failed_str,
-			style(fmt_secs(elapsed_ms)).dim()
+			style(fmt_secs(s.elapsed_ms)).dim(),
+			saved
 		);
 		self.mp.println(line).ok();
-		if is_full_cache(total, cached, failed) {
+		if is_full_cache(s.total, s.cached, s.failed) {
 			self.mp.println(format!("\n{}", full_cache_banner())).ok();
 		}
 	}
@@ -937,7 +984,7 @@ mod tests {
 			self.events.lock().unwrap().push(ev);
 		}
 		fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
-		fn run_summary(&self, _total: usize, _cached: usize, _failed: usize, _elapsed_ms: u64) {}
+		fn run_summary(&self, _summary: RunSummary) {}
 		fn note(&self, msg: &str) {
 			self.lines.lock().unwrap().push(format!("note: {msg}"));
 		}
@@ -999,6 +1046,7 @@ mod tests {
 			workspace: ws.clone(),
 			task: task.clone(),
 			key: "deadbeefcafef00d".to_string(),
+			saved_ms: 3_040,
 		});
 		r.event(TaskEvent::Failed {
 			workspace: ws.clone(),
@@ -1186,8 +1234,34 @@ mod tests {
 	#[test]
 	fn full_cache_banner_carries_the_phrase() {
 		let b = full_cache_banner();
-		assert!(b.contains("FULL CACHE"));
+		assert!(b.contains("FULL POWER"));
 		assert_eq!(b.matches(ROSETTE).count(), 3);
+	}
+
+	#[test]
+	fn the_banner_never_calls_the_cache_full() {
+		// "full cache" is how a disk running out of room is described. This banner
+		// means the opposite, and said the wrong thing for three releases.
+		let b = full_cache_banner();
+		assert!(!b.to_lowercase().contains("full cache"));
+	}
+
+	#[test]
+	fn fmt_span_matches_the_elapsed_format_under_a_minute() {
+		// It prints beside the run's own elapsed time, so the two agree.
+		assert_eq!(fmt_span(0), fmt_secs(0));
+		assert_eq!(fmt_span(4_266), "4.27s");
+		assert_eq!(fmt_span(59_499), "59.50s");
+	}
+
+	#[test]
+	fn fmt_span_says_minutes_and_hours_rather_than_clock_time() {
+		assert_eq!(fmt_span(60_000), "1m 00s");
+		assert_eq!(fmt_span(247_000), "4m 07s");
+		assert_eq!(fmt_span(3_599_400), "59m 59s");
+		// Past an hour the seconds go: nobody reads them off a savings total.
+		assert_eq!(fmt_span(3_600_000), "1h 00m");
+		assert_eq!(fmt_span(51_720_000), "14h 22m");
 	}
 
 	#[test]
@@ -1218,7 +1292,7 @@ mod tests {
 	fn gradient_emits_no_escapes_when_color_is_off() {
 		// Tests run without a TTY, so `colors_enabled()` is false here and the
 		// banner has to degrade to bare text a log can carry.
-		assert_eq!(paint_gradient("FULL CACHE", &TEAL_RAMP), "FULL CACHE");
+		assert_eq!(paint_gradient("FULL POWER", &TEAL_RAMP), "FULL POWER");
 		assert!(!full_cache_banner().contains('\u{1b}'));
 	}
 

@@ -28,7 +28,7 @@ use lattice_cache::{
 	KeyBreakdown, LocalStore,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
-use lattice_events::{CacheMiss, Reporter, TaskEvent};
+use lattice_events::{CacheMiss, Reporter, RunSummary, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::Workspace;
 use serde::Serialize;
@@ -54,6 +54,9 @@ pub struct RunResult {
 	pub cached: usize,
 	pub failed: usize,
 	pub elapsed_ms: u64,
+	/// Recorded task time the run's cache hits skipped. Task time, not wall
+	/// clock: hits that would have run in parallel still each add their own.
+	pub saved_ms: u64,
 }
 
 /// Error returned by keep-going mode when one or more tasks failed. Carries the
@@ -490,8 +493,9 @@ enum RunnerMsg {
 enum TaskOutcome {
 	/// Ran to success (counts toward `total`).
 	Ran,
-	/// Restored from cache (counts toward `total` and `cached`).
-	Cached,
+	/// Restored from cache (counts toward `total` and `cached`), carrying the
+	/// recorded task time the hit skipped.
+	Cached { saved_ms: u64 },
 	/// A persistent child was started and detached (counts toward `total`).
 	Persistent,
 	/// Failed: carries workspace/task for scheduling decisions. The captured
@@ -770,6 +774,8 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
 	let mut total = 0usize;
 	let mut cached = 0usize;
+	// Recorded task time the run's hits skipped, summed as they come back.
+	let mut saved_ms_total = 0u64;
 	let mut failed = 0usize;
 	let mut skipped = 0usize;
 	let mut first_failure: Option<String> = None;
@@ -866,9 +872,10 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 						live_persistent += 1;
 						unblock(pos, &schedule, &mut remaining_indegree, &completed, &mut ready);
 					}
-					TaskOutcome::Cached => {
+					TaskOutcome::Cached { saved_ms } => {
 						total += 1;
 						cached += 1;
+						saved_ms_total += saved_ms;
 						unblock(pos, &schedule, &mut remaining_indegree, &completed, &mut ready);
 					}
 					TaskOutcome::Failed { workspace, task } => {
@@ -964,7 +971,14 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	}
 
 	let elapsed_ms = global_start.elapsed().as_millis() as u64;
-	reporter.run_summary(total, cached, failed, elapsed_ms);
+	let summary = RunSummary {
+		total,
+		cached,
+		failed,
+		elapsed_ms,
+		saved_ms: saved_ms_total,
+	};
+	reporter.run_summary(summary);
 	reporter.finish();
 
 	let result = RunResult {
@@ -972,6 +986,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 		cached,
 		failed,
 		elapsed_ms,
+		saved_ms: saved_ms_total,
 	};
 
 	// An interrupt killed whatever was still running, so those tasks show up as
@@ -1070,12 +1085,14 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 				match ctx.store.restore(&entry, &spec.ws_path) {
 					Ok(()) => {
 						let _ = ctx.store.touch(&key);
+						let saved_ms = entry.meta.duration_ms;
 						let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::CacheHit {
 							workspace: ws.clone(),
 							task: task.clone(),
 							key,
+							saved_ms,
 						}));
-						return TaskOutcome::Cached;
+						return TaskOutcome::Cached { saved_ms };
 					}
 					Err(e) => {
 						let _ = ctx.tx.send(RunnerMsg::TaskWarn {
@@ -1664,11 +1681,11 @@ mod tests {
 				.unwrap()
 				.extend(captured.iter().map(|(_, line)| line.clone()));
 		}
-		fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64) {
+		fn run_summary(&self, s: RunSummary) {
 			self.summaries
 				.lock()
 				.unwrap()
-				.push((total, cached, failed, elapsed_ms));
+				.push((s.total, s.cached, s.failed, s.elapsed_ms));
 		}
 		fn note(&self, _msg: &str) {}
 		fn warn(&self, _msg: &str) {}
