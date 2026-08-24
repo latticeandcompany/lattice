@@ -21,6 +21,18 @@ export const useTaskOutputRev = (taskKey: string): number =>
 		useCallback(() => runStore.outputRev(taskKey), [taskKey]),
 	);
 
+/**
+ * A revision that moves whenever any task's view changed.
+ *
+ * For a reader of the whole graph at once: forty per-node subscriptions would be
+ * forty re-renders for one message, and output lines never move it.
+ */
+export const useTaskViewsRev = (): number =>
+	useSyncExternalStore(
+		useCallback((listener: () => void) => runStore.subscribeViews(listener), []),
+		useCallback(() => runStore.viewsRev, []),
+	);
+
 export const useRunView = (): RunView =>
 	useSyncExternalStore(
 		useCallback((listener: () => void) => runStore.subscribeRun(listener), []),

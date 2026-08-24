@@ -179,8 +179,17 @@ fn prune_leaves_everything_that_is_not_a_cache_entry() {
 		"#!/bin/sh\n",
 	);
 	fx.write(".lattice/bin/lattice-1.0.0", "the binary in use");
-	// Debris from an interrupted store, which should still go.
+	// Debris from an interrupted store, which should still go. Backdated because a
+	// leftover is only reclaimed once it is old enough to be nothing else: a store
+	// running right now in another process looks the same on disk.
 	fx.write(".lattice/deadbeef.tar.gz", "an artifact with no metadata");
+	fx.backdate(".lattice/deadbeef.tar.gz");
+	// The same shape, but fresh: this is what a store in another process looks
+	// like mid-write, and taking it would delete that run's result.
+	fx.write(
+		".lattice/c0ffee.tar.gz",
+		"an artifact being written right now",
+	);
 
 	fx.lattice().args(["run", "build"]).assert().success();
 	fx.lattice().arg("prune").assert().success();
@@ -196,6 +205,10 @@ fn prune_leaves_everything_that_is_not_a_cache_entry() {
 	assert!(
 		!fx.exists(".lattice/deadbeef.tar.gz"),
 		"an orphaned artifact is still reclaimed"
+	);
+	assert!(
+		fx.exists(".lattice/c0ffee.tar.gz"),
+		"prune must leave a leftover new enough to be another process's cache write"
 	);
 }
 

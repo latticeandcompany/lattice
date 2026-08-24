@@ -7,6 +7,7 @@
 import { useCallback, useState } from 'react';
 
 import * as api from '../lib/api.ts';
+import { message } from '../lib/guard.ts';
 import { runStore } from '../lib/runStore.ts';
 import { cacheFlags, type CacheMode } from '../lib/runOptions.ts';
 
@@ -29,6 +30,10 @@ export const useRunner = () => {
 		// Seed the store before the first message arrives, so the list switches to
 		// queued immediately rather than after the graph comes back.
 		runStore.begin(null);
+		// Closing or switching the project discards this run's view while the run
+		// itself is still unwinding, so nothing it reports afterwards may land on top
+		// of what replaced it.
+		let epoch = runStore.epoch;
 
 		try {
 			// The graph is fetched separately so the list can show every task the run
@@ -39,6 +44,7 @@ export const useRunner = () => {
 				sequentially: settings.sequentially,
 			});
 			runStore.begin(graph);
+			epoch = runStore.epoch;
 
 			const outcome = await api.runStart(
 				{
@@ -55,12 +61,11 @@ export const useRunner = () => {
 
 			// Anything still queued arrived after the run ended, so drain before settling.
 			runStore.flush();
-			runStore.settle(outcome);
+			runStore.settle(outcome, epoch);
 			return outcome;
 		} catch (caught) {
-			const message = caught instanceof Error ? caught.message : String(caught);
-			setError(message);
-			runStore.reset();
+			setError(message(caught));
+			if (runStore.epoch === epoch) runStore.reset();
 			return null;
 		}
 	}, []);

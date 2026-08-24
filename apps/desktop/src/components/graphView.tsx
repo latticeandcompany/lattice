@@ -3,11 +3,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/appContext.tsx';
 import { useEcharts } from '../hooks/useEcharts.ts';
 import { useReducedMotion } from '../hooks/useReducedMotion.ts';
-import { useRunView } from '../hooks/useRunStore.ts';
+import { useTaskViewsRev } from '../hooks/useRunStore.ts';
 import { useThemeTokens } from '../hooks/useThemeTokens.ts';
 import * as api from '../lib/api.ts';
 import { closure, filterDump, layerCount } from '../lib/graphLayout.ts';
 import { buildGraphOption, type NodeState } from '../lib/graphOption.ts';
+import { defaultSelection, effectiveSelection } from '../lib/runOptions.ts';
 import { runStore } from '../lib/runStore.ts';
 import type { GraphDump } from '../lib/types.ts';
 import GraphLegend from './graphLegend.tsx';
@@ -18,12 +19,12 @@ const GraphView = () => {
 	const { project } = useApp();
 	const tokens = useThemeTokens();
 	const reducedMotion = useReducedMotion();
-	const run = useRunView();
+	const viewsRev = useTaskViewsRev();
 
-	const taskNames = project?.tasks.map((task) => task.name) ?? [];
-	const [selected, setSelected] = useState<string[]>(
-		taskNames.includes('build') ? ['build'] : taskNames.slice(0, 1),
-	);
+	const taskNames = useMemo(() => project?.tasks.map((task) => task.name) ?? [], [project]);
+	const [picked, setPicked] = useState<string[]>(() => defaultSelection(taskNames));
+	// Not the raw pick: the project may have been switched under it.
+	const selected = useMemo(() => effectiveSelection(picked, taskNames), [picked, taskNames]);
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<Mode>('graph');
 	const [focused, setFocused] = useState<string | null>(null);
@@ -60,8 +61,8 @@ const GraphView = () => {
 		[dump, search],
 	);
 
-	// Live state, so the picture animates the build as it happens. Read from the store
-	// keyed off the run's revision rather than subscribed per node.
+	// Live state, so the picture fills in as the build happens. One subscription to
+	// "some task changed" rather than one per node, and output lines do not move it.
 	const states = useMemo(() => {
 		const map = new Map<string, NodeState>();
 		for (const node of filtered.nodes) {
@@ -75,7 +76,7 @@ const GraphView = () => {
 			}
 		}
 		return map;
-	}, [filtered, run.phase, run.result]);
+	}, [filtered, viewsRev]);
 
 	const focus = useMemo(
 		() => (focused && dump ? closure(dump, focused) : undefined),
@@ -105,13 +106,18 @@ const GraphView = () => {
 				setFocused((current) => (current === id ? null : id));
 			}
 		};
-		const onBackground = () => setFocused(null);
+		// The chart's own click never fires for empty canvas, so clearing the focus has
+		// to come off zrender — and has to be taken back off it, since the instance
+		// outlives this effect.
+		const onBackground = (event: { target?: unknown }) => {
+			if (!event.target) setFocused(null);
+		};
+		const zr = instance.getZr();
 		instance.on('click', onClick as never);
-		instance.getZr().on('click', ((event: { target?: unknown }) => {
-			if (!event.target) onBackground();
-		}) as never);
+		zr.on('click', onBackground as never);
 		return () => {
 			instance.off('click', onClick as never);
+			zr.off('click', onBackground as never);
 		};
 	}, [chart, ready, mode]);
 
@@ -128,11 +134,11 @@ const GraphView = () => {
 								type="button"
 								className={`command-tab${selected.includes(task) ? ' command-tab--active' : ''}`}
 								onClick={(event) =>
-									setSelected((current) =>
+									setPicked(
 										event.metaKey || event.ctrlKey
-											? current.includes(task)
-												? current.filter((candidate) => candidate !== task)
-												: [...current, task]
+											? selected.includes(task)
+												? selected.filter((candidate) => candidate !== task)
+												: [...selected, task]
 											: [task],
 									)
 								}

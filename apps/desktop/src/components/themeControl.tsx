@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { MODES, applyMode, prefersDark, storedMode, type Mode } from '../lib/theme.ts';
+import { MODES, applyMode, applyStoredMode, storedMode, type Mode } from '../lib/theme.ts';
 
 // Light / Dark / System, as a Bootstrap dropdown driven by React rather than by
 // Bootstrap's own JS. System follows the OS and updates live when it changes.
@@ -11,6 +11,7 @@ const ThemeControl = () => {
 
 	useEffect(() => {
 		setMode(storedMode());
+		void applyStoredMode();
 	}, []);
 
 	// While following the OS, track it changing.

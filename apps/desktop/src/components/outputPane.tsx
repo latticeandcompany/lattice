@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import { useTaskOutputRev } from '../hooks/useRunStore.ts';
+import { nothingToDraw, paneDraw } from '../lib/paneDraw.ts';
 import { runStore } from '../lib/runStore.ts';
 
 interface OutputPaneProps {
@@ -22,21 +23,14 @@ const OutputPane = ({ taskKey }: OutputPaneProps) => {
 		const element = ref.current;
 		if (!element) return;
 
-		const { lines, dropped } = runStore.linesSince(taskKey, drawn.current);
-		if (dropped > 0) {
-			// The buffer discarded its oldest; drop the same number of spans so the DOM
-			// and the buffer stay the same length.
-			for (let i = 0; i < dropped && element.firstChild; i += 1) {
-				element.firstChild.remove();
-			}
-		}
-		if (lines.length === 0) return;
+		const draw = paneDraw(element.childElementCount, runStore.linesSince(taskKey, drawn.current));
+		if (nothingToDraw(draw)) return;
 
 		// Stay pinned to the bottom unless the reader scrolled up to look at something.
 		const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
 
 		const fragment = document.createDocumentFragment();
-		for (const line of lines) {
+		for (const line of draw.append) {
 			const span = document.createElement('span');
 			span.className = line.stderr
 				? 'code-card__line code-card__line--err'
@@ -45,7 +39,12 @@ const OutputPane = ({ taskKey }: OutputPaneProps) => {
 			fragment.append(span);
 		}
 		element.append(fragment);
-		drawn.current += lines.length + dropped;
+		// The buffer drops its oldest past capacity, so the DOM and the buffer stay the
+		// same length.
+		for (let i = 0; i < draw.trim && element.firstChild; i += 1) {
+			element.firstChild.remove();
+		}
+		drawn.current = draw.mark;
 
 		if (atBottom) element.scrollTop = element.scrollHeight;
 	}, [revision, taskKey]);

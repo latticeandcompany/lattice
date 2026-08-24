@@ -24,7 +24,7 @@ use dagger::{build_execution_graph_selected, ExecutionGraph};
 use lattice_config::LatticeConfig;
 use lattice_events::Reporter;
 use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure, RunInterrupted, RunResult};
-use lattice_workspace::{discover_workspaces, Workspace};
+use lattice_workspace::{discover_workspaces, skipped_task_notes, Workspace};
 
 /// A repo Lattice has read: where it is, what it declares, and what that resolves
 /// to on this machine.
@@ -88,6 +88,17 @@ impl Project {
 			}
 		}
 		Ok(())
+	}
+
+	/// Warn about `tasks` a workspace dropped because its manifest declares a
+	/// script map without them — the shape a typo takes. Silent otherwise.
+	///
+	/// Called once per run rather than on open: opening a project is something a
+	/// front end does whenever it likes, and a reload is not news.
+	pub fn report_skipped_tasks(&self, tasks: &[String], reporter: &dyn Reporter) {
+		for note in skipped_task_notes(&self.workspaces, tasks) {
+			reporter.warn(&note);
+		}
 	}
 
 	/// The workspace names a `--filter` selects, or `None` for no filter.
@@ -271,6 +282,7 @@ pub async fn run(opts: RunOptions<'_>) -> Result<RunOutcome> {
 	} = opts;
 
 	project.require_known_tasks(&request.plan.tasks)?;
+	project.report_skipped_tasks(&request.plan.tasks, reporter);
 
 	let phases = match project.plan(&request.plan)? {
 		Plan::NoWorkspaces | Plan::NoMatch { .. } => return Ok(RunOutcome::Nothing),
@@ -332,7 +344,70 @@ pub async fn run(opts: RunOptions<'_>) -> Result<RunOutcome> {
 
 #[cfg(test)]
 mod tests {
+	use std::sync::Mutex;
+
+	use lattice_events::TaskEvent;
+
 	use super::*;
+
+	#[derive(Default)]
+	struct Warnings(Mutex<Vec<String>>);
+
+	impl Reporter for Warnings {
+		fn run_start(&self, _task: &str, _workspaces: usize) {}
+		fn event(&self, _ev: TaskEvent) {}
+		fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
+		fn run_summary(&self, _total: usize, _cached: usize, _failed: usize, _elapsed_ms: u64) {}
+		fn note(&self, _msg: &str) {}
+		fn warn(&self, msg: &str) {
+			self.0.lock().unwrap().push(msg.to_string());
+		}
+		fn finish(&self) {}
+	}
+
+	fn write(root: &Path, rel: &str, contents: &str) {
+		let path = root.join(rel);
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(path, contents).unwrap();
+	}
+
+	/// The note exists so a typo is not invisible, which it is again the moment
+	/// nothing carries it to a reporter.
+	#[test]
+	fn a_skipped_task_reaches_the_reporter_once() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let root = tmp.path();
+		write(
+			root,
+			"lattice.json",
+			r#"{ "tasks": { "build": {} }, "workspaces": [
+				{ "name": "web", "path": "apps/web" },
+				{ "name": "types", "path": "apps/types" }
+			] }"#,
+		);
+		write(
+			root,
+			"apps/web/package.json",
+			r#"{ "scripts": { "biuld": "tsc" } }"#,
+		);
+		write(root, "apps/web/pnpm-lock.yaml", "");
+		write(root, "apps/types/package.json", r#"{ "name": "types" }"#);
+		write(root, "apps/types/package-lock.json", "{}");
+
+		let project = Project::open_root(root).unwrap();
+		let reporter = Warnings::default();
+		project.report_skipped_tasks(&["build".to_string()], &reporter);
+
+		let warned = reporter.0.lock().unwrap().clone();
+		assert_eq!(
+			warned,
+			vec![
+				"web declares scripts but no \"build\", so the task was skipped. \
+				 Did you mean \"biuld\"?"
+			],
+			"one warning, and nothing about a package that declares no scripts"
+		);
+	}
 
 	#[test]
 	fn force_refreshes_the_entry_and_no_cache_writes_nothing() {

@@ -117,7 +117,7 @@
         },
         "bin": {
           "type": "string",
-          "description": "Bin directory relative to the toolchain install."
+          "description": "Bin directory relative to the toolchain install (defaults to \"bin\"). It must be relative and stay inside the install: this directory is prepended to every task's PATH."
         }
       }
     },
@@ -171,9 +171,9 @@
         "timeout": {
           "oneOf": [
             { "type": "string" },
-            { "type": "integer", "minimum": 1 }
+            { "type": "integer", "minimum": 1, "maximum": 31536000 }
           ],
-          "description": "How long the task may run before it is killed, e.g. \"90s\", \"10m\", \"1h\", or a number of seconds. Ignored for persistent tasks."
+          "description": "How long the task may run before it is killed, e.g. \"90s\", \"10m\", \"1h\", or a whole number of seconds. The maximum is 31536000 (365 days). Ignored for persistent tasks."
         }
       }
     },
@@ -187,7 +187,7 @@
         },
         "cacheDir": {
           "type": "string",
-          "description": "Directory for the local cache (defaults to \".lattice/cache\")."
+          "description": "Directory for the local cache, relative to the repo root (defaults to \".lattice/cache\"). It must stay inside the repo and cannot be the repo root itself: `lattice prune` deletes cache archives and partial writes in whatever directory it names."
         },
         "loquacious": {
           "type": "boolean",

@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use indexmap::IndexMap;
-use lattice_config::{EngineMap, LatticeConfig};
+use lattice_config::{closest_field, EngineMap, LatticeConfig};
 
 pub mod scan;
 pub mod toolchain;
@@ -439,6 +439,109 @@ impl Workspace {
 	}
 }
 
+/// One workspace whose manifest declares a script map without the task that was
+/// asked for.
+struct MissingScript {
+	workspace: String,
+	/// The manifest's own word for its script map: `scripts`, or `tasks` for deno.
+	section: &'static str,
+	task: String,
+	/// The declared script name closest to `task`, when one is close enough to be
+	/// a plausible typo.
+	nearest: Option<String>,
+}
+
+impl MissingScript {
+	fn describe(&self) -> String {
+		format!(
+			"{} declares {} but no \"{}\"",
+			self.workspace, self.section, self.task
+		)
+	}
+}
+
+const DECLARE_IT: &str = "Declare it in the workspace's manifest, or under \"scripts\" in \
+                          lattice.json, if the task should run there";
+
+/// What the developer should hear once about the tasks discovery dropped from
+/// `tasks`: one line covering every workspace whose manifest declares a script
+/// map that does not hold the task, and one per workspace whose manifest could
+/// not be read. Empty when nothing was dropped.
+///
+/// A front end prints these through its warn path. A manifest with no script map
+/// at all stays silent: a types-only package that declares nothing is a complete,
+/// deliberate config, not a mistake. A manifest that declares scripts and misses
+/// the one being run is the case worth a word, because a typo looks exactly like
+/// it.
+pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> Vec<String> {
+	let mut missing: Vec<MissingScript> = Vec::new();
+	let mut unreadable: Vec<String> = Vec::new();
+
+	for ws in workspaces.iter().filter(|ws| ws.auto) {
+		let Some(tool) = ws.driver.as_ref().map(|d| d.tool.as_str()) else {
+			continue;
+		};
+		// `None` is a driver that takes the task name on its command line, so there
+		// is no manifest to have left anything out of.
+		let Some((_, section)) = manifest_location(&ws.path, tool) else {
+			continue;
+		};
+		let declared = match manifest_scripts(&ws.path, tool) {
+			ManifestScripts::Declares(names) => names,
+			ManifestScripts::Unreadable(reason) => {
+				unreadable.push(format!(
+					"{}: {reason}, so every task it would have named was skipped",
+					ws.name
+				));
+				continue;
+			}
+			ManifestScripts::NoSection | ManifestScripts::DirectInvoke => continue,
+		};
+		for task in tasks {
+			if ws.commands.contains_key(task.as_str()) {
+				continue;
+			}
+			missing.push(MissingScript {
+				workspace: ws.name.clone(),
+				section,
+				task: task.clone(),
+				nearest: closest_field(task, &declared).map(str::to_string),
+			});
+		}
+	}
+
+	let mut notes = Vec::new();
+	match missing.as_slice() {
+		[] => {}
+		[one] => {
+			let advice = match &one.nearest {
+				Some(near) => format!("Did you mean \"{near}\"?"),
+				None => DECLARE_IT.to_string(),
+			};
+			notes.push(format!(
+				"{}, so the task was skipped. {advice}",
+				one.describe()
+			));
+		}
+		several => {
+			let listed: Vec<String> = several
+				.iter()
+				.map(|m| match &m.nearest {
+					Some(near) => format!("{} (did you mean \"{near}\"?)", m.describe()),
+					None => m.describe(),
+				})
+				.collect();
+			notes.push(format!(
+				"some tasks were skipped: {}. Declare each in the workspace's manifest, or \
+				 under \"scripts\" in lattice.json, if the task should run there",
+				listed.join("; ")
+			));
+		}
+	}
+	notes.extend(unreadable);
+	notes
+}
+
 /// Raised when Lattice cannot unambiguously pick a task driver: either two
 /// tools compete for the same role, or a workspace shows only a bare generic
 /// marker with no tool-unique signal. Renders a copy-pasteable fix.
@@ -547,23 +650,125 @@ fn suggested_scripts_fix() -> String {
 	"\"auto\": false, \"scripts\": { \"build\": \"<command>\" }".to_string()
 }
 
-/// Read the `scripts` (JS) / `tasks` (deno) map keys from a manifest, if any.
-fn manifest_script_names(path: &Path, tool: &str) -> Option<Vec<String>> {
-	let (file, key) = match tool {
-		"npm" | "pnpm" | "yarn" | "bun" => ("package.json", "scripts"),
+/// What a workspace's manifest says about the tasks its driver can run.
+enum ManifestScripts {
+	/// The driver takes a task name straight on its command line; there is no
+	/// manifest to consult.
+	DirectInvoke,
+	/// The manifest declares these script names, and nothing else runs.
+	Declares(Vec<String>),
+	/// There is no script map to read — no manifest, or a manifest that declares
+	/// no `scripts`/`tasks` at all. Nothing runs, and nothing is missing either.
+	NoSection,
+	/// The manifest is there and Lattice could not read it. Nothing can be
+	/// inferred from a file that will not parse.
+	Unreadable(String),
+}
+
+/// The manifest file a tool reads its scripts from, and that file's own key for
+/// them. `None` for a driver that takes the task name on its command line.
+fn manifest_location(path: &Path, tool: &str) -> Option<(&'static str, &'static str)> {
+	match tool {
+		"npm" | "pnpm" | "yarn" | "bun" => Some(("package.json", "scripts")),
 		"deno" => {
 			if path.join("deno.jsonc").exists() {
-				("deno.jsonc", "tasks")
+				Some(("deno.jsonc", "tasks"))
 			} else {
-				("deno.json", "tasks")
+				Some(("deno.json", "tasks"))
 			}
 		}
-		_ => return None,
+		_ => None,
+	}
+}
+
+/// Read the `scripts` (JS) / `tasks` (deno) map keys from a workspace manifest.
+fn manifest_scripts(path: &Path, tool: &str) -> ManifestScripts {
+	let Some((file, key)) = manifest_location(path, tool) else {
+		return ManifestScripts::DirectInvoke;
 	};
-	let raw = std::fs::read_to_string(path.join(file)).ok()?;
-	let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
-	let map = json.get(key)?.as_object()?;
-	Some(map.keys().cloned().collect())
+	let manifest = path.join(file);
+	let raw = match std::fs::read_to_string(&manifest) {
+		Ok(raw) => raw,
+		Err(err) if manifest.exists() => {
+			return ManifestScripts::Unreadable(format!("{file} could not be read: {err}"));
+		}
+		// A manifest-driven workspace without the manifest declares no scripts,
+		// which is not the same as being free to invent one.
+		Err(_) => return ManifestScripts::NoSection,
+	};
+	// Deno reads its config as JSONC; npm does not, and neither do we for it.
+	let text = if key == "tasks" {
+		strip_json_comments(&raw)
+	} else {
+		raw
+	};
+	let json: serde_json::Value = match serde_json::from_str(&text) {
+		Ok(json) => json,
+		Err(err) => {
+			return ManifestScripts::Unreadable(format!("{file} could not be parsed: {err}"));
+		}
+	};
+	match json.get(key) {
+		None => ManifestScripts::NoSection,
+		Some(value) => match value.as_object() {
+			Some(map) => ManifestScripts::Declares(map.keys().cloned().collect()),
+			None => {
+				ManifestScripts::Unreadable(format!("{file} has a \"{key}\" that is not an object"))
+			}
+		},
+	}
+}
+
+/// Drop `//` line and `/* */` block comments from JSONC text, leaving string
+/// literals — and anything comment-shaped inside one — exactly as they were.
+fn strip_json_comments(raw: &str) -> String {
+	let mut out = String::with_capacity(raw.len());
+	let mut chars = raw.chars().peekable();
+	let mut in_string = false;
+	let mut escaped = false;
+	while let Some(c) = chars.next() {
+		if in_string {
+			out.push(c);
+			if escaped {
+				escaped = false;
+			} else if c == '\\' {
+				escaped = true;
+			} else if c == '"' {
+				in_string = false;
+			}
+			continue;
+		}
+		match c {
+			'"' => {
+				in_string = true;
+				out.push(c);
+			}
+			'/' if chars.peek() == Some(&'/') => {
+				for c in chars.by_ref() {
+					if c == '\n' {
+						out.push(c);
+						break;
+					}
+				}
+			}
+			'/' if chars.peek() == Some(&'*') => {
+				chars.next();
+				let mut prev = '\0';
+				for c in chars.by_ref() {
+					if prev == '*' && c == '/' {
+						break;
+					}
+					// Newlines are kept so a parse error still names the right line.
+					if c == '\n' {
+						out.push(c);
+					}
+					prev = c;
+				}
+			}
+			_ => out.push(c),
+		}
+	}
+	out
 }
 
 /// Insert a candidate tool with its evidence, keeping the highest-ranked
@@ -846,16 +1051,30 @@ pub fn infer_task_command(
 	persistent: bool,
 ) -> Option<String> {
 	let spec = DriverRegistry::get(&ws_driver.tool)?;
-	if let Some(names) = manifest_script_names(path, &ws_driver.tool) {
-		if names.iter().any(|n| n == task) {
-			Some(spec.invoke(task))
-		} else {
-			None
-		}
-	} else if persistent {
-		None
-	} else {
-		Some(spec.invoke(task))
+	command_from_scripts(
+		&manifest_scripts(path, &ws_driver.tool),
+		spec,
+		task,
+		persistent,
+	)
+}
+
+/// [`infer_task_command`] against a manifest already read, so a workspace reads
+/// its manifest once rather than once per task in the pipeline.
+fn command_from_scripts(
+	scripts: &ManifestScripts,
+	spec: &DriverSpec,
+	task: &str,
+	persistent: bool,
+) -> Option<String> {
+	match scripts {
+		ManifestScripts::Declares(names) => names
+			.iter()
+			.any(|name| name == task)
+			.then(|| spec.invoke(task)),
+		ManifestScripts::NoSection | ManifestScripts::Unreadable(_) => None,
+		ManifestScripts::DirectInvoke if persistent => None,
+		ManifestScripts::DirectInvoke => Some(spec.invoke(task)),
 	}
 }
 
@@ -869,6 +1088,7 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 	let mut workspaces = Vec::new();
 	let mut seen_names: HashSet<String> = HashSet::new();
 	let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+	let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 
 	for ws_cfg in &config.workspaces {
 		let path = root.join(&ws_cfg.path);
@@ -886,6 +1106,16 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 			bail!("duplicate workspace name '{}' in lattice.json", name);
 		}
 		let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+		// The directory a workspace resolves to is what bounds its tasks' inputs
+		// and outputs, and a symlink is how that lands somewhere else entirely.
+		if !canonical.starts_with(&canonical_root) {
+			bail!(
+				"workspace path '{}' resolves to {}, which is outside the repo root. A \
+                 workspace directory has to be inside the repo",
+				ws_cfg.path,
+				canonical.display()
+			);
+		}
 		if !seen_paths.insert(canonical) {
 			bail!("duplicate workspace path '{}' in lattice.json", ws_cfg.path);
 		}
@@ -914,13 +1144,15 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 			commands.insert(task.clone(), cmd.clone());
 		}
 		if ws_cfg.auto {
-			if let Some(drv) = &driver {
+			if let Some(spec) = driver.as_ref().and_then(|d| DriverRegistry::get(&d.tool)) {
+				// One read of the manifest for the whole pipeline, not one per task.
+				let scripts = manifest_scripts(&path, spec.tool);
 				for (task, task_cfg) in &config.tasks {
 					if commands.contains_key(task) {
 						continue;
 					}
 					if let Some(cmd) =
-						infer_task_command(task, drv, &path, task_cfg.is_persistent())
+						command_from_scripts(&scripts, spec, task, task_cfg.is_persistent())
 					{
 						commands.insert(task.clone(), cmd);
 					}
@@ -1092,6 +1324,290 @@ mod tests {
 		);
 		// A task not in package.json scripts is not invented.
 		assert_eq!(infer_task_command("test", &d, tmp.path(), false), None);
+	}
+
+	fn ws_config(name: &str) -> lattice_config::WorkspaceConfig {
+		lattice_config::WorkspaceConfig {
+			name: name.into(),
+			path: name.into(),
+			auto: true,
+			engines: EngineMap::new(),
+			depends_on: None,
+			scripts: Default::default(),
+		}
+	}
+
+	fn tasks(names: &[&str]) -> Vec<String> {
+		names.iter().map(|n| n.to_string()).collect()
+	}
+
+	/// A manifest-driven workspace whose manifest declares no script for a task
+	/// drops the task, rather than handing the shell an `npm run build` that npm
+	/// answers with `Missing script: "build"`.
+	#[test]
+	fn a_manifest_with_no_scripts_skips_the_task_instead_of_inventing_one() {
+		let tmp = TempDir::new().unwrap();
+		let ws_dir = tmp.path().join("types");
+		fs::create_dir_all(&ws_dir).unwrap();
+		write(&ws_dir, "package.json", r#"{ "name": "types" }"#);
+		write(&ws_dir, "package-lock.json", "{}");
+
+		let d = detect_drivers(&ws_dir, &EngineMap::new()).unwrap();
+		assert_eq!(d.tool, "npm");
+		assert_eq!(infer_task_command("build", &d, &ws_dir, false), None);
+		assert_eq!(
+			infer_task_command("totally-made-up", &d, &ws_dir, false),
+			None,
+			"no task name is a licence to invent a script"
+		);
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.tasks.insert("test".into(), Default::default());
+		config.workspaces.push(ws_config("types"));
+
+		// The workspace still loads — a types-only package is a normal thing to
+		// have — and declaring no scripts at all is a complete config, so there
+		// is nothing to tell the developer about.
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		assert_eq!(ws[0].command_for("build"), None);
+		let notes = skipped_task_notes(&ws, &tasks(&["build", "test"]));
+		assert!(notes.is_empty(), "{notes:?}");
+	}
+
+	/// The typo case: the manifest plainly means to run scripts, and the one being
+	/// asked for is not among them.
+	#[test]
+	fn a_manifest_that_declares_scripts_without_the_task_says_so_once() {
+		let tmp = TempDir::new().unwrap();
+		let ws_dir = tmp.path().join("web");
+		fs::create_dir_all(&ws_dir).unwrap();
+		write(
+			&ws_dir,
+			"package.json",
+			r#"{ "name": "web", "scripts": { "biuld": "tsc", "test": "vitest" } }"#,
+		);
+		write(&ws_dir, "pnpm-lock.yaml", "");
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.tasks.insert("test".into(), Default::default());
+		config.workspaces.push(ws_config("web"));
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
+		assert_eq!(notes.len(), 1, "{notes:?}");
+		assert_eq!(
+			notes[0],
+			"web declares scripts but no \"build\", so the task was skipped. \
+			 Did you mean \"biuld\"?"
+		);
+
+		// A task the manifest does declare is not mentioned, and neither is a
+		// pipeline task nobody asked to run.
+		assert!(skipped_task_notes(&ws, &tasks(&["test"])).is_empty());
+	}
+
+	/// Nothing close enough to be a slip: the note has to say what to do instead
+	/// of guessing.
+	#[test]
+	fn a_missing_script_with_no_near_match_names_the_fix() {
+		let tmp = TempDir::new().unwrap();
+		let ws_dir = tmp.path().join("web");
+		fs::create_dir_all(&ws_dir).unwrap();
+		write(
+			&ws_dir,
+			"package.json",
+			r#"{ "name": "web", "scripts": { "storybook": "sb dev" } }"#,
+		);
+		write(&ws_dir, "pnpm-lock.yaml", "");
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.workspaces.push(ws_config("web"));
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
+		assert_eq!(notes.len(), 1, "{notes:?}");
+		assert_eq!(
+			notes[0],
+			"web declares scripts but no \"build\", so the task was skipped. Declare it in \
+			 the workspace's manifest, or under \"scripts\" in lattice.json, if the task \
+			 should run there"
+		);
+	}
+
+	/// Several workspaces, one line. A note per workspace on every run is the
+	/// noise this exists to avoid.
+	#[test]
+	fn several_missing_scripts_aggregate_into_one_note() {
+		let tmp = TempDir::new().unwrap();
+		for (name, manifest) in [
+			("web", r#"{ "scripts": { "biuld": "tsc" } }"#),
+			("docs", r#"{ "scripts": { "start": "astro dev" } }"#),
+		] {
+			let ws_dir = tmp.path().join(name);
+			fs::create_dir_all(&ws_dir).unwrap();
+			write(&ws_dir, "package.json", manifest);
+			write(&ws_dir, "pnpm-lock.yaml", "");
+		}
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.workspaces.push(ws_config("web"));
+		config.workspaces.push(ws_config("docs"));
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
+		assert_eq!(notes.len(), 1, "{notes:?}");
+		assert_eq!(
+			notes[0],
+			"some tasks were skipped: web declares scripts but no \"build\" (did you mean \
+			 \"biuld\"?); docs declares scripts but no \"build\". Declare each in the \
+			 workspace's manifest, or under \"scripts\" in lattice.json, if the task should \
+			 run there"
+		);
+	}
+
+	/// A deno workspace calls the map `tasks`, and the note has to use the word
+	/// the developer would go looking for.
+	#[test]
+	fn a_deno_workspace_is_told_about_its_tasks_map() {
+		let tmp = TempDir::new().unwrap();
+		let ws_dir = tmp.path().join("edge");
+		fs::create_dir_all(&ws_dir).unwrap();
+		write(
+			&ws_dir,
+			"deno.json",
+			r#"{ "tasks": { "check": "deno check" } }"#,
+		);
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.workspaces.push(ws_config("edge"));
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
+		assert_eq!(notes.len(), 1, "{notes:?}");
+		assert!(
+			notes[0].starts_with("edge declares tasks but no \"build\""),
+			"{}",
+			notes[0]
+		);
+	}
+
+	/// A `scripts` override in lattice.json is a command, so the task is not
+	/// skipped and there is nothing to say.
+	#[test]
+	fn a_lattice_json_script_override_silences_the_note() {
+		let tmp = TempDir::new().unwrap();
+		let ws_dir = tmp.path().join("web");
+		fs::create_dir_all(&ws_dir).unwrap();
+		write(
+			&ws_dir,
+			"package.json",
+			r#"{ "scripts": { "test": "vitest" } }"#,
+		);
+		write(&ws_dir, "pnpm-lock.yaml", "");
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		let mut ws_cfg = ws_config("web");
+		ws_cfg
+			.scripts
+			.insert("build".to_string(), "make web".to_string());
+		config.workspaces.push(ws_cfg);
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		assert_eq!(ws[0].command_for("build"), Some("make web"));
+		assert!(skipped_task_notes(&ws, &tasks(&["build"])).is_empty());
+	}
+
+	/// A `deno.jsonc` comment used to fail the strict JSON parse, which sent every
+	/// task down the fabricating branch as `deno task <name>`.
+	#[test]
+	fn a_deno_manifest_with_comments_still_reads_its_tasks() {
+		let tmp = TempDir::new().unwrap();
+		write(
+			tmp.path(),
+			"deno.jsonc",
+			"{\n\t// what this workspace can do\n\t\"tasks\": {\n\t\t\"build\": \"deno check mod.ts\",\n\t\t\"serve\": \"deno run https://deno.land/std/http/file_server.ts\"\n\t} /* and nothing else */\n}\n",
+		);
+		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+		assert_eq!(d.tool, "deno");
+		assert_eq!(
+			infer_task_command("build", &d, tmp.path(), false).as_deref(),
+			Some("deno task build")
+		);
+		assert_eq!(
+			infer_task_command("serve", &d, tmp.path(), false).as_deref(),
+			Some("deno task serve"),
+			"a // inside a string is not a comment"
+		);
+		assert_eq!(infer_task_command("test", &d, tmp.path(), false), None);
+	}
+
+	#[test]
+	fn a_manifest_that_will_not_parse_is_reported_not_worked_around() {
+		let tmp = TempDir::new().unwrap();
+		let ws_dir = tmp.path().join("web");
+		fs::create_dir_all(&ws_dir).unwrap();
+		write(&ws_dir, "package.json", r#"{ "scripts": { "build": }"#);
+		write(&ws_dir, "pnpm-lock.yaml", "");
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.workspaces.push(ws_config("web"));
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		assert_eq!(ws[0].command_for("build"), None);
+		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
+		assert_eq!(notes.len(), 1);
+		assert!(
+			notes[0].contains("web: package.json could not be parsed"),
+			"{}",
+			notes[0]
+		);
+	}
+
+	/// A workspace directory bounds what its tasks read and write, and a symlink
+	/// is how that lands somewhere else entirely. Unix only: creating a directory
+	/// symlink on Windows needs a privilege a test run cannot count on.
+	#[cfg(unix)]
+	#[test]
+	fn a_workspace_symlinked_out_of_the_repo_is_refused() {
+		let outside = TempDir::new().unwrap();
+		let elsewhere = outside.path().join("elsewhere");
+		fs::create_dir_all(&elsewhere).unwrap();
+		write(&elsewhere, "Cargo.lock", "");
+
+		let tmp = TempDir::new().unwrap();
+		std::os::unix::fs::symlink(&elsewhere, tmp.path().join("app")).unwrap();
+
+		let mut config = LatticeConfig::default();
+		config.workspaces.push(ws_config("app"));
+
+		let err = discover_workspaces(tmp.path(), &config).unwrap_err();
+		let msg = format!("{err:#}");
+		assert!(msg.contains("outside the repo root"), "{msg}");
+	}
+
+	/// A symlink that stays inside the repo is still a workspace.
+	#[cfg(unix)]
+	#[test]
+	fn a_workspace_symlinked_within_the_repo_still_resolves() {
+		let tmp = TempDir::new().unwrap();
+		let real = tmp.path().join("crates").join("core");
+		fs::create_dir_all(&real).unwrap();
+		write(&real, "Cargo.lock", "");
+		std::os::unix::fs::symlink(&real, tmp.path().join("app")).unwrap();
+
+		let mut config = LatticeConfig::default();
+		config.tasks.insert("build".into(), Default::default());
+		config.workspaces.push(ws_config("app"));
+
+		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		assert_eq!(ws[0].command_for("build"), Some("cargo build"));
 	}
 
 	#[test]

@@ -90,7 +90,10 @@ const ConfigView = () => {
 						className="btn btn-primary btn-sm ms-auto px-3 py-2 d-inline-flex align-items-center gap-2"
 						disabled={busy || !dirty || problems.length > 0}
 						onClick={() =>
-							void saveConfig(text).then(() => {
+							void saveConfig(text).then((saved) => {
+								// A save that failed resolves too: the error goes to the
+								// banner rather than to this promise.
+								if (!saved) return;
 								setDirty(false);
 								setLive([]);
 							})

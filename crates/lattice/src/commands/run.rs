@@ -81,6 +81,11 @@ impl RunArgs {
 		let request = self.request();
 
 		if self.dry_run {
+			// A dry run has no runner to report through, so it gets a reporter of
+			// its own for the one thing there is to say before the plan.
+			let reporter = make_reporter(mode, effective_loq);
+			project.report_skipped_tasks(&self.tasks, reporter.as_ref());
+			reporter.finish();
 			return self.print_plan(&project, &request);
 		}
 
@@ -113,13 +118,11 @@ impl RunArgs {
 			request: &request,
 			reporter: reporter.as_ref(),
 			lattice_version: BIN_VERSION,
-			// A fresh ctrl-c future per phase: the runner consumes it to tear down
-			// still-running persistent tasks after its graph drains.
-			shutdown: Some(Box::new(|| {
-				Box::pin(async {
-					let _ = tokio::signal::ctrl_c().await;
-				})
-			})),
+			// A fresh interrupt future per phase: the runner consumes it to tear down
+			// still-running persistent tasks after its graph drains. It has to watch
+			// the same signals the runner does — a bare ctrl_c left a CI job
+			// cancelled with SIGTERM hanging until the runner force-killed it.
+			shutdown: Some(Box::new(|| Box::pin(lattice_runner::interrupt_signal()))),
 			// The terminal's own signal is the cancel here, and the runner already
 			// watches for it.
 			cancel: None,

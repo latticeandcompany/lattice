@@ -278,3 +278,117 @@ test('a placeholder is replaced once a run gives the task a real slot', () => {
 	assert.notEqual(seeded, placeholder);
 	assert.equal(seeded.state, 'queued');
 });
+
+test('a task changing state moves the revision a graph watches', () => {
+	const s = store();
+	s.begin(graph);
+	let notifications = 0;
+	s.subscribeViews(() => (notifications += 1));
+	const before = s.viewsRev;
+
+	s.ingest(event({ kind: 'event', event: { type: 'started', workspace: 'api', task: 'build' } }));
+	assert.notEqual(s.viewsRev, before, 'the graph would keep drawing its cached picture');
+	assert.equal(notifications, 1);
+});
+
+// The graph reads every node at once, so it cannot be on the per-line path: a
+// compiler emitting ten thousand lines would be ten thousand relayouts.
+test('output alone leaves the graph revision where it was', () => {
+	const s = store();
+	s.begin(graph);
+	s.ingest(
+		event({
+			kind: 'outputBatch',
+			lines: [{ workspace: 'api', task: 'build', stderr: false, line: 'first' }],
+		}),
+	);
+
+	const after = s.viewsRev;
+	let notifications = 0;
+	s.subscribeViews(() => (notifications += 1));
+	s.ingest(
+		event({
+			kind: 'outputBatch',
+			lines: [
+				{ workspace: 'api', task: 'build', stderr: false, line: 'second' },
+				{ workspace: 'api', task: 'build', stderr: false, line: 'third' },
+			],
+		}),
+	);
+	assert.equal(s.viewsRev, after);
+	assert.equal(notifications, 0);
+});
+
+test('a run ending moves the revision too, so the final colours land', () => {
+	const s = store();
+	s.begin(graph);
+	const before = s.viewsRev;
+	s.settle({ status: 'completed', result: { total: 2, cached: 2, failed: 0, elapsedMs: 12 } });
+	assert.notEqual(s.viewsRev, before);
+});
+
+// Closing or switching a project discards the run view while the run is still
+// unwinding, and its outcome arrives after that.
+test('a discarded run cannot settle over what replaced it', () => {
+	const s = store();
+	s.begin(graph);
+	const epoch = s.epoch;
+
+	s.reset();
+	s.settle({ status: 'interrupted', result: { total: 2, cached: 0, failed: 0, elapsedMs: 90 } }, epoch);
+
+	assert.equal(s.runView().phase, 'idle');
+	assert.equal(s.runView().outcome, null);
+});
+
+test('the run that is actually showing still settles', () => {
+	const s = store();
+	s.begin(graph);
+	const epoch = s.epoch;
+	s.settle({ status: 'completed', result: { total: 2, cached: 0, failed: 0, elapsedMs: 90 } }, epoch);
+	assert.equal(s.runView().phase, 'done');
+});
+
+test('adopting a run a reload lost shows it as running', () => {
+	const s = store();
+	assert.equal(s.runView().phase, 'idle');
+	s.adopt();
+	assert.equal(s.runView().phase, 'running', 'without this there is no Stop button');
+	assert.ok(s.adopted);
+});
+
+test('an adopted run that ends stops claiming to run but keeps what it drew', () => {
+	const s = store();
+	s.adopt();
+	s.seed('api', 'build', [{ stderr: false, line: 'compiling' }]);
+	s.release();
+
+	assert.equal(s.runView().phase, 'idle');
+	assert.ok(!s.adopted);
+	assert.ok(s.taskView('api:build').hasOutput);
+	assert.equal(s.linesSince('api:build', 0).lines.length, 1);
+});
+
+test('a seeded pane is not seeded twice', () => {
+	const s = store();
+	s.adopt();
+	const tail = [
+		{ stderr: false, line: 'one' },
+		{ stderr: true, line: 'two' },
+	];
+	s.seed('api', 'build', tail);
+	s.seed('api', 'build', tail);
+
+	assert.deepEqual(
+		s.linesSince('api:build', 0).lines.map((l) => l.line),
+		['one', 'two'],
+	);
+});
+
+test('starting a run of our own drops the adopted one', () => {
+	const s = store();
+	s.adopt();
+	s.begin(graph);
+	assert.ok(!s.adopted);
+	assert.equal(s.runView().phase, 'running');
+});

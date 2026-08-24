@@ -10,10 +10,10 @@
 // once per animation frame. Combined with the backend's own batching that is two
 // levels of backpressure, which is what a compiler's output volume needs.
 
-import { LineBuffer } from './lineBuffer.ts';
+import { LineBuffer, type Since } from './lineBuffer.ts';
 import { describeMiss } from './taskStatus.ts';
 import type { TaskSnapshot, TaskState } from './taskStatus.ts';
-import type { GraphDump, RunMessage, RunOutcome, RunResult } from './types.ts';
+import type { GraphDump, OutputLine, RunMessage, RunOutcome, RunResult } from './types.ts';
 
 export type RunPhase = 'idle' | 'running' | 'stopping' | 'done';
 
@@ -60,9 +60,14 @@ class RunStore {
 	private idle = new Map<string, TaskView>();
 	private run: RunView = IDLE;
 
+	private viewsRevision = 0;
+	private era = 0;
+	private reconnected = false;
+
 	private viewSubs = new Map<string, Set<() => void>>();
 	private outputSubs = new Map<string, Set<() => void>>();
 	private runSubs = new Set<() => void>();
+	private viewsSubs = new Set<() => void>();
 
 	private pending: RunMessage[] = [];
 	private scheduled = false;
@@ -109,10 +114,34 @@ class RunStore {
 		return this.slots.get(taskKey)?.outputRev ?? 0;
 	}
 
-	linesSince(taskKey: string, mark: number) {
+	linesSince(taskKey: string, mark: number): Since {
 		const slot = this.slots.get(taskKey);
-		if (!slot) return { lines: [], dropped: 0, produced: 0 };
+		if (!slot) return { lines: [], dropped: 0, held: 0, produced: 0 };
 		return slot.buffer.since(mark);
+	}
+
+	/**
+	 * Bumped whenever any task's view changed, so a whole-graph reader can redraw
+	 * without subscribing per node.
+	 *
+	 * Output alone does not move it: only the first line of a task is a view change,
+	 * which is what keeps a graph off the per-line path.
+	 */
+	get viewsRev(): number {
+		return this.viewsRevision;
+	}
+
+	/**
+	 * Which run the store is showing. A run that ends after this moved on cannot
+	 * write over what replaced it.
+	 */
+	get epoch(): number {
+		return this.era;
+	}
+
+	/** True while showing a run this webview did not start. */
+	get adopted(): boolean {
+		return this.reconnected;
 	}
 
 	// ---- subscribing ----
@@ -128,6 +157,12 @@ class RunStore {
 	subscribeRun(listener: () => void): () => void {
 		this.runSubs.add(listener);
 		return () => this.runSubs.delete(listener);
+	}
+
+	/** For a reader of every task at once, such as the graph. */
+	subscribeViews(listener: () => void): () => void {
+		this.viewsSubs.add(listener);
+		return () => this.viewsSubs.delete(listener);
 	}
 
 	private add(map: Map<string, Set<() => void>>, taskKey: string, listener: () => void) {
@@ -146,6 +181,8 @@ class RunStore {
 	begin(graph: GraphDump | null): void {
 		this.slots = new Map();
 		this.idle = new Map();
+		this.era += 1;
+		this.reconnected = false;
 		if (graph) {
 			for (const node of graph.nodes) {
 				this.slots.set(node.id, {
@@ -170,7 +207,50 @@ class RunStore {
 		this.notifyRun();
 	}
 
-	settle(outcome: RunOutcome): void {
+	/**
+	 * Show a run this webview did not start.
+	 *
+	 * A reload loses the channel but not the run: without this the store reads idle,
+	 * so nothing offers a Stop button and the next Run is refused by the backend.
+	 */
+	adopt(): void {
+		if (this.reconnected) return;
+		this.era += 1;
+		this.reconnected = true;
+		this.run = { ...IDLE, phase: 'running' };
+		this.notifyAll();
+	}
+
+	/**
+	 * An adopted run is over. Its summary went to the window that started it, so the
+	 * view keeps what it managed to draw and only stops claiming to be running.
+	 */
+	release(): void {
+		if (!this.reconnected) return;
+		this.reconnected = false;
+		this.run = { ...this.run, phase: 'idle' };
+		this.notifyRun();
+	}
+
+	/**
+	 * Fill a pane from the tail the backend kept, for a run this window adopted.
+	 *
+	 * Ignored once the task has lines of its own, so a repeated reconnect cannot
+	 * draw the same log twice.
+	 */
+	seed(workspace: string, task: string, lines: readonly OutputLine[]): void {
+		if (lines.length === 0) return;
+		const taskKey = key(workspace, task);
+		if (this.slot(taskKey).buffer.produced > 0) return;
+		for (const line of lines) this.append(taskKey, line.stderr, line.line);
+		this.viewsRevision += 1;
+		this.notify(this.viewSubs, taskKey);
+		this.notify(this.outputSubs, taskKey);
+		this.notifyViews();
+	}
+
+	settle(outcome: RunOutcome, epoch: number = this.era): void {
+		if (epoch !== this.era) return;
 		this.run = {
 			...this.run,
 			phase: 'done',
@@ -183,12 +263,16 @@ class RunStore {
 				this.patch(taskKey, { state: 'idle' });
 			}
 		}
+		this.viewsRevision += 1;
 		this.notifyRun();
+		this.notifyViews();
 	}
 
 	reset(): void {
 		this.slots = new Map();
 		this.idle = new Map();
+		this.era += 1;
+		this.reconnected = false;
 		this.run = IDLE;
 		this.notifyAll();
 	}
@@ -295,6 +379,10 @@ class RunStore {
 
 		for (const taskKey of views) this.notify(this.viewSubs, taskKey);
 		for (const taskKey of outputs) this.notify(this.outputSubs, taskKey);
+		if (views.size > 0) {
+			this.viewsRevision += 1;
+			this.notifyViews();
+		}
 		if (runTouched) this.notifyRun();
 	}
 
@@ -352,9 +440,15 @@ class RunStore {
 		for (const listener of this.runSubs) listener();
 	}
 
+	private notifyViews(): void {
+		for (const listener of this.viewsSubs) listener();
+	}
+
 	private notifyAll(): void {
+		this.viewsRevision += 1;
 		for (const [taskKey] of this.viewSubs) this.notify(this.viewSubs, taskKey);
 		for (const [taskKey] of this.outputSubs) this.notify(this.outputSubs, taskKey);
+		this.notifyViews();
 		this.notifyRun();
 	}
 }

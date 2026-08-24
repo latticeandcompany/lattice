@@ -8,6 +8,13 @@ import type { OutputLine } from './types.ts';
 
 export const DEFAULT_CAPACITY = 2000;
 
+export interface Since {
+	lines: readonly OutputLine[];
+	dropped: number;
+	held: number;
+	produced: number;
+}
+
 export class LineBuffer {
 	private lines: OutputLine[] = [];
 	private droppedCount = 0;
@@ -50,16 +57,23 @@ export class LineBuffer {
 	 *
 	 * `mark` counts lines *produced*, not lines held, so a caller that has already
 	 * drawn N lines stays correct across a wrap: it learns it needs to discard
-	 * `dropped` from the front and append `lines` to the back.
+	 * `dropped` from the front and append `lines` to the back. `held` is what the
+	 * caller's own view should end up holding, and `produced` is its next mark.
 	 */
-	since(mark: number): { lines: readonly OutputLine[]; dropped: number; produced: number } {
+	since(mark: number): Since {
 		const firstHeld = this.droppedCount;
 		if (mark <= firstHeld) {
-			return { lines: this.lines, dropped: Math.max(0, mark - 0), produced: this.produced };
+			return {
+				lines: this.lines,
+				dropped: Math.max(0, mark - 0),
+				held: this.lines.length,
+				produced: this.produced,
+			};
 		}
 		return {
 			lines: this.lines.slice(mark - firstHeld),
 			dropped: 0,
+			held: this.lines.length,
 			produced: this.produced,
 		};
 	}

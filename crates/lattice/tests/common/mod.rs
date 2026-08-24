@@ -52,6 +52,18 @@ impl Fixture {
 		std::fs::write(&path, contents).expect("write file");
 	}
 
+	/// Age a file past the grace period the cache sweep gives a leftover, so a
+	/// test can assert that debris is reclaimed without waiting an hour for it.
+	pub fn backdate(&self, rel: &str) {
+		let then = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 60 + 60);
+		let file = std::fs::OpenOptions::new()
+			.write(true)
+			.open(self.join(rel))
+			.expect("open to backdate");
+		file.set_times(std::fs::FileTimes::new().set_modified(then))
+			.expect("backdate");
+	}
+
 	pub fn config(&self, json: &str) {
 		self.write("lattice.json", json);
 	}
@@ -112,6 +124,25 @@ impl Fixture {
 		std::fs::remove_file(&dest).ok();
 		std::fs::copy(&source, &dest).expect("copy the stub binary");
 		wait_until_executable(&dest);
+	}
+
+	/// Install `bin/<name>` as an executable whose body is `command`, for a test
+	/// that needs the tool it puts on `PATH` to do something no compiled stub
+	/// does.
+	///
+	/// Unix only. The `cmd` equivalent would have to be hand-written in `cmd`
+	/// grammar, which is what `lattice_testkit` exists to avoid — pass it a
+	/// command from there rather than writing a script by hand.
+	#[cfg(unix)]
+	pub fn install_script_bin(&self, name: &str, command: &str) {
+		use std::os::unix::fs::PermissionsExt;
+
+		let bin_dir = self.join("bin");
+		std::fs::create_dir_all(&bin_dir).expect("mkdir bin");
+		let dest = bin_dir.join(name);
+		std::fs::write(&dest, format!("#!/bin/sh\n{command}\n")).expect("write the script");
+		std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+			.expect("make the script executable");
 	}
 
 	/// A `PATH` with the fixture's `bin/` in front of the host's.

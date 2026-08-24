@@ -57,3 +57,22 @@ export const CACHE_MODES: CacheModeOption[] = [
 
 export const cacheModeHint = (mode: CacheMode): string =>
 	CACHE_MODES.find((option) => option.mode === mode)?.hint ?? '';
+
+/** What a project starts with picked: build if it has one, otherwise its first task. */
+export const defaultSelection = (tasks: readonly string[]): string[] =>
+	tasks.includes('build') ? ['build'] : tasks.slice(0, 1);
+
+/**
+ * The selection to actually act on.
+ *
+ * The picked tasks belong to whichever project was open when they were picked, and
+ * the views that hold them are not remounted across a switch. Anything the project
+ * now open does not define would be sent to a run as an unknown task.
+ */
+export const effectiveSelection = (
+	selected: readonly string[],
+	tasks: readonly string[],
+): string[] => {
+	const kept = selected.filter((task) => tasks.includes(task));
+	return kept.length > 0 ? kept : defaultSelection(tasks);
+};

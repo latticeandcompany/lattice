@@ -50,5 +50,14 @@ export const applyMode = async (mode: Mode): Promise<Resolved> => {
 	return resolved;
 };
 
+/**
+ * Apply the stored choice at launch.
+ *
+ * `index.html` resolves the theme inline before the first paint, but it cannot reach
+ * Tauri from there, so the native frame — traffic lights, scrollbars, menus — is
+ * still on whatever the OS said until this runs.
+ */
+export const applyStoredMode = (): Promise<Resolved> => applyMode(storedMode());
+
 export const currentResolved = (): Resolved =>
 	document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light';
