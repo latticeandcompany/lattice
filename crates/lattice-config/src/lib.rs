@@ -158,6 +158,50 @@ fn default_true() -> bool {
 	true
 }
 
+/// The marker [`parse_error`] recognizes to rewrite a duplicate-key failure into
+/// the same shape as the unknown-key message. `serde_json` has no duplicate-key
+/// option and `IndexMap`'s own deserializer takes the last value, so the check
+/// has to happen in a visitor here, and the visitor is too deep to know the path
+/// or the position.
+const DUPLICATE_KEY: &str = "duplicate key `";
+
+/// Deserialize a string-keyed map, rejecting a key that appears twice.
+///
+/// The last value would otherwise win in silence, and for a task or an engine
+/// that changes what gets hashed, cached and run with nothing said about it.
+fn unique_map<'de, D, V>(deserializer: D) -> std::result::Result<IndexMap<String, V>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+	V: Deserialize<'de>,
+{
+	struct UniqueMap<V>(std::marker::PhantomData<V>);
+
+	impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for UniqueMap<V> {
+		type Value = IndexMap<String, V>;
+
+		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			f.write_str("an object whose keys are each written once")
+		}
+
+		fn visit_map<A: serde::de::MapAccess<'de>>(
+			self,
+			mut map: A,
+		) -> std::result::Result<Self::Value, A::Error> {
+			let mut entries = IndexMap::new();
+			while let Some(key) = map.next_key::<String>()? {
+				let value = map.next_value()?;
+				if entries.contains_key(&key) {
+					return Err(serde::de::Error::custom(format!("{DUPLICATE_KEY}{key}`")));
+				}
+				entries.insert(key, value);
+			}
+			Ok(entries)
+		}
+	}
+
+	deserializer.deserialize_map(UniqueMap(std::marker::PhantomData))
+}
+
 /// Name-keyed map of engine constraints. Declaration order is preserved.
 pub type EngineMap = IndexMap<String, EngineSpec>;
 
@@ -263,13 +307,13 @@ pub struct WorkspaceConfig {
 	#[serde(default = "default_true")]
 	pub auto: bool,
 	/// Per-workspace toolchain constraints; overrides/pins the inferred engine.
-	#[serde(default)]
+	#[serde(default, deserialize_with = "unique_map")]
 	pub engines: EngineMap,
 	/// Other workspaces (by name) this one depends on.
 	#[serde(default)]
 	pub depends_on: Option<Vec<String>>,
 	/// Explicit script-name -> command overrides.
-	#[serde(default)]
+	#[serde(default, deserialize_with = "unique_map")]
 	pub scripts: IndexMap<String, String>,
 }
 
@@ -315,6 +359,12 @@ impl PipelineTask {
 pub struct Duration(pub u64);
 
 impl Duration {
+	/// The longest timeout Lattice accepts. Past this the value stops behaving
+	/// like a timeout at all: the seconds no longer fit the arithmetic the runner
+	/// does on them, and an overflowed deadline is never reached, so an oversized
+	/// timeout would silently mean no timeout.
+	pub const MAX_SECS: u64 = 365 * 24 * 60 * 60;
+
 	pub fn as_secs(&self) -> u64 {
 		self.0
 	}
@@ -357,6 +407,12 @@ impl Duration {
 
 		if seconds <= 0.0 {
 			bail!("duration '{s}' must be greater than zero");
+		}
+		if seconds > Duration::MAX_SECS as f64 {
+			bail!(
+				"duration '{s}' is longer than the maximum of 365 days. Use a shorter \
+				 duration, or leave `timeout` out to let the task run without a limit"
+			);
 		}
 		Ok(Duration(seconds.ceil() as u64))
 	}
@@ -416,10 +472,23 @@ impl<'de> Deserialize<'de> for Duration {
 						"duration must be greater than zero",
 					));
 				}
+				if v > Duration::MAX_SECS {
+					return Err(serde::de::Error::custom(format!(
+						"duration of {v} seconds is longer than the maximum of 365 days. Use a \
+						 shorter duration, or leave `timeout` out to let the task run without a \
+						 limit"
+					)));
+				}
 				Ok(Duration(v))
 			}
 
 			fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<Duration, E> {
+				if v.fract() != 0.0 {
+					return Err(serde::de::Error::custom(format!(
+						"duration {v} is not a whole number of seconds. Write a whole number of \
+						 seconds, or a duration string such as \"90s\", \"1500ms\", or \"10m\""
+					)));
+				}
 				Duration::parse(&v.to_string()).map_err(serde::de::Error::custom)
 			}
 		}
@@ -560,7 +629,7 @@ pub struct LatticeConfig {
 	pub lattice_version: Option<String>,
 	#[serde(default)]
 	pub workspaces: Vec<WorkspaceConfig>,
-	#[serde(default)]
+	#[serde(default, deserialize_with = "unique_map")]
 	pub engines: EngineMap,
 	/// Repo-root-relative globs whose contents feed every task's cache key.
 	///
@@ -573,7 +642,7 @@ pub struct LatticeConfig {
 	/// Environment variable names whose values feed every task's cache key.
 	#[serde(default)]
 	pub global_env: Vec<String>,
-	#[serde(default)]
+	#[serde(default, deserialize_with = "unique_map")]
 	pub tasks: IndexMap<String, PipelineTask>,
 	#[serde(default)]
 	pub settings: Settings,
@@ -582,12 +651,25 @@ pub struct LatticeConfig {
 impl LatticeConfig {
 	/// Any engine (root or per-workspace) declared in string form whose key is
 	/// not a well-known engine is an error. Workspace names must be unique,
-	/// workspace paths must be non-empty and stay inside the repo, and every
-	/// `dependsOn` must name something that exists.
+	/// workspace paths and `settings.cacheDir` must be non-empty and stay inside
+	/// the repo, an engine `bin` must stay inside its toolchain install, and every
+	/// `dependsOn` and `scripts` key must name something that exists.
 	pub fn validate(&self) -> Result<()> {
 		check_string_engines(&self.engines, "root")?;
+		check_engine_bins(&self.engines, "root")?;
 		for ws in &self.workspaces {
-			check_string_engines(&ws.engines, &format!("workspace '{}'", ws.name))?;
+			let scope = format!("workspace '{}'", ws.name);
+			check_string_engines(&ws.engines, &scope)?;
+			check_engine_bins(&ws.engines, &scope)?;
+		}
+		if let Some(cache_dir) = &self.settings.cache_dir {
+			if cache_dir.trim().is_empty() {
+				bail!(
+					"`settings.cacheDir` is empty. Name a directory, like \".lattice/cache\", \
+					 or leave the key out to use that default"
+				);
+			}
+			check_cache_dir(cache_dir)?;
 		}
 
 		// Workspace names unique.
@@ -607,6 +689,7 @@ impl LatticeConfig {
 
 		self.check_workspace_deps()?;
 		self.check_task_deps()?;
+		self.check_workspace_scripts()?;
 
 		Ok(())
 	}
@@ -667,40 +750,172 @@ impl LatticeConfig {
 		}
 		Ok(())
 	}
+
+	/// A `scripts` key only ever becomes a command for the root task of the same
+	/// name, so one that matches no declared task never runs. The workspace then
+	/// falls back to whatever command Lattice infers, and the override the user
+	/// wrote is dropped in silence.
+	fn check_workspace_scripts(&self) -> Result<()> {
+		let names: Vec<String> = self.tasks.keys().cloned().collect();
+		for ws in &self.workspaces {
+			for script in ws.scripts.keys() {
+				if names.iter().any(|n| n == script) {
+					continue;
+				}
+				let mut message = format!(
+					"workspace '{}' declares a script '{script}', but '{script}' is not defined \
+					 in `tasks`, so nothing would ever run it",
+					ws.name
+				);
+				if let Some(near) = closest_field(script, &names) {
+					message.push_str(&format!("\nDid you mean `{near}`?"));
+				}
+				if names.is_empty() {
+					message.push_str(&format!(
+						"\nAdd '{script}' to `tasks` in lattice.json, or remove the script"
+					));
+				} else {
+					message.push_str(&format!("\nDefined tasks: {}", names.join(", ")));
+				}
+				bail!(message);
+			}
+		}
+		Ok(())
+	}
 }
 
-/// A workspace path has to stay inside the repo. Everything downstream — the
-/// input walk, the output globs, the clear-before-restore a cache hit does —
-/// treats it as the boundary of what a task may touch.
-fn check_contained_path(name: &str, path: &str) -> Result<()> {
-	// Judged as text rather than through `Path`, because `Path` answers for the
-	// platform it is running on and a `lattice.json` is committed and shared. On
-	// unix `C:\Windows` is one ordinary filename and `\etc` is a relative one; on
-	// Windows both resolve to a drive root and leave the repo. A path that escapes
-	// anywhere has to be rejected everywhere, or the same config means two things.
+/// Why a declared path does not stay under the directory it is joined to.
+enum Escape {
+	NotRelative,
+	LeavesRoot,
+	/// Leading or trailing whitespace, which Windows strips from a path component
+	/// and unix keeps, so the same string names two different directories.
+	AmbiguousWhitespace,
+}
+
+/// How many directories deep `path` lands below the directory it is joined to,
+/// or the reason it does not land below it at all. `Ok(0)` is the joined-to
+/// directory itself.
+///
+/// Judged as text first, because `Path` answers for the platform it is running on
+/// and a `lattice.json` is committed and shared. On unix `C:\Windows` is one
+/// ordinary filename and `\etc` is a relative one; on Windows both resolve to a
+/// drive root and leave the repo. A path that escapes anywhere has to be rejected
+/// everywhere, or the same config means two things. `Path` is then consulted as
+/// well, so a spelling the running platform treats as absolute is caught even if
+/// the text rules do not enumerate it.
+fn contained_depth(path: &str) -> std::result::Result<i32, Escape> {
 	let bytes = path.as_bytes();
 	let rooted = path.starts_with('/') || path.starts_with('\\');
 	let drive_prefixed = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
-	if rooted || drive_prefixed {
-		bail!(
-			"workspace '{name}' has a path '{path}' that is not relative to the repo \
-			 root. Write every workspace path relative to the repo root"
-		);
+	let platform_rooted = Path::new(path).components().any(|c| {
+		matches!(
+			c,
+			std::path::Component::RootDir | std::path::Component::Prefix(_)
+		)
+	});
+	if rooted || drive_prefixed || platform_rooted {
+		return Err(Escape::NotRelative);
 	}
 
 	// Both separators, for the same reason.
 	let mut depth: i32 = 0;
 	for part in path.split(['/', '\\']) {
+		if part.trim() != part {
+			return Err(Escape::AmbiguousWhitespace);
+		}
 		match part {
 			"" | "." => {}
 			".." => depth -= 1,
 			_ => depth += 1,
 		}
 		if depth < 0 {
+			return Err(Escape::LeavesRoot);
+		}
+	}
+	Ok(depth)
+}
+
+/// A workspace path has to stay inside the repo. Everything downstream — the
+/// input walk, the output globs, the clear-before-restore a cache hit does —
+/// treats it as the boundary of what a task may touch.
+fn check_contained_path(name: &str, path: &str) -> Result<()> {
+	match contained_depth(path) {
+		Ok(_) => Ok(()),
+		Err(Escape::NotRelative) => bail!(
+			"workspace '{name}' has a path '{path}' that is not relative to the repo \
+			 root. Write every workspace path relative to the repo root"
+		),
+		Err(Escape::LeavesRoot) => bail!(
+			"workspace '{name}' has a path '{path}' that points outside the repo root. \
+			 Every workspace path must stay inside the repo"
+		),
+		Err(Escape::AmbiguousWhitespace) => bail!(
+			"workspace '{name}' has a path '{path}' with leading or trailing whitespace \
+			 around a directory name. Windows drops that whitespace and unix keeps it, so \
+			 the path would name a different directory on each. Remove it"
+		),
+	}
+}
+
+/// `settings.cacheDir` is joined to the repo root and then owned outright:
+/// `lattice prune` removes cache archives and partial writes found there. It has
+/// to stay inside the repo, and it cannot be the repo root itself.
+fn check_cache_dir(path: &str) -> Result<()> {
+	match contained_depth(path) {
+		Ok(0) => bail!(
+			"`settings.cacheDir` is '{path}', which is the repo root itself. Point it at a \
+			 directory of its own, like \".lattice/cache\" — `lattice prune` deletes cache \
+			 archives and partial writes in whatever directory it names"
+		),
+		Ok(_) => Ok(()),
+		Err(Escape::NotRelative) => bail!(
+			"`settings.cacheDir` is '{path}', which is not relative to the repo root. Write \
+			 it relative to the repo root, like \".lattice/cache\""
+		),
+		Err(Escape::LeavesRoot) => bail!(
+			"`settings.cacheDir` is '{path}', which points outside the repo root. The cache \
+			 directory must stay inside the repo"
+		),
+		Err(Escape::AmbiguousWhitespace) => bail!(
+			"`settings.cacheDir` is '{path}', which has leading or trailing whitespace around \
+			 a directory name. Windows drops that whitespace and unix keeps it, so the path \
+			 would name a different directory on each. Remove it"
+		),
+	}
+}
+
+/// An engine's `bin` is joined to the toolchain install directory and every
+/// resolved bin dir is prepended to a task's PATH. An absolute `bin` would
+/// replace the install path outright and put a directory Lattice never
+/// provisioned in front of every command.
+fn check_engine_bins(engines: &EngineMap, scope: &str) -> Result<()> {
+	for (name, spec) in engines {
+		let Some(bin) = spec.bin() else { continue };
+		if bin.trim().is_empty() {
 			bail!(
-				"workspace '{name}' has a path '{path}' that points outside the repo root. \
-				 Every workspace path must stay inside the repo"
+				"engine '{name}' in {scope} has an empty `bin`. Leave `bin` out to use the \
+				 default of \"bin\", or name a directory inside the toolchain install"
 			);
+		}
+		match contained_depth(bin) {
+			Ok(_) => {}
+			Err(Escape::NotRelative) => bail!(
+				"engine '{name}' in {scope} has a `bin` of '{bin}', which is not relative to \
+				 the toolchain install. Write `bin` as a path inside the toolchain \
+				 directory, like \"bin\""
+			),
+			Err(Escape::LeavesRoot) => bail!(
+				"engine '{name}' in {scope} has a `bin` of '{bin}', which points outside the \
+				 toolchain install. Write `bin` as a path inside the toolchain directory, \
+				 like \"bin\""
+			),
+			Err(Escape::AmbiguousWhitespace) => bail!(
+				"engine '{name}' in {scope} has a `bin` of '{bin}', which has leading or \
+				 trailing whitespace around a directory name. Windows drops that whitespace \
+				 and unix keeps it, so the path would name a different directory on each. \
+				 Remove it"
+			),
 		}
 	}
 	Ok(())
@@ -785,6 +1000,9 @@ impl UnknownField {
 /// matched against the fields that belong there; anything else keeps serde's
 /// own message and position.
 fn parse_error(error: serde_path_to_error::Error<serde_json::Error>) -> anyhow::Error {
+	if let Some(key) = duplicate_key(&error.inner().to_string()) {
+		return duplicate_key_error(&error, &key);
+	}
 	let Some(unknown) = UnknownField::parse(&error.inner().to_string()) else {
 		return anyhow::Error::new(error.into_inner())
 			.context(format!("failed to parse {CONFIG_FILE}"));
@@ -812,6 +1030,30 @@ fn parse_error(error: serde_path_to_error::Error<serde_json::Error>) -> anyhow::
 		));
 	}
 	anyhow!(message)
+}
+
+/// The duplicated key out of a [`unique_map`] failure, whatever `serde_json`
+/// appended to the message.
+fn duplicate_key(message: &str) -> Option<String> {
+	let rest = message.strip_prefix(DUPLICATE_KEY)?;
+	let (key, _) = rest.split_once('`')?;
+	Some(key.to_string())
+}
+
+fn duplicate_key_error(
+	error: &serde_path_to_error::Error<serde_json::Error>,
+	key: &str,
+) -> anyhow::Error {
+	let inner = error.inner();
+	let position = format!("line {}, column {}", inner.line(), inner.column());
+	let where_it_is = match container_path(error.path(), key) {
+		Some(path) => format!("in {path}"),
+		None => format!("at the top level of {CONFIG_FILE}"),
+	};
+	anyhow!(
+		"duplicate key `{key}` {where_it_is} ({CONFIG_FILE} {position})\nKeep one of them: the \
+		 second replaces the first, so only the last would take effect"
+	)
 }
 
 /// The container `field` was found in, written the way it reads in the file:
@@ -843,7 +1085,9 @@ fn container_path(path: &serde_path_to_error::Path, field: &str) -> Option<Strin
 
 /// The accepted field closest to `field`, when one is close enough to be a
 /// plausible typo rather than a coincidence.
-fn closest_field<'a>(field: &str, expected: &'a [String]) -> Option<&'a str> {
+/// Shared with `lattice-workspace`, which runs the same check over declared
+/// task names, so a near miss reads the same wherever it is caught.
+pub fn closest_field<'a>(field: &str, expected: &'a [String]) -> Option<&'a str> {
 	// One slip is worth pointing at for any key; two only once the key is long
 	// enough that two edits still leave most of it intact.
 	let budget = if field.chars().count() <= 4 { 1 } else { 2 };
@@ -920,6 +1164,15 @@ mod tests {
 		parse_config(content)
 			.expect_err("this config must be rejected")
 			.to_string()
+	}
+
+	/// The same with the cause chain, for a message serde raises under this
+	/// crate's parse context rather than one the crate rewrites outright.
+	fn parse_failure_chain(content: &str) -> String {
+		format!(
+			"{:#}",
+			parse_config(content).expect_err("this config must be rejected")
+		)
 	}
 
 	#[test]
@@ -1803,6 +2056,347 @@ mod tests {
 		assert!(
 			compiled_schema().is_valid(&full),
 			"the same config must validate against the bundled schema"
+		);
+	}
+
+	/// A duplicate key inside `tasks`, `engines` or `scripts` is last-wins in
+	/// `serde_json`, so the first declaration disappears and the task quietly
+	/// hashes and caches something else.
+	#[test]
+	fn a_duplicate_task_key_is_rejected() {
+		let message =
+			parse_failure(r#"{ "tasks": { "build": { "outputs": ["dist/**"] }, "build": {} } }"#);
+		assert!(
+			message.contains("duplicate key `build` in tasks"),
+			"must name the key and where it is: {message}"
+		);
+		assert!(
+			message.contains("lattice.json line 1"),
+			"must give the position: {message}"
+		);
+	}
+
+	#[test]
+	fn a_duplicate_engine_key_is_rejected() {
+		let message = parse_failure(
+			"{\n  \"engines\": {\n    \"node\": \">=20\",\n    \"node\": \">=99\"\n  }\n}",
+		);
+		assert!(
+			message.contains("duplicate key `node` in engines"),
+			"{message}"
+		);
+		assert!(
+			message.contains("line 5"),
+			"must point at the closing line of the object: {message}"
+		);
+	}
+
+	#[test]
+	fn a_duplicate_script_key_is_rejected() {
+		let message = parse_failure(
+			r#"{ "workspaces": [{ "name": "a", "path": "a", "auto": false,
+			     "scripts": { "build": "one", "build": "two" } }],
+			     "tasks": { "build": {} } }"#,
+		);
+		assert!(
+			message.contains("duplicate key `build` in workspaces[0].scripts"),
+			"must index the workspace the duplicate is in: {message}"
+		);
+	}
+
+	/// The strictness was already there for a struct like a workspace entry; the
+	/// maps were the half that leaked. Both have to reject a repeat.
+	#[test]
+	fn a_duplicate_struct_field_is_still_rejected() {
+		let message =
+			parse_failure_chain(r#"{ "workspaces": [{ "name": "a", "path": "a", "path": "b" }] }"#);
+		assert!(message.contains("duplicate field `path`"), "{message}");
+	}
+
+	#[test]
+	fn distinct_keys_in_the_same_map_still_parse() {
+		let config = parse_config(
+			r#"{ "engines": { "node": ">=20", "cargo": ">=1.88" },
+			     "tasks": { "build": {}, "test": {} },
+			     "workspaces": [{ "name": "a", "path": "a",
+			                      "scripts": { "build": "x", "test": "y" } }] }"#,
+		)
+		.expect("distinct keys must still parse");
+		assert_eq!(config.engines.len(), 2);
+		assert_eq!(config.tasks.len(), 2);
+		assert_eq!(config.workspaces[0].scripts.len(), 2);
+	}
+
+	/// An oversized timeout used to saturate the float-to-int cast to `u64::MAX`,
+	/// and a deadline that far out overflows rather than arriving — so asking for
+	/// a very long timeout produced no timeout at all.
+	#[test]
+	fn an_oversized_timeout_is_rejected_rather_than_disabled() {
+		for text in [
+			r#"{ "tasks": { "build": { "timeout": 1e30 } } }"#,
+			r#"{ "tasks": { "build": { "timeout": "99999999999999999999s" } } }"#,
+			r#"{ "tasks": { "build": { "timeout": 18446744073709551615 } } }"#,
+			r#"{ "tasks": { "build": { "timeout": "99999h" } } }"#,
+		] {
+			let message = parse_failure_chain(text);
+			assert!(
+				message.contains("longer than the maximum of 365 days"),
+				"{text} must be rejected, not silently turned into no timeout: {message}"
+			);
+		}
+
+		assert!(Duration::parse("365d").is_err(), "`d` is not a unit");
+		assert_eq!(
+			Duration::parse(&format!("{}s", Duration::MAX_SECS))
+				.unwrap()
+				.as_secs(),
+			Duration::MAX_SECS,
+			"the maximum itself must be accepted"
+		);
+		assert!(Duration::parse(&format!("{}s", Duration::MAX_SECS + 1)).is_err());
+	}
+
+	/// The schema declares the number form as an integer, so the parser has to
+	/// reject a fraction rather than round it to a value the user did not write.
+	#[test]
+	fn a_fractional_number_timeout_is_rejected() {
+		let message = parse_failure_chain(r#"{ "tasks": { "build": { "timeout": 1.5 } } }"#);
+		assert!(
+			message.contains("not a whole number of seconds"),
+			"{message}"
+		);
+
+		let whole: Duration = serde_json::from_str("90.0").expect("a whole float is still seconds");
+		assert_eq!(whole.as_secs(), 90);
+
+		let schema = compiled_schema();
+		assert!(
+			!schema.is_valid(&json!({ "tasks": { "build": { "timeout": 1.5 } } })),
+			"the schema must reject the same value the parser does"
+		);
+		assert!(
+			!schema.is_valid(&json!({ "tasks": { "build": { "timeout": 31536001 } } })),
+			"the schema must reject a timeout over the maximum too"
+		);
+		assert!(
+			schema.is_valid(&json!({ "tasks": { "build": { "timeout": 31536000 } } })),
+			"the maximum itself must validate"
+		);
+	}
+
+	/// `lattice prune` owns whatever directory `cacheDir` names: it deletes cache
+	/// archives and partial writes there. An absolute or escaping value pointed
+	/// that at somebody else's files.
+	#[test]
+	fn validate_rejects_a_cache_dir_outside_the_repo() {
+		for dir in [
+			"/tmp/lattice",
+			"\\tmp",
+			"C:\\cache",
+			"../cache",
+			"a/../../cache",
+		] {
+			let config: LatticeConfig =
+				serde_json::from_value(json!({ "settings": { "cacheDir": dir } })).unwrap();
+			assert!(
+				config.validate().is_err(),
+				"cacheDir '{dir}' must be rejected"
+			);
+		}
+	}
+
+	/// `.` is inside the repo and still wrong: it makes the repo root the cache
+	/// directory, so pruning deletes every stray archive sitting there.
+	#[test]
+	fn validate_rejects_a_cache_dir_that_is_the_repo_root() {
+		for dir in [".", "./", "a/.."] {
+			let config: LatticeConfig =
+				serde_json::from_value(json!({ "settings": { "cacheDir": dir } })).unwrap();
+			let message = config
+				.validate()
+				.expect_err("the repo root must be rejected as a cache dir")
+				.to_string();
+			assert!(
+				message.contains("the repo root itself"),
+				"must say why: {message}"
+			);
+		}
+
+		let empty: LatticeConfig =
+			serde_json::from_value(json!({ "settings": { "cacheDir": "  " } })).unwrap();
+		assert!(
+			empty.validate().is_err(),
+			"an empty cacheDir must be rejected"
+		);
+	}
+
+	#[test]
+	fn validate_accepts_a_cache_dir_inside_the_repo() {
+		let config: LatticeConfig =
+			serde_json::from_value(json!({ "settings": { "cacheDir": ".cache/lattice" } }))
+				.unwrap();
+		config
+			.validate()
+			.expect("a contained cacheDir must be accepted");
+	}
+
+	/// A path judged only as text let a spelling through that the running platform
+	/// still resolves to a root, and let leading or trailing whitespace through,
+	/// which Windows strips and unix keeps — the same string, two directories.
+	#[test]
+	fn validate_rejects_a_workspace_path_whose_shape_is_ambiguous() {
+		for path in ["apps/web ", " apps/web", "apps/ web", "apps/web/ "] {
+			let config: LatticeConfig =
+				serde_json::from_value(json!({ "workspaces": [{ "name": "ws", "path": path }] }))
+					.unwrap();
+			let message = config
+				.validate()
+				.expect_err("whitespace around a directory name must be rejected")
+				.to_string();
+			assert!(
+				message.contains("whitespace"),
+				"must say what is wrong with '{path}': {message}"
+			);
+		}
+	}
+
+	/// Deliberate: a backslash path is one filename on unix, so it cannot be
+	/// judged an escape here. It fails later, when the directory is resolved.
+	#[test]
+	fn validate_still_lets_a_windows_separator_path_through() {
+		let config: LatticeConfig = serde_json::from_value(
+			json!({ "workspaces": [{ "name": "web", "path": "apps\\web" }] }),
+		)
+		.unwrap();
+		config
+			.validate()
+			.expect("a backslash path is caught at resolve time, not here");
+	}
+
+	/// An engine `bin` is joined to the toolchain install and then prepended to
+	/// every task's PATH. An absolute one replaced the install path outright and
+	/// still reported a provisioned toolchain.
+	#[test]
+	fn validate_rejects_an_engine_bin_that_escapes_the_toolchain() {
+		for bin in [
+			"/usr/bin",
+			"\\usr\\bin",
+			"C:\\Windows",
+			"../../..",
+			"bin/../../..",
+		] {
+			let config: LatticeConfig = serde_json::from_value(json!({
+				"engines": { "node": { "version": ">=20", "bin": bin } }
+			}))
+			.unwrap();
+			let message = config
+				.validate()
+				.expect_err("an escaping bin must be rejected")
+				.to_string();
+			assert!(
+				message.contains("engine 'node' in root"),
+				"must name the engine and where it is declared: {message}"
+			);
+		}
+	}
+
+	#[test]
+	fn validate_rejects_an_engine_bin_in_a_workspace_too() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [{
+				"name": "web",
+				"path": "apps/web",
+				"engines": { "node": { "version": ">=20", "bin": "/usr/bin" } }
+			}]
+		}))
+		.unwrap();
+		let message = config
+			.validate()
+			.expect_err("a workspace engine bin must be checked too")
+			.to_string();
+		assert!(
+			message.contains("engine 'node' in workspace 'web'"),
+			"{message}"
+		);
+	}
+
+	#[test]
+	fn validate_rejects_an_empty_engine_bin() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"engines": { "node": { "version": ">=20", "bin": "" } }
+		}))
+		.unwrap();
+		let message = config
+			.validate()
+			.expect_err("an empty bin must be rejected")
+			.to_string();
+		assert!(message.contains("empty `bin`"), "{message}");
+	}
+
+	#[test]
+	fn validate_accepts_an_engine_bin_inside_the_toolchain() {
+		for bin in ["bin", ".", "usr/local/bin", "bin/../libexec"] {
+			let config: LatticeConfig = serde_json::from_value(json!({
+				"engines": { "node": { "version": ">=20", "bin": bin } }
+			}))
+			.unwrap();
+			config
+				.validate()
+				.unwrap_or_else(|e| panic!("bin '{bin}' must be accepted: {e}"));
+		}
+	}
+
+	/// A `scripts` key only becomes a command for the root task of the same name,
+	/// so a typo'd override never runs and the workspace silently falls back to
+	/// the inferred command.
+	#[test]
+	fn validate_rejects_a_script_that_names_no_task() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [{ "name": "core", "path": "core",
+							 "scripts": { "biuld": "cargo build --release" } }],
+			"tasks": { "build": {} }
+		}))
+		.unwrap();
+		let message = config
+			.validate()
+			.expect_err("a script naming no task must be rejected")
+			.to_string();
+		assert!(
+			message.contains("workspace 'core' declares a script 'biuld'"),
+			"must name the workspace and the script: {message}"
+		);
+		assert!(
+			message.contains("Did you mean `build`?"),
+			"must reuse the suggestion machinery: {message}"
+		);
+		assert!(message.contains("Defined tasks: build"), "{message}");
+	}
+
+	#[test]
+	fn validate_accepts_a_script_that_names_a_task() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [{ "name": "core", "path": "core", "auto": false,
+							 "scripts": { "build": "cargo build --release" } }],
+			"tasks": { "build": {}, "test": {} }
+		}))
+		.unwrap();
+		config
+			.validate()
+			.expect("a script matching a declared task must be accepted");
+	}
+
+	/// With no `tasks` at all there is nothing to suggest, so the message has to
+	/// say what to add instead.
+	#[test]
+	fn a_script_with_no_tasks_declared_says_what_to_add() {
+		let config: LatticeConfig = serde_json::from_value(json!({
+			"workspaces": [{ "name": "core", "path": "core", "scripts": { "build": "x" } }]
+		}))
+		.unwrap();
+		let message = config.validate().expect_err("must be rejected").to_string();
+		assert!(
+			message.contains("Add 'build' to `tasks` in lattice.json"),
+			"{message}"
 		);
 	}
 

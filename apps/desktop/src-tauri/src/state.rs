@@ -100,7 +100,19 @@ impl AppState {
 		*self.recents_path.lock().unwrap() = Some(path);
 	}
 
+	/// Open a project, ending whatever was running against a different one.
+	///
+	/// A run holds its own `Arc<Project>`, so leaving it alive across a switch gives
+	/// the window a run it cannot see, cannot stop, and whose task names collide with
+	/// the project now open. Reopening the same root is a reload rather than a switch,
+	/// and a reloaded window reconnects to that run instead.
 	pub fn open(&self, root: &Path) -> Result<Arc<Project>> {
+		let reload = self
+			.peek_project()
+			.is_some_and(|open| open.root.as_path() == root);
+		if !reload {
+			self.stop_run();
+		}
 		let project = Arc::new(Project::open_root(root)?);
 		*self.project.lock().unwrap() = Some(Arc::clone(&project));
 		{
@@ -126,6 +138,7 @@ impl AppState {
 	}
 
 	pub fn close(&self) {
+		self.stop_run();
 		*self.project.lock().unwrap() = None;
 	}
 
@@ -223,6 +236,58 @@ mod tests {
 		state.end_run();
 		let (second, _rx) = state.begin_run(log).unwrap();
 		assert_eq!(second, "run-2", "run ids keep counting up");
+	}
+
+	#[test]
+	fn closing_the_project_stops_the_run_it_belonged_to() {
+		let state = AppState::new();
+		let log = Arc::new(Mutex::new(RunLog::default()));
+		let (_id, rx) = state.begin_run(log).unwrap();
+
+		state.close();
+		assert!(
+			*rx.borrow(),
+			"a build with no window to show it is unstoppable"
+		);
+		assert!(state.peek_project().is_none());
+	}
+
+	fn a_project_dir() -> tempfile::TempDir {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(
+			dir.path().join("lattice.json"),
+			r#"{ "workspaces": [], "tasks": {} }"#,
+		)
+		.unwrap();
+		dir
+	}
+
+	#[test]
+	fn switching_projects_stops_the_run_too() {
+		let state = AppState::new();
+		let first = a_project_dir();
+		let second = a_project_dir();
+		state.open(first.path()).unwrap();
+
+		let log = Arc::new(Mutex::new(RunLog::default()));
+		let (_id, rx) = state.begin_run(log).unwrap();
+		state.open(second.path()).unwrap();
+
+		assert!(*rx.borrow(), "the new project would show the old run");
+	}
+
+	#[test]
+	fn reopening_the_same_project_leaves_its_run_alone() {
+		// This is what a reloaded window does on the way to reconnecting to the run.
+		let state = AppState::new();
+		let dir = a_project_dir();
+		state.open(dir.path()).unwrap();
+
+		let log = Arc::new(Mutex::new(RunLog::default()));
+		let (_id, rx) = state.begin_run(log).unwrap();
+		state.open(dir.path()).unwrap();
+
+		assert!(!*rx.borrow());
 	}
 
 	#[test]

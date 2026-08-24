@@ -74,9 +74,9 @@ A repo part-way between package managers, with a stale `package-lock.json` and a
 live `pnpm-lock.yaml` both checked in, has no unambiguous answer:
 
 ```text
-Error: workspace 'pkg' has an ambiguous or undeclared task driver.
-Candidate tools seen: npm, pnpm
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'pkg' has an ambiguous or undeclared driver.
+Candidate drivers: npm, pnpm
+Declare the driver in lattice.json, under this workspace:
   "engines": { "npm": ">=0.0.0" }
 ```
 

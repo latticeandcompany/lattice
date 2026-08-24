@@ -86,13 +86,24 @@ this project** instead of failing. That is a four-step walkthrough:
 The preview comes from the same code path `lattice init` uses, so the file the
 window writes is the file the CLI would have written: `lattice.json`, a
 committed `.lattice/schema.json` so your editor can check the config as you
-type, and three lines appended to `.gitignore`.
+type, and five lines appended to `.gitignore`.
 
 The project block at the top of the sidebar is also the control that changes it.
 Click it for every project you have opened, plus **Open another project…** and
-**Close this project**. Switching restarts nothing; the window reads the new
-project and redraws. **Reload from disk** underneath re-reads the config after
-you edit it outside the app.
+**Close this project**. The window reads the new project and redraws.
+
+Close a project, or switch to a different one, and the window stops whatever
+that project was running and takes its children down the way **Stop** does. A
+run belongs to the project it was started against. One left going in the
+background is a build you can no longer see or stop, and the task names it
+reports belong to a repo the window is no longer showing. Reopening the same
+project counts as a reload rather than a switch, and leaves the run alone.
+
+A reload of the window, whether a refresh or an app restart, reopens the project
+that was open and adopts a run still going in the backend. The output panes
+redraw from the tail Lattice kept, and **Stop** comes back. The window used to
+leave that run orphaned. **Reload from disk** underneath re-reads the config
+after you edit it outside the app.
 
 ## Run tasks
 
@@ -148,6 +159,11 @@ internals](/lattice/docs/cache-internals) for what each name covers.
 Output is collected per task and opens on its own when a task fails. Any other
 task's output is behind the chevron on its row.
 
+Lines appear within about a tenth of a second, as the task prints them. Output
+used to move only when 256 lines had piled up or a task changed state, so a dev
+server that prints one line and then serves requests never showed that line at
+all.
+
 ## Read the graph
 
 The **Graph** view draws the dependency graph for whatever tasks the tabs have
@@ -202,10 +218,12 @@ would delete it, along with your key order and your formatting. Editing the text
 means only the bytes you changed are rewritten.
 
 The header says **Unsaved changes** or **Saved**, and **Save** stays unavailable
-while there is a problem to fix. Validation is the same parse a run does, run in
-the backend as you type, so the editor never writes a config `lattice run` would
-then reject. A file that is not valid JSON at all disables the form and says so;
-fix it in the **JSON** tab.
+while there is a problem to fix. A save that fails leaves the header on **Unsaved
+changes** and shows the error. The header used to say **Saved** whether the write
+had landed or not. Validation is the same parse a run does, run in the backend as
+you type, so the editor never writes a config `lattice run` would then reject. A
+file that is not valid JSON at all disables the form and says so; fix it in the
+**JSON** tab.
 
 ## Follow the system theme
 

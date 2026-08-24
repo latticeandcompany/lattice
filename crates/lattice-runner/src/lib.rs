@@ -113,25 +113,46 @@ impl std::error::Error for RunInterrupted {}
 /// and the run has to pass the signal on deliberately.
 #[derive(Clone, Default)]
 struct ChildRegistry {
-	pids: Arc<Mutex<Vec<u32>>>,
+	state: Arc<Mutex<RegistryState>>,
+}
+
+#[derive(Default)]
+struct RegistryState {
+	pids: Vec<u32>,
+	/// Whether [`ChildRegistry::terminate_all`] has already taken its snapshot.
+	terminated: bool,
 }
 
 impl ChildRegistry {
-	fn add(&self, pid: u32) {
-		self.pids.lock().unwrap().push(pid);
+	/// Register a live child, or report `false` because the run is already tearing
+	/// down.
+	///
+	/// [`Self::terminate_all`] snapshots once and never repeats, so a child that
+	/// arrives after it would never be signalled at all. The check shares the
+	/// registry's lock with the snapshot, which is what makes the answer binding:
+	/// either the pid is in the snapshot, or the caller is told to stop the child
+	/// itself.
+	fn add(&self, pid: u32) -> bool {
+		let mut state = self.state.lock().unwrap();
+		if state.terminated {
+			return false;
+		}
+		state.pids.push(pid);
+		true
 	}
 
 	fn remove(&self, pid: u32) {
-		self.pids.lock().unwrap().retain(|p| *p != pid);
-	}
-
-	fn snapshot(&self) -> Vec<u32> {
-		self.pids.lock().unwrap().clone()
+		self.state.lock().unwrap().pids.retain(|p| *p != pid);
 	}
 
 	/// Ask every live child's group to stop, then kill whatever is still there.
 	async fn terminate_all(&self) {
-		terminate_groups(&self.snapshot()).await;
+		let pids = {
+			let mut state = self.state.lock().unwrap();
+			state.terminated = true;
+			state.pids.clone()
+		};
+		terminate_groups(&pids).await;
 	}
 }
 
@@ -201,13 +222,20 @@ async fn stop_child(child: &mut tokio::process::Child, pid: Option<u32>) {
 	#[cfg(unix)]
 	if let Some(pid) = pid {
 		signal_group(pid, Stop::Terminate);
-		// Waiting on the child is what ends the grace period early, since a
-		// signalled process stays a zombie until it is reaped.
-		if tokio::time::timeout(SHUTDOWN_GRACE, child.wait())
-			.await
-			.is_ok()
-		{
-			return;
+		let deadline = Instant::now() + SHUTDOWN_GRACE;
+		// Reaping the child first is what lets the group probe below tell the
+		// truth, since a signalled process stays in its group as a zombie until
+		// someone waits on it — and it is what ends the grace period early for the
+		// ordinary child that goes on the first signal.
+		let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+		// The direct child dying is not the group dying. Whatever it backgrounded
+		// still holds this task's output pipes, and the run cannot finish draining
+		// them, so escalate the same way an interrupt does.
+		while Instant::now() < deadline {
+			if !group_alive(pid) {
+				return;
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 		}
 		signal_group(pid, Stop::Kill);
 		return;
@@ -265,7 +293,11 @@ fn signal_group(pid: u32, stop: Stop) {
 
 /// Resolve to the first interrupt the run receives: Ctrl-C, or a `SIGTERM` from
 /// a CI runner cancelling the job.
-async fn interrupt_signal() {
+///
+/// Public because [`ExecuteOptions::shutdown`] has to watch the same set. A
+/// caller that supplied a bare `ctrl_c()` left a cancelled CI job hanging until
+/// the runner force-killed it.
+pub async fn interrupt_signal() {
 	#[cfg(unix)]
 	{
 		use tokio::signal::unix::{signal, SignalKind};
@@ -395,6 +427,10 @@ impl PersistentChild {
 		let pid = self.pid;
 		stop_child(&mut self.child, pid).await;
 		let _ = self.child.wait().await;
+		// For the same reason the natural-exit path does it: anything the shell
+		// backgrounded still holds this task's pipes, its drain task still holds a
+		// channel sender, and the run's final drain waits on that channel closing.
+		self.stop_leftovers().await;
 	}
 }
 
@@ -692,7 +728,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	// without this, an interrupted build leaves its compilers running.
 	let children = ChildRegistry::default();
 	let interrupted = Arc::new(AtomicBool::new(false));
-	let signal_watch = {
+	let mut signal_watch = {
 		let abort = abort.clone();
 		let shutting_down = shutting_down.clone();
 		let interrupted = interrupted.clone();
@@ -865,16 +901,21 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	// While any persistent child is still running, wait for the shutdown signal,
 	// streaming their output and reporting any that ends on its own. Once none is
 	// left there is nothing to hold the run open, so it finishes.
+	//
+	// `shutdown` is only first polled here, so on its own it cannot see an
+	// interrupt that already arrived — and a fail-fast abort is not a signal at
+	// all. Both reach this loop through the state `signal_watch` maintains: the
+	// flag it sets, checked before each wait, and the handle itself, which
+	// completes once the interrupt has been passed on to the children.
 	if live_persistent > 0 {
 		let mut shutdown_fut: Pin<Box<dyn Future<Output = ()> + Send>> = match shutdown {
 			Some(f) => f,
-			None => Box::pin(async {
-				let _ = tokio::signal::ctrl_c().await;
-			}),
+			None => Box::pin(interrupt_signal()),
 		};
-		while live_persistent > 0 {
+		while live_persistent > 0 && !abort.load(Ordering::SeqCst) {
 			tokio::select! {
 				_ = &mut shutdown_fut => break,
+				_ = &mut signal_watch => break,
 				Some(msg) = rx.recv() => forward(reporter, msg, &mut live_persistent, &mut failed),
 			}
 		}
@@ -1002,7 +1043,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		Ok(k) => k,
 		Err(e) => {
 			let captured = vec![(true, format!("failed to compute cache key: {e}"))];
-			emit_failure(&ctx.tx, &ws, &task, captured);
+			emit_failure(&ctx, &ws, &task, captured);
 			return TaskOutcome::Failed {
 				workspace: ws,
 				task,
@@ -1060,6 +1101,14 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		}
 	}
 
+	// Checked again here, not only on the way in. Everything between the two — the
+	// cache key, a lookup, a whole tarball restore — can easily outlast the
+	// interrupt that arrived while it ran, and spawning after that leaves a child
+	// nothing is going to signal.
+	if ctx.abort.load(Ordering::SeqCst) {
+		return TaskOutcome::Noop;
+	}
+
 	let _ = ctx.tx.send(RunnerMsg::Event(TaskEvent::Started {
 		workspace: ws.clone(),
 		task: task.clone(),
@@ -1068,7 +1117,13 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	let start = Instant::now();
 	let mut cmd = build_shell_command(&spec.command);
 	cmd.current_dir(&spec.ws_path);
-	apply_path_prepend(&mut cmd, &spec.path_prepend);
+	if let Err(msg) = apply_path_prepend(&mut cmd, &spec.path_prepend) {
+		emit_failure(&ctx, &ws, &task, vec![(true, msg)]);
+		return TaskOutcome::Failed {
+			workspace: ws,
+			task,
+		};
+	}
 	for (name, value) in &env_values {
 		if let Some(value) = value {
 			cmd.env(name, value);
@@ -1090,7 +1145,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			} else {
 				format!("failed to spawn task: {e}")
 			};
-			emit_failure(&ctx.tx, &ws, &task, vec![(true, msg)]);
+			emit_failure(&ctx, &ws, &task, vec![(true, msg)]);
 			return TaskOutcome::Failed {
 				workspace: ws,
 				task,
@@ -1141,7 +1196,13 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	let stderr = child.stderr.take();
 	let child_pid = child.id();
 	if let Some(pid) = child_pid {
-		ctx.children.add(pid);
+		// The registry answers under its own lock, so this cannot lose the race the
+		// abort check above narrows but cannot close: either the pid made it into
+		// the teardown's snapshot, or the teardown has already been and this child
+		// is ours to stop.
+		if !ctx.children.add(pid) {
+			stop_child(&mut child, child_pid).await;
+		}
 	}
 
 	// The pipes are drained on their own tasks rather than joined with the wait.
@@ -1241,7 +1302,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		}));
 		TaskOutcome::Ran
 	} else {
-		emit_failure(&ctx.tx, &ws, &task, captured);
+		emit_failure(&ctx, &ws, &task, captured);
 		TaskOutcome::Failed {
 			workspace: ws,
 			task,
@@ -1326,12 +1387,16 @@ async fn reap_persistent(ctx: ReapContext) {
 	});
 }
 
-fn emit_failure(
-	tx: &UnboundedSender<RunnerMsg>,
-	ws: &str,
-	task: &str,
-	captured: Vec<(bool, String)>,
-) {
+/// Report one task's failure, unless the run is on its way out.
+///
+/// A task killed during teardown did not fail. The scheduler already declines to
+/// count it, and emitting the event anyway leaves every front end showing a
+/// failure the summary goes on to deny.
+fn emit_failure(ctx: &TaskRunContext, ws: &str, task: &str, captured: Vec<(bool, String)>) {
+	if ctx.shutting_down.load(Ordering::SeqCst) {
+		return;
+	}
+	let tx = &ctx.tx;
 	let _ = tx.send(RunnerMsg::Event(TaskEvent::Failed {
 		workspace: ws.to_string(),
 		task: task.to_string(),
@@ -1384,15 +1449,32 @@ fn windows_shell_arg(cmd: &mut tokio::process::Command, command: &str) {
 }
 
 /// Prepend `prepend` dirs to the child's `PATH`, affecting that child only.
-fn apply_path_prepend(cmd: &mut tokio::process::Command, prepend: &[PathBuf]) {
+/// Falling back to the ambient `PATH` would run the task against whatever tool
+/// the host happens to have, which is the one outcome pinning exists to prevent.
+fn apply_path_prepend(
+	cmd: &mut tokio::process::Command,
+	prepend: &[PathBuf],
+) -> Result<(), String> {
 	if prepend.is_empty() {
-		return;
+		return Ok(());
 	}
 	let existing = std::env::var_os("PATH").unwrap_or_default();
 	let mut paths: Vec<PathBuf> = prepend.to_vec();
 	paths.extend(std::env::split_paths(&existing));
-	if let Ok(joined) = std::env::join_paths(paths) {
-		cmd.env("PATH", joined);
+	match std::env::join_paths(paths) {
+		Ok(joined) => {
+			cmd.env("PATH", joined);
+			Ok(())
+		}
+		Err(_) => Err(format!(
+			"the pinned toolchain cannot be put on PATH, because a directory in it \
+			 contains a character PATH cannot hold: {}",
+			prepend
+				.iter()
+				.map(|p| p.display().to_string())
+				.collect::<Vec<_>>()
+				.join(", ")
+		)),
 	}
 }
 
@@ -1409,8 +1491,24 @@ async fn drain_pipe<R: AsyncRead + Unpin>(
 ) -> Vec<(bool, String)> {
 	let mut captured = Vec::new();
 	if let Some(pipe) = pipe {
-		let mut lines = BufReader::new(pipe).lines();
-		while let Ok(Some(line)) = lines.next_line().await {
+		let mut reader = BufReader::new(pipe);
+		let mut buf = Vec::new();
+		// Bytes rather than `lines()`, which surfaces a UTF-8 decoding error the
+		// same way it surfaces end of stream: one stray byte from a compiler or a
+		// progress bar would drop the rest of the task's output, and the message
+		// that actually explains the failure is usually after it.
+		while let Ok(read) = reader.read_until(b'\n', &mut buf).await {
+			if read == 0 {
+				break;
+			}
+			if buf.last() == Some(&b'\n') {
+				buf.pop();
+				if buf.last() == Some(&b'\r') {
+					buf.pop();
+				}
+			}
+			let line = String::from_utf8_lossy(&buf).into_owned();
+			buf.clear();
 			let _ = tx.send(RunnerMsg::Event(TaskEvent::Output {
 				workspace: ws.to_string(),
 				task: task.to_string(),
@@ -1428,6 +1526,24 @@ async fn drain_pipe<R: AsyncRead + Unpin>(
 
 #[cfg(test)]
 mod tests {
+
+	/// A pinned toolchain that cannot go on `PATH` used to be dropped in silence,
+	/// so the task ran against the host's tool while the run claimed the pin.
+	#[test]
+	fn a_toolchain_dir_that_cannot_go_on_path_fails_instead_of_degrading() {
+		let bad = format!("bin{}dir", lattice_testkit::unjoinable_char());
+		let mut cmd = tokio::process::Command::new("true");
+		let err = apply_path_prepend(&mut cmd, &[PathBuf::from(&bad)])
+			.expect_err("a directory PATH cannot hold must not be joined");
+		assert!(err.contains("a character PATH cannot hold"), "{err}");
+		assert!(err.contains(&bad), "must name the directory: {err}");
+	}
+
+	#[test]
+	fn an_ordinary_toolchain_dir_still_goes_on_path() {
+		let mut cmd = tokio::process::Command::new("true");
+		apply_path_prepend(&mut cmd, &[PathBuf::from("/tmp/plain/bin")]).unwrap();
+	}
 	use super::*;
 	use dagger::build_execution_graph;
 	use lattice_config::{EngineMap, PipelineTask};
@@ -1441,6 +1557,7 @@ mod tests {
 		events: Mutex<Vec<TaskEvent>>,
 		summaries: Mutex<Vec<(usize, usize, usize, u64)>>,
 		surfaced: Mutex<Vec<(String, String)>>,
+		surfaced_lines: Mutex<Vec<String>>,
 	}
 
 	impl RecordingReporter {
@@ -1509,11 +1626,15 @@ mod tests {
 		fn event(&self, ev: TaskEvent) {
 			self.events.lock().unwrap().push(ev);
 		}
-		fn surface_failure(&self, workspace: &str, task: &str, _captured: &[(bool, String)]) {
+		fn surface_failure(&self, workspace: &str, task: &str, captured: &[(bool, String)]) {
 			self.surfaced
 				.lock()
 				.unwrap()
 				.push((workspace.to_string(), task.to_string()));
+			self.surfaced_lines
+				.lock()
+				.unwrap()
+				.extend(captured.iter().map(|(_, line)| line.clone()));
 		}
 		fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64) {
 			self.summaries
@@ -2394,7 +2515,7 @@ mod tests {
 		let pid = child.id().expect("a freshly spawned child has a pid");
 
 		let registry = ChildRegistry::default();
-		registry.add(pid);
+		assert!(registry.add(pid), "a live registry takes the child");
 		assert!(group_alive(pid), "the group is up before we signal it");
 
 		registry.terminate_all().await;
@@ -2568,5 +2689,273 @@ mod tests {
 		assert_eq!(result.total, 1);
 		assert_eq!(result.failed, 0);
 		assert!(marker.exists());
+	}
+	/// A cancel is the same event as Ctrl-C, and it can land while an ordinary
+	/// task is still running. `shutdown` here never fires, standing in for the
+	/// fresh `ctrl_c()` the CLI hands over: it is first polled after the graph
+	/// drains, so it is listening for a signal that has already been and gone.
+	#[tokio::test]
+	async fn an_interrupt_before_the_graph_drains_still_ends_the_run() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![
+			ws(
+				"svc",
+				root,
+				&[("build", &sh::succeed()), ("dev", &sh::sleep(120))],
+			),
+			ws(
+				"slow",
+				root,
+				&[("build", &sh::sleep(60)), ("dev", &sh::sleep(120))],
+			),
+		];
+		let config = config_with(&[
+			("build", PipelineTask::default()),
+			("dev", persistent(&["build"])),
+		]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.cancel = Some(shutdown_after(500));
+		o.shutdown = Some(Box::pin(std::future::pending()));
+
+		let err = tokio::time::timeout(Duration::from_secs(20), execute_tasks(o))
+			.await
+			.expect("the interrupt already arrived; the run must not wait for a second one")
+			.unwrap_err();
+
+		assert!(
+			err.downcast_ref::<RunInterrupted>().is_some(),
+			"a cancelled run reports the interruption: {err:#}"
+		);
+	}
+
+	/// Fail-fast sets `abort` and stops scheduling, but a persistent task started
+	/// earlier is still holding the run open. Nothing is going to send a signal,
+	/// so the wait has to notice the abort on its own.
+	#[tokio::test]
+	async fn a_failure_ends_a_run_that_persistent_tasks_are_holding_open() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let failing = sh::then([sh::sleep(1), sh::exit(1)]);
+		let workspaces = vec![
+			ws(
+				"svc",
+				root,
+				&[("build", &sh::succeed()), ("dev", &sh::sleep(120))],
+			),
+			ws(
+				"bad",
+				root,
+				&[("build", &failing), ("dev", &sh::sleep(120))],
+			),
+		];
+		let config = config_with(&[
+			("build", PipelineTask::default()),
+			("dev", persistent(&["build"])),
+		]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(Box::pin(std::future::pending()));
+
+		let err = tokio::time::timeout(Duration::from_secs(20), execute_tasks(o))
+			.await
+			.expect("a fail-fast run must not wait on a signal to report its failure")
+			.unwrap_err();
+
+		assert!(
+			err.to_string().contains("bad:build"),
+			"unexpected error: {err:#}"
+		);
+		assert!(r.has("failed:bad:build"));
+	}
+
+	/// A task killed on the way out did not fail, and the summary already says so.
+	/// Emitting the event anyway left the desktop app showing a failure for every
+	/// task a cancel stopped, alongside a summary reporting none.
+	#[tokio::test]
+	async fn a_task_stopped_on_the_way_out_is_not_reported_as_failed() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", &sh::sleep(60))])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.cancel = Some(shutdown_after(300));
+
+		let err = tokio::time::timeout(Duration::from_secs(20), execute_tasks(o))
+			.await
+			.expect("the cancel has to reach the child")
+			.unwrap_err();
+
+		assert!(err.downcast_ref::<RunInterrupted>().is_some(), "{err:#}");
+		assert!(
+			!r.has("failed:app:build"),
+			"the events and the summary have to agree: {:?}",
+			r.labels()
+		);
+		assert!(
+			r.surfaced.lock().unwrap().is_empty(),
+			"a task we stopped has no failure output to dump"
+		);
+		assert_eq!(
+			r.summaries.lock().unwrap()[0].2,
+			0,
+			"the summary counts no failure, so nothing else may claim one"
+		);
+	}
+
+	/// One undecodable byte used to end the stream, taking the rest of the task's
+	/// output with it — including the line that said what went wrong.
+	#[tokio::test]
+	async fn a_byte_that_is_not_utf8_does_not_end_the_output() {
+		let (tx, _rx) = mpsc::unbounded_channel();
+		let bytes = b"warning \xff here\nTHE_REAL_ERROR\n".to_vec();
+
+		let captured = drain_pipe(
+			Some(std::io::Cursor::new(bytes)),
+			true,
+			&tx,
+			"app",
+			"build",
+			true,
+			false,
+		)
+		.await;
+
+		let lines: Vec<String> = captured.into_iter().map(|(_, line)| line).collect();
+		assert_eq!(lines.len(), 2, "both lines have to survive: {lines:?}");
+		assert!(
+			lines[0].starts_with("warning") && lines[0].ends_with("here"),
+			"the readable part of the line stays readable: {:?}",
+			lines[0]
+		);
+		assert_eq!(lines[1], "THE_REAL_ERROR");
+	}
+
+	/// The whole path, not just [`drain_pipe`]: a failing task printed a stray byte
+	/// and the user saw `FAILED` with nothing under it.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn a_task_that_prints_an_undecodable_byte_still_surfaces_its_error() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let cmd = sh::then([
+			sh::echo_invalid_utf8("warning", "THE_REAL_ERROR"),
+			sh::exit(1),
+		]);
+		let workspaces = vec![ws("app", root, &[("build", &cmd)])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		execute_tasks(opts(&graph, &workspaces, &config, root, &r))
+			.await
+			.unwrap_err();
+
+		let lines = r.surfaced_lines.lock().unwrap().clone();
+		assert!(
+			lines.iter().any(|l| l.contains("THE_REAL_ERROR")),
+			"the message after the byte is the one worth reading: {lines:?}"
+		);
+	}
+
+	/// The direct child dying is not the group dying. A task that backgrounds
+	/// something ignoring `SIGTERM` leaves it holding stdout, and the drain never
+	/// finished — so the timeout was never reported at all.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn a_timeout_escalates_past_a_child_that_ignores_the_first_signal() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("build", &sh::stubborn_background(120))])];
+		let build = PipelineTask {
+			timeout: Some(lattice_config::Duration(1)),
+			..Default::default()
+		};
+		let config = config_with(&[("build", build)]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let err = tokio::time::timeout(
+			Duration::from_secs(60),
+			execute_tasks(opts(&graph, &workspaces, &config, root, &r)),
+		)
+		.await
+		.expect("the timeout has to be reported, not left waiting on a pipe a leftover holds")
+		.unwrap_err();
+
+		assert!(
+			err.to_string().contains("app:build"),
+			"unexpected error: {err:#}"
+		);
+		assert!(r.has("failed:app:build"));
+	}
+
+	/// Tearing a persistent task down has the same leftover problem, and it lands
+	/// on the run's final drain: the leftover keeps the drain task alive, the drain
+	/// task holds a channel sender, and the channel never closes.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn a_persistent_teardown_escalates_past_a_child_that_ignores_the_first_signal() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("dev", &sh::stubborn_background(120))])];
+		let config = config_with(&[("dev", persistent(&[]))]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(shutdown_after(300));
+
+		let result = tokio::time::timeout(Duration::from_secs(60), execute_tasks(o))
+			.await
+			.expect("the run has to finish draining once the leftover is gone")
+			.unwrap();
+
+		assert_eq!(result.total, 1);
+		assert_eq!(result.failed, 0);
+	}
+
+	/// [`ChildRegistry::terminate_all`] snapshots once and never repeats, so a
+	/// child registered after it would never be signalled. Ctrl-C then looked like
+	/// it had done nothing for as long as that task took.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn the_registry_refuses_a_child_it_can_no_longer_signal() {
+		let registry = ChildRegistry::default();
+		let spawn = || {
+			let mut cmd = build_shell_command(&sh::sleep(121));
+			cmd.stdout(std::process::Stdio::piped());
+			cmd.process_group(0);
+			cmd.spawn().unwrap()
+		};
+
+		let mut early = spawn();
+		let early_pid = early.id().expect("a freshly spawned child has a pid");
+		assert!(registry.add(early_pid), "a live registry takes the child");
+
+		registry.terminate_all().await;
+		let _ = early.wait().await;
+
+		let mut late = spawn();
+		let late_pid = late.id().expect("a freshly spawned child has a pid");
+		assert!(
+			!registry.add(late_pid),
+			"the snapshot is already taken, so the registry must not claim this child"
+		);
+
+		stop_child(&mut late, Some(late_pid)).await;
+		let _ = late.wait().await;
+		assert!(
+			!group_alive(late_pid),
+			"whatever the registry refuses, the caller has to stop itself"
+		);
 	}
 }

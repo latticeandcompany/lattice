@@ -12,7 +12,8 @@
 //! the window routes a message to a pane by its label, so it needs it separate.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -21,6 +22,9 @@ use lattice_runner::RunResult;
 
 /// Flush after this many buffered lines.
 const OUTPUT_BATCH: usize = 256;
+
+/// And after this long, however few there are.
+pub const OUTPUT_TICK: Duration = Duration::from_millis(100);
 
 /// Lines kept per task so a reloaded webview can redraw its pane. The runner
 /// buffers more than this for failure surfacing; this is only what the window
@@ -100,15 +104,32 @@ impl RunLog {
 	}
 }
 
+/// Flushes buffered output on an interval until it is dropped.
+pub struct Ticker {
+	stop: Arc<(Mutex<bool>, Condvar)>,
+	thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Ticker {
+	fn drop(&mut self) {
+		let (stopped, wake) = &*self.stop;
+		*stopped.lock().unwrap() = true;
+		wake.notify_all();
+		if let Some(thread) = self.thread.take() {
+			let _ = thread.join();
+		}
+	}
+}
+
 pub struct ChannelReporter<S: EventSink> {
 	sink: S,
 	pending: Mutex<Vec<OutputChunk>>,
-	log: std::sync::Arc<Mutex<RunLog>>,
+	log: Arc<Mutex<RunLog>>,
 	flushes: AtomicU64,
 }
 
 impl<S: EventSink> ChannelReporter<S> {
-	pub fn new(sink: S, log: std::sync::Arc<Mutex<RunLog>>) -> Self {
+	pub fn new(sink: S, log: Arc<Mutex<RunLog>>) -> Self {
 		Self {
 			sink,
 			pending: Mutex::new(Vec::new()),
@@ -117,15 +138,46 @@ impl<S: EventSink> ChannelReporter<S> {
 		}
 	}
 
-	/// Send whatever output has accumulated. Safe to call when there is none.
-	pub fn flush(&self) {
-		let batch = {
-			let mut pending = self.pending.lock().unwrap();
-			if pending.is_empty() {
-				return;
+	/// Start the tick half of the flush rule.
+	///
+	/// Without it, output only moves when a batch fills or a state change arrives, so
+	/// a dev server that prints one line and then serves requests leaves that line in
+	/// the buffer for the life of the run.
+	pub fn ticker(self: &Arc<Self>) -> Ticker {
+		self.ticker_every(OUTPUT_TICK)
+	}
+
+	fn ticker_every(self: &Arc<Self>, every: Duration) -> Ticker {
+		let stop = Arc::new((Mutex::new(false), Condvar::new()));
+		let signal = Arc::clone(&stop);
+		let reporter = Arc::clone(self);
+		let thread = std::thread::spawn(move || {
+			let (stopped, wake) = &*signal;
+			let mut done = stopped.lock().unwrap();
+			while !*done {
+				done = wake.wait_timeout(done, every).unwrap().0;
+				if !*done {
+					reporter.flush();
+				}
 			}
-			std::mem::take(&mut *pending)
-		};
+		});
+		Ticker {
+			stop,
+			thread: Some(thread),
+		}
+	}
+
+	/// Send whatever output has accumulated. Safe to call when there is none.
+	///
+	/// The lock is held across the send on purpose: the ticker flushes from its own
+	/// thread, and taking a batch here while another thread is still sending an
+	/// earlier one would put a line on the channel after the event it came before.
+	pub fn flush(&self) {
+		let mut pending = self.pending.lock().unwrap();
+		if pending.is_empty() {
+			return;
+		}
+		let batch = std::mem::take(&mut *pending);
 		self.flushes.fetch_add(1, Ordering::SeqCst);
 		self.sink.send(RunMessage::OutputBatch { lines: batch });
 	}
@@ -264,6 +316,23 @@ mod tests {
 		(ChannelReporter::new(sink.clone(), log), sink)
 	}
 
+	fn shared() -> (Arc<ChannelReporter<VecSink>>, VecSink) {
+		let (reporter, sink) = reporter();
+		(Arc::new(reporter), sink)
+	}
+
+	/// Give the ticker thread a chance to run, without pinning the test to a sleep.
+	fn wait_for(sink: &VecSink, messages: usize) -> usize {
+		for _ in 0..400 {
+			let seen = sink.0.lock().unwrap().len();
+			if seen >= messages {
+				return seen;
+			}
+			std::thread::sleep(Duration::from_millis(5));
+		}
+		sink.0.lock().unwrap().len()
+	}
+
 	fn output(i: usize) -> TaskEvent {
 		TaskEvent::Output {
 			workspace: "web".into(),
@@ -288,6 +357,44 @@ mod tests {
 			RunMessage::OutputBatch { lines } => assert_eq!(lines.len(), OUTPUT_BATCH),
 			other => panic!("expected a batch, got {other:?}"),
 		}
+	}
+
+	#[test]
+	fn one_line_and_then_silence_still_reaches_the_window() {
+		// A persistent task prints "listening on :3000" and then nothing for an hour.
+		// Neither a full batch nor a state change is ever coming.
+		let (reporter, sink) = shared();
+		let _ticker = reporter.ticker_every(Duration::from_millis(5));
+		reporter.event(output(1));
+
+		assert_eq!(wait_for(&sink, 1), 1);
+		let messages = sink.0.lock().unwrap();
+		match &messages[0] {
+			RunMessage::OutputBatch { lines } => assert_eq!(lines[0].line, "line 1"),
+			other => panic!("expected a batch, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn a_tick_with_nothing_buffered_sends_nothing() {
+		let (reporter, sink) = shared();
+		let _ticker = reporter.ticker_every(Duration::from_millis(5));
+		std::thread::sleep(Duration::from_millis(40));
+		assert_eq!(reporter.flush_count(), 0, "an idle run is silent");
+		assert!(sink.0.lock().unwrap().is_empty());
+	}
+
+	#[test]
+	fn dropping_the_ticker_stops_it() {
+		let (reporter, sink) = shared();
+		let ticker = reporter.ticker_every(Duration::from_millis(5));
+		reporter.event(output(1));
+		assert_eq!(wait_for(&sink, 1), 1);
+
+		drop(ticker);
+		reporter.event(output(2));
+		std::thread::sleep(Duration::from_millis(40));
+		assert_eq!(sink.0.lock().unwrap().len(), 1, "no thread is left ticking");
 	}
 
 	#[test]

@@ -295,7 +295,10 @@ pub async fn start_run<S: EventSink>(
 	let log = Arc::new(Mutex::new(RunLog::default()));
 	let (run_id, stop_rx) = state.begin_run(Arc::clone(&log))?;
 
-	let reporter = ChannelReporter::new(sink, log);
+	let reporter = Arc::new(ChannelReporter::new(sink, log));
+	// Dropped with everything else at the end of this function, which is after the
+	// final flush `finish` already does.
+	let _ticker = reporter.ticker();
 	let make_signal = || {
 		let mut rx = stop_rx.clone();
 		Box::pin(async move {
@@ -308,7 +311,7 @@ pub async fn start_run<S: EventSink>(
 	let outcome = lattice_project::run(RunOptions {
 		project: &project,
 		request: &request,
-		reporter: &reporter,
+		reporter: reporter.as_ref(),
 		lattice_version: BIN_VERSION,
 		// Both, from one signal: shutdown ends the wait on persistent tasks, cancel
 		// aborts a graph still running. A Stop button means both.

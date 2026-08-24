@@ -120,9 +120,22 @@ pub fn honor_pin(root: &Path, no_version_check_flag: bool, urls: &ReleaseUrls) -
 			|| !pin.version_check,
 	};
 
-	let Drift::SwitchTo(version) = decide(&inputs) else {
+	let Drift::SwitchTo(pinned_as_written) = decide(&inputs) else {
 		return Ok(());
 	};
+
+	// The pin becomes part of a URL and a filename, so it is validated before
+	// either is built from it. Normalizing also settles a `v` prefix: `v1.2.3`
+	// and `1.2.3` name the same release, and one of them is this binary.
+	let version = release::normalize_version(&pinned_as_written).with_context(|| {
+		format!(
+			"lattice.json pins `latticeVersion` as \"{pinned_as_written}\", which is not a \
+			 version. Write it like 0.2.0, or run `lattice upgrade <version>` to set it"
+		)
+	})?;
+	if version == BIN_VERSION {
+		return Ok(());
+	}
 
 	eprintln!(
 		"{}",

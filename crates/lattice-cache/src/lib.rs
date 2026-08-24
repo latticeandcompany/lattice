@@ -20,9 +20,15 @@ use lattice_config::{PipelineTask, LOCKFILES, MANIFESTS};
 /// disappears against the hash itself.
 const READ_BUF: usize = 256 * 1024;
 
-/// Depth cap for the input/output walk. A symlink is treated as a leaf, so this
-/// is only a backstop against pathological trees.
+/// Depth cap for the input/output walk, and the cycle guard: the input walk
+/// descends symlinked directories, so a link pointing at an ancestor terminates
+/// here rather than by tracking what has already been visited.
 const MAX_WALK_DEPTH: usize = 64;
+
+/// How long a leftover artifact, staging file or incomplete entry must sit
+/// untouched before the sweep calls it abandoned. A store in flight looks exactly
+/// like an interrupted one, so age is the only thing that separates them.
+const ABANDONED_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// Directories never walked when collecting inputs or outputs: our own state, and
 /// version-control metadata that changes on every commit, checkout and fetch.
@@ -44,6 +50,10 @@ pub struct CacheMeta {
 	/// the key itself is an opaque hash. Nothing re-applies them.
 	pub env: HashMap<String, String>,
 	/// sha256 hex of the artifact tarball's bytes. Used to detect corruption.
+	///
+	/// Empty while a store is still in flight. `store` writes the metadata before
+	/// it has an artifact to describe, so that the artifact is never on disk
+	/// without metadata naming it; see [`CacheMeta::is_complete`].
 	pub output_digest: String,
 	/// The task's `outputs` globs as they were when the entry was written.
 	/// `restore` clears what these match before unpacking, so a hit reproduces the
@@ -54,6 +64,15 @@ pub struct CacheMeta {
 	/// artifact without re-reading it.
 	#[serde(default)]
 	pub artifact_size: u64,
+}
+
+impl CacheMeta {
+	/// Whether the store that wrote this metadata got as far as recording a
+	/// digest. An incomplete entry is never a hit and never an eviction candidate:
+	/// it is either a store still running or one that died partway through.
+	pub fn is_complete(&self) -> bool {
+		!self.output_digest.is_empty()
+	}
 }
 
 /// A verified cache entry returned by [`CacheStore::lookup`].
@@ -216,6 +235,12 @@ impl CacheStore for LocalStore {
 			Err(_) => return Ok(None),
 		};
 
+		// A store that has not recorded its digest yet has nothing to offer, even if
+		// an artifact is already sitting at the key.
+		if !meta.is_complete() {
+			return Ok(None);
+		}
+
 		// The artifact must exist, and its length must match what we recorded. The
 		// length is a cheap reject that catches the common damage (a truncated or
 		// half-written file) without reading anything.
@@ -255,13 +280,35 @@ impl CacheStore for LocalStore {
 		// empty artifact would make every later run a hit that restores nothing —
 		// permanently, and silently. Refuse instead; the caller surfaces it.
 		let entries = collect_output_entries(workspace_path, outputs)?;
-		if !outputs.is_empty() && entries.is_empty() {
-			anyhow::bail!(
-				"no files matched outputs {:?}, so nothing was cached. Check that the \
-				 patterns are relative to the workspace, and that the task writes there",
-				outputs
-			);
+		if !outputs.is_empty() {
+			// A bare `dist` pattern matches the directory itself, so "matched
+			// something" is not the same question as "produced something".
+			if entries.is_empty() {
+				anyhow::bail!(
+					"no files matched outputs {:?}, so nothing was cached. Check that the \
+					 patterns are relative to the workspace, and that the task writes there",
+					outputs
+				);
+			}
+			if entries.iter().all(|entry| entry.is_dir) {
+				anyhow::bail!(
+					"outputs {:?} matched only empty directories, so nothing was cached. \
+					 Check that the task writes its files where the patterns point",
+					outputs
+				);
+			}
 		}
+
+		meta.key = key.to_string();
+		meta.outputs = outputs.to_vec();
+		meta.artifact_size = 0;
+		meta.output_digest = String::new();
+
+		// Metadata first, incomplete. Between here and the rename below there is an
+		// artifact with no metadata on disk, which is exactly the shape the sweep
+		// reclaims — and that sweep runs at the end of every run under
+		// `maxCacheSize`, not just under `lattice prune`.
+		self.write_meta(&meta)?;
 
 		let tar_path = self.tar_path(key);
 		let tmp_tar = self.tmp_path(key, "tar");
@@ -297,24 +344,31 @@ impl CacheStore for LocalStore {
 			Ok(size) => size,
 			Err(e) => {
 				let _ = std::fs::remove_file(&tmp_tar);
+				self.abandon_pending(key);
 				return Err(e);
 			}
 		};
 
-		meta.key = key.to_string();
-		meta.outputs = outputs.to_vec();
-		meta.artifact_size = size;
-		meta.output_digest = Self::digest_file(&tmp_tar)
-			.with_context(|| format!("failed to digest artifact {}", tmp_tar.display()))?;
+		let digest = match Self::digest_file(&tmp_tar) {
+			Some(digest) => digest,
+			None => {
+				let _ = std::fs::remove_file(&tmp_tar);
+				self.abandon_pending(key);
+				anyhow::bail!("failed to digest artifact {}", tmp_tar.display());
+			}
+		};
 
-		// Rename last: until this succeeds no reader can see a partial artifact, and
-		// after it the artifact at the key is always complete.
+		// Rename before completing the metadata: until this succeeds no reader can
+		// see a partial artifact, and after it the artifact at the key is complete.
 		if let Err(e) = std::fs::rename(&tmp_tar, &tar_path) {
 			let _ = std::fs::remove_file(&tmp_tar);
+			self.abandon_pending(key);
 			return Err(e)
 				.with_context(|| format!("failed to write artifact {}", tar_path.display()));
 		}
 
+		meta.artifact_size = size;
+		meta.output_digest = digest;
 		self.write_meta(&meta)?;
 		Ok(())
 	}
@@ -390,11 +444,10 @@ impl CacheStore for LocalStore {
 		let mut removed = 0usize;
 		let mut bytes_freed = 0u64;
 
-		// Retire any artifact left without metadata by an interrupted store, and
-		// any staging file left behind by one. Neither can ever be read, so they
-		// are pure leaked bytes — and because prune enumerates by metadata, an
-		// orphaned artifact would otherwise be invisible to it and could never be
-		// reclaimed.
+		// Retire what an interrupted store left behind, once it is old enough to be
+		// provably interrupted. None of it can ever be read, so they are pure leaked
+		// bytes — and because prune enumerates by metadata, an orphaned artifact
+		// would otherwise be invisible to it and could never be reclaimed.
 		let (orphan_count, orphan_bytes) = self.sweep_unreadable()?;
 		removed += orphan_count;
 		bytes_freed += orphan_bytes;
@@ -441,6 +494,14 @@ impl CacheStore for LocalStore {
 
 			let size = self.entry_size(&key);
 			total += size;
+
+			// An incomplete entry is either a store in flight or one the sweep above
+			// judged too young to reclaim. Its bytes count against the budget, but
+			// evicting it would race the process that is writing it.
+			if !meta.is_complete() {
+				continue;
+			}
+
 			rows.push(Row {
 				key,
 				last_used: meta.last_used,
@@ -505,16 +566,57 @@ impl LocalStore {
 		}
 	}
 
-	/// Delete artifacts with no metadata and stale staging files. Returns what it
+	/// Drop the incomplete metadata a failed store wrote, leaving nothing at the
+	/// key. A store that has since completed the same key is left alone.
+	fn abandon_pending(&self, key: &str) {
+		if let Ok(Some(meta)) = self.read_meta(key) {
+			if !meta.is_complete() {
+				let _ = std::fs::remove_file(self.meta_path(key));
+			}
+		}
+	}
+
+	/// Delete what an interrupted store left behind: staging files, artifacts with
+	/// no metadata, and metadata that never got a digest. Returns what it
 	/// reclaimed.
+	///
+	/// Only leftovers older than [`ABANDONED_AFTER`] are touched. A store running
+	/// right now passes through every one of these shapes, and this sweep runs on
+	/// any machine sharing the cache directory, so age is the only evidence that a
+	/// leftover is not simply someone else's work in progress.
 	fn sweep_unreadable(&self) -> Result<(usize, u64)> {
 		let mut removed = 0usize;
 		let mut freed = 0u64;
+		let now = std::time::SystemTime::now();
 
 		if let Ok(read_dir) = std::fs::read_dir(&self.cache_dir) {
 			for entry in read_dir.flatten() {
 				let name = entry.file_name();
 				let name = name.to_string_lossy().into_owned();
+				let Ok(fs_meta) = entry.metadata() else {
+					continue;
+				};
+				if !is_abandoned(&fs_meta, now) {
+					continue;
+				}
+
+				if let Some(key) = name.strip_suffix(".meta.json") {
+					if self
+						.read_meta(key)
+						.ok()
+						.flatten()
+						.is_some_and(|m| m.is_complete())
+					{
+						continue;
+					}
+					// The artifact goes with it: unreadable metadata and incomplete
+					// metadata both describe an entry nothing can ever hit.
+					let (n, b) = self.remove_entry(key);
+					removed += n;
+					freed += b;
+					continue;
+				}
+
 				let stale_tmp = name.ends_with(".tmp");
 				let orphan_tar = name
 					.strip_suffix(".tar.gz")
@@ -523,7 +625,7 @@ impl LocalStore {
 				if !stale_tmp && !orphan_tar {
 					continue;
 				}
-				let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+				let size = fs_meta.len();
 				if std::fs::remove_file(entry.path()).is_ok() {
 					removed += 1;
 					freed += size;
@@ -533,6 +635,16 @@ impl LocalStore {
 
 		Ok((removed, freed))
 	}
+}
+
+/// Whether a leftover has sat untouched long enough to be called abandoned. An
+/// mtime in the future (a clock skewed between machines sharing the cache) counts
+/// as recent, so a leftover is never removed on the strength of a bad clock.
+fn is_abandoned(meta: &std::fs::Metadata, now: std::time::SystemTime) -> bool {
+	meta.modified()
+		.ok()
+		.and_then(|modified| now.duration_since(modified).ok())
+		.is_some_and(|age| age >= ABANDONED_AFTER)
 }
 
 /// A filename-safe id for a `(workspace, task)` pair. Hashed rather than
@@ -741,7 +853,7 @@ pub fn compute_key_detailed(inputs: &HashInputs) -> Result<KeyBreakdown> {
 					.to_string_lossy()
 					.into_owned();
 				hash_field(h, "input.path", rel.as_bytes());
-				hash_file_into(h, "input.content", file_path)?;
+				hash_input_into(h, "input", file_path)?;
 			}
 			Ok(())
 		})?,
@@ -860,7 +972,7 @@ pub fn global_dependencies_digest(repo_root: &Path, patterns: &[String]) -> Resu
 				.to_string_lossy()
 				.into_owned();
 			hash_field(h, "global.path", rel.as_bytes());
-			hash_file_into(h, "global.content", file_path)?;
+			hash_input_into(h, "global", file_path)?;
 		}
 		Ok(())
 	})
@@ -888,10 +1000,18 @@ fn hash_file_into(hasher: &mut Sha256, tag: &str, path: &Path) -> Result<()> {
 	use std::io::Read;
 	let mut file = std::fs::File::open(path)
 		.with_context(|| format!("failed to read input file {}", path.display()))?;
-	let len = file
+	let fs_meta = file
 		.metadata()
-		.with_context(|| format!("failed to stat {}", path.display()))?
-		.len();
+		.with_context(|| format!("failed to stat {}", path.display()))?;
+	let len = fs_meta.len();
+	// The artifact preserves the mode, so a `chmod +x` changes what a hit restores
+	// and has to change the key. Only the executable bit: the rest of the mode is
+	// umask and platform noise that would keep a key from ever matching twice.
+	hash_field(
+		hasher,
+		"mode.executable",
+		if is_executable(&fs_meta) { b"1" } else { b"0" },
+	);
 	hasher.update((tag.len() as u64).to_le_bytes());
 	hasher.update(tag.as_bytes());
 	hasher.update(len.to_le_bytes());
@@ -918,6 +1038,39 @@ fn hash_file_into(hasher: &mut Sha256, tag: &str, path: &Path) -> Result<()> {
 		);
 	}
 	Ok(())
+}
+
+/// Windows has no executable bit, so every file there is reported non-executable
+/// and the component stays stable across runs on that platform.
+#[cfg(unix)]
+fn is_executable(meta: &std::fs::Metadata) -> bool {
+	use std::os::unix::fs::PermissionsExt;
+	meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_meta: &std::fs::Metadata) -> bool {
+	false
+}
+
+/// Hash one input node under `tag`: a symlink contributes the path it points at,
+/// anything else its contents.
+///
+/// A link's target is part of what the run saw, and `store` keeps symlinks as
+/// symlinks, so re-pointing one has to move the key. Reading through it instead
+/// would hash whatever sits outside the workspace and lose the link itself.
+fn hash_input_into(hasher: &mut Sha256, tag: &str, path: &Path) -> Result<()> {
+	match std::fs::read_link(path) {
+		Ok(target) => {
+			hash_field(
+				hasher,
+				&format!("{tag}.symlink"),
+				target.to_string_lossy().as_bytes(),
+			);
+			Ok(())
+		}
+		Err(_) => hash_file_into(hasher, &format!("{tag}.content"), path),
+	}
 }
 
 /// Collect files under `base` whose `base`-relative path matches any of
@@ -965,6 +1118,11 @@ fn collect_matching_files(
 /// One node destined for (or restored from) an artifact.
 struct OutputEntry {
 	path: PathBuf,
+	/// A real directory, as opposed to a file or a symlink to one. Directories are
+	/// carried so an empty one survives a round trip, but on their own they are not
+	/// something a task produced, and clearing them has to come after their
+	/// contents.
+	is_dir: bool,
 }
 
 /// Expand any metacharacter-free pattern that names an existing directory into
@@ -1049,6 +1207,7 @@ fn walk_outputs(
 		if !rel.as_os_str().is_empty() && set.is_match(rel) {
 			out.push(OutputEntry {
 				path: path.to_path_buf(),
+				is_dir: !is_symlink && meta.is_dir(),
 			});
 		}
 	}
@@ -1074,25 +1233,36 @@ fn walk_outputs(
 	}
 }
 
-/// Delete the files and symlinks under `base` that `outputs` matches, so a restore
-/// starts from a clean slate. Directories are left in place; unpacking recreates
-/// whatever it needs.
+/// Delete what `outputs` matches under `base`, so a restore starts from a clean
+/// slate and reproduces the tree the cached run produced.
+///
+/// Directories go too, deepest first and only with `remove_dir`, so a matched
+/// directory holding something the patterns never named survives. The artifact
+/// carries the directories the run did produce, so unpacking puts them back.
 fn clear_outputs(base: &Path, outputs: &[String]) -> Result<()> {
 	if outputs.is_empty() {
 		return Ok(());
 	}
+
+	let mut dirs: Vec<PathBuf> = Vec::new();
 	for entry in collect_output_entries(base, outputs)? {
 		// Never step outside the workspace, whatever the pattern said.
 		if entry.path.strip_prefix(base).is_err() {
 			continue;
 		}
-		let Ok(meta) = std::fs::symlink_metadata(&entry.path) else {
-			continue;
-		};
-		if meta.is_dir() && !meta.file_type().is_symlink() {
+		if entry.is_dir {
+			dirs.push(entry.path);
 			continue;
 		}
-		let _ = std::fs::remove_file(&entry.path);
+		// Windows needs `remove_dir` for a symlink that points at a directory.
+		if std::fs::remove_file(&entry.path).is_err() {
+			let _ = std::fs::remove_dir(&entry.path);
+		}
+	}
+
+	dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+	for dir in &dirs {
+		let _ = std::fs::remove_dir(dir);
 	}
 	Ok(())
 }
@@ -1137,9 +1307,14 @@ fn collect_workspace_files(base: &Path, ignore_patterns: &[String]) -> Result<Ve
 		.build();
 
 	for entry in walker.flatten() {
-		// Symlinks are leaves (follow_links is off), so file_type is Symlink for
-		// them and they are skipped rather than followed out of the workspace.
-		if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+		// Symlinks are leaves (follow_links is off), so they are kept as nodes whose
+		// target path gets hashed rather than followed out of the workspace. Keeping
+		// them is what makes re-pointing a link move the key.
+		let keep = entry
+			.file_type()
+			.map(|t| t.is_file() || t.is_symlink())
+			.unwrap_or(false);
+		if !keep {
 			continue;
 		}
 		let path = entry.path();
@@ -1168,12 +1343,13 @@ fn literal_prefix(pattern: &str) -> PathBuf {
 	prefix
 }
 
-/// Recursively walk `path`, pushing files whose `base`-relative path matches
-/// `include_set` and not `ignore_set`.
+/// Recursively walk `path`, pushing the files and symlinks whose `base`-relative
+/// path matches `include_set` and not `ignore_set`.
 ///
-/// Uses `symlink_metadata`, so a symlink is a leaf: a link pointing at a
-/// directory is never descended into (which would recurse forever on a cycle)
-/// and a link pointing outside the workspace never pulls foreign files in.
+/// A symlink is recorded as a node in its own right — the hasher takes its target
+/// path, not the bytes on the other end. A symlink to a directory is *also*
+/// descended, because `inputs: ["vendor/**"]` against a symlinked `vendor` has to
+/// hash the files it names. `MAX_WALK_DEPTH` is what ends a cycle.
 fn walk_matching(
 	path: &Path,
 	base: &Path,
@@ -1188,17 +1364,29 @@ fn walk_matching(
 	let Ok(meta) = std::fs::symlink_metadata(path) else {
 		return;
 	};
-	if meta.file_type().is_symlink() {
-		return;
-	}
-	if meta.is_file() {
+	let is_symlink = meta.file_type().is_symlink();
+
+	if is_symlink || meta.is_file() {
 		if let Ok(rel) = path.strip_prefix(base) {
-			if include_set.is_match(rel) && !ignore_set.is_match(rel) {
+			if !rel.as_os_str().is_empty() && include_set.is_match(rel) && !ignore_set.is_match(rel)
+			{
 				out.push(path.to_path_buf());
 			}
 		}
+		if !is_symlink {
+			return;
+		}
+	}
+
+	let is_dir = if is_symlink {
+		std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+	} else {
+		meta.is_dir()
+	};
+	if !is_dir {
 		return;
 	}
+
 	let entries = match std::fs::read_dir(path) {
 		Ok(e) => e,
 		Err(_) => return,
@@ -1221,6 +1409,7 @@ fn walk_matching(
 mod tests {
 	use super::*;
 	use std::collections::HashMap;
+	use std::time::Duration;
 	use tempfile::TempDir;
 
 	fn write(path: &Path, content: &str) {
@@ -1228,6 +1417,15 @@ mod tests {
 			std::fs::create_dir_all(parent).unwrap();
 		}
 		std::fs::write(path, content).unwrap();
+	}
+
+	/// Backdate a leftover past the sweep's grace period, so a test can tell an
+	/// abandoned store from one that merely started a moment ago.
+	fn backdate_past_grace(path: &Path) {
+		let then = std::time::SystemTime::now() - ABANDONED_AFTER - Duration::from_secs(60);
+		let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+		file.set_times(std::fs::FileTimes::new().set_modified(then))
+			.unwrap();
 	}
 
 	fn base_inputs<'a>(
@@ -1620,9 +1818,10 @@ mod tests {
 		write(&toolchain.join("faketool"), "#!/bin/sh\n");
 		let installed = base.path().join("bin");
 		write(&installed.join("lattice"), "the binary in use");
-		// Debris from an interrupted store, which should go.
+		// Debris from an interrupted store, old enough to be certain of it.
 		let orphan = base.path().join("deadbeef.tar.gz");
 		write(&orphan, "an artifact whose metadata never landed");
+		backdate_past_grace(&orphan);
 
 		store.prune(u64::MAX).unwrap();
 
@@ -1794,6 +1993,7 @@ mod tests {
 		std::fs::create_dir_all(&store.cache_dir).unwrap();
 		let orphan = store.cache_dir.join("orphan.tar.gz");
 		std::fs::write(&orphan, vec![0u8; 4096]).unwrap();
+		backdate_past_grace(&orphan);
 
 		let report = store.prune(u64::MAX).unwrap();
 		assert!(!orphan.exists(), "an orphaned artifact must be reclaimed");
@@ -2134,5 +2334,278 @@ mod tests {
 		let report = store.prune(10).unwrap();
 		assert_eq!(report.removed, 0);
 		assert_eq!(report.bytes_freed, 0);
+	}
+
+	/// The walk stopped at any symlink, including the root it started from, so
+	/// `inputs` pointing at a symlinked directory hashed nothing at all and the key
+	/// could never move again.
+	#[cfg(unix)]
+	#[test]
+	fn declared_inputs_reach_through_a_symlinked_directory() {
+		let real = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		write(&real.path().join("lib.txt"), "one");
+		std::os::unix::fs::symlink(real.path(), ws.path().join("vendor")).unwrap();
+
+		let task = PipelineTask {
+			inputs: Some(vec!["vendor/**".to_string()]),
+			..Default::default()
+		};
+		let before = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+		write(&real.path().join("lib.txt"), "two");
+		let after = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+
+		assert_ne!(
+			before, after,
+			"files behind a symlinked input directory must be hashed"
+		);
+	}
+
+	/// Re-pointing a link at a file with identical contents left the key unchanged,
+	/// so a hit restored the artifact built from the old target.
+	#[cfg(unix)]
+	#[test]
+	fn repointing_a_declared_input_symlink_moves_the_key() {
+		let ws = TempDir::new().unwrap();
+		write(&ws.path().join("config/production.yaml"), "replicas: 9");
+		write(&ws.path().join("config/staging.yaml"), "replicas: 9");
+		let link = ws.path().join("config/active.yaml");
+		std::os::unix::fs::symlink("production.yaml", &link).unwrap();
+
+		let task = PipelineTask {
+			inputs: Some(vec!["config/*".to_string()]),
+			..Default::default()
+		};
+		let before = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+		std::fs::remove_file(&link).unwrap();
+		std::os::unix::fs::symlink("staging.yaml", &link).unwrap();
+		let after = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+
+		assert_ne!(
+			before, after,
+			"a symlink's target path must be part of the key"
+		);
+	}
+
+	/// The same, for the whole-workspace walk a task with no `inputs` uses.
+	#[cfg(unix)]
+	#[test]
+	fn repointing_an_undeclared_input_symlink_moves_the_key() {
+		let ws = TempDir::new().unwrap();
+		write(&ws.path().join("production.yaml"), "replicas: 9");
+		write(&ws.path().join("staging.yaml"), "replicas: 9");
+		let link = ws.path().join("active.yaml");
+		std::os::unix::fs::symlink("production.yaml", &link).unwrap();
+
+		let task = PipelineTask::default();
+		let before = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+		std::fs::remove_file(&link).unwrap();
+		std::os::unix::fs::symlink("staging.yaml", &link).unwrap();
+		let after = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+
+		assert_ne!(
+			before, after,
+			"a symlink's target path must be part of the key"
+		);
+	}
+
+	/// A bare `dist` pattern matches the directory itself, so an empty `dist/`
+	/// stored a valid artifact holding nothing. Every later run then hit it, and the
+	/// restore deleted whatever a real run had produced.
+	#[test]
+	fn store_refuses_when_a_bare_directory_output_is_empty() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		std::fs::create_dir_all(ws.path().join("dist")).unwrap();
+		let store = LocalStore::new(cache.path().to_path_buf());
+
+		let err = store
+			.store("empty", ws.path(), &["dist".to_string()], meta_for("empty"))
+			.expect_err("an empty output directory is not a result worth caching");
+		assert!(
+			err.to_string().contains("matched only empty directories"),
+			"unexpected error: {err}"
+		);
+		assert!(
+			store.lookup("empty").unwrap().is_none(),
+			"a refused store must leave no entry behind"
+		);
+		assert!(
+			!store.meta_path("empty").exists(),
+			"a refused store must leave no metadata behind"
+		);
+	}
+
+	/// The mode is preserved in the artifact but was absent from the key, so
+	/// `chmod +x` produced a hit that restored the non-executable file.
+	#[cfg(unix)]
+	#[test]
+	fn hash_changes_with_the_executable_bit() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let ws = TempDir::new().unwrap();
+		let script = ws.path().join("bin/entrypoint.sh");
+		write(&script, "#!/bin/sh\nexec app\n");
+
+		let task = PipelineTask {
+			inputs: Some(vec!["bin/*".to_string()]),
+			..Default::default()
+		};
+		let before = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+		std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+		let after = compute_key(&base_inputs(ws.path(), &task, &[])).unwrap();
+
+		assert_ne!(before, after, "the executable bit must be part of the key");
+	}
+
+	/// Between the artifact landing and the metadata landing, a live store looked
+	/// exactly like an abandoned one — and cleanup runs at the end of every run
+	/// under `maxCacheSize`, so it deleted the artifact out from under the store.
+	#[test]
+	fn a_recent_leftover_is_not_swept() {
+		let cache = TempDir::new().unwrap();
+		let store = LocalStore::new(cache.path().to_path_buf());
+		std::fs::create_dir_all(&store.cache_dir).unwrap();
+		let in_flight = store.tar_path("beef");
+		std::fs::write(&in_flight, vec![0u8; 512]).unwrap();
+
+		let report = store.prune(u64::MAX).unwrap();
+		assert!(
+			in_flight.exists(),
+			"a leftover this young may be a store still running"
+		);
+		assert_eq!(report.removed, 0);
+	}
+
+	/// The pending metadata that now precedes the artifact must never read as a hit,
+	/// and must not survive forever if the store that wrote it died.
+	#[test]
+	fn an_incomplete_entry_is_never_a_hit_and_is_eventually_reclaimed() {
+		let cache = TempDir::new().unwrap();
+		let store = LocalStore::new(cache.path().to_path_buf());
+		let mut meta = meta_for("half");
+		meta.output_digest = String::new();
+		store.write_meta(&meta).unwrap();
+		std::fs::write(store.tar_path("half"), vec![0u8; 64]).unwrap();
+
+		assert!(
+			store.lookup("half").unwrap().is_none(),
+			"an entry with no recorded digest is not a hit"
+		);
+		store.prune(u64::MAX).unwrap();
+		assert!(
+			store.meta_path("half").exists(),
+			"a young incomplete entry may still be a store in flight"
+		);
+
+		backdate_past_grace(&store.meta_path("half"));
+		let report = store.prune(u64::MAX).unwrap();
+		assert!(
+			!store.meta_path("half").exists() && !store.tar_path("half").exists(),
+			"an abandoned incomplete entry must be reclaimed"
+		);
+		assert_eq!(report.removed, 1);
+	}
+
+	/// If the metadata cannot be written there must be no artifact at the key, since
+	/// the artifact-first order is what made a live store indistinguishable from an
+	/// abandoned one.
+	#[test]
+	fn store_writes_its_metadata_before_the_artifact() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		write(&ws.path().join("dist/app.js"), "body");
+		let store = LocalStore::new(cache.path().to_path_buf());
+		// A directory where the metadata belongs: the rename into place cannot win.
+		std::fs::create_dir_all(store.meta_path("blocked")).unwrap();
+
+		store
+			.store(
+				"blocked",
+				ws.path(),
+				&["dist/**".to_string()],
+				meta_for("blocked"),
+			)
+			.expect_err("metadata that cannot be written must fail the store");
+		assert!(
+			!store.tar_path("blocked").exists(),
+			"the artifact must not be written before its metadata"
+		);
+	}
+
+	/// A store that dies partway leaves nothing readable at the key.
+	#[test]
+	fn a_store_that_cannot_write_its_artifact_leaves_no_entry() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		write(&ws.path().join("dist/app.js"), "body");
+		let store = LocalStore::new(cache.path().to_path_buf());
+		// A directory where the artifact belongs: the rename into place cannot win.
+		std::fs::create_dir_all(store.tar_path("stuck")).unwrap();
+
+		store
+			.store(
+				"stuck",
+				ws.path(),
+				&["dist/**".to_string()],
+				meta_for("stuck"),
+			)
+			.expect_err("an artifact that cannot be written must fail the store");
+		assert!(
+			!store.meta_path("stuck").exists(),
+			"a failed store must not leave metadata behind"
+		);
+		assert!(store.lookup("stuck").unwrap().is_none());
+	}
+
+	/// `clear_outputs` skipped directories, so a hit left behind directories the
+	/// cached run never produced.
+	#[test]
+	fn restore_removes_directories_the_cached_run_did_not_produce() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		let outputs = vec!["dist/**".to_string()];
+		write(&ws.path().join("dist/app.js"), "body");
+
+		let store = LocalStore::new(cache.path().to_path_buf());
+		store
+			.store("d1", ws.path(), &outputs, meta_for("d1"))
+			.unwrap();
+
+		write(&ws.path().join("dist/chunks/stale.js"), "stale");
+		let entry = store.lookup("d1").unwrap().unwrap();
+		store.restore(&entry, ws.path()).unwrap();
+
+		assert_eq!(
+			std::fs::read_to_string(ws.path().join("dist/app.js")).unwrap(),
+			"body"
+		);
+		assert!(
+			!ws.path().join("dist/chunks").exists(),
+			"a directory the cached run never produced must not survive a hit"
+		);
+	}
+
+	/// Clearing directories must not reach past what `outputs` names.
+	#[test]
+	fn restore_keeps_a_directory_holding_files_the_patterns_never_named() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		let outputs = vec!["dist/*.js".to_string()];
+		write(&ws.path().join("dist/app.js"), "body");
+
+		let store = LocalStore::new(cache.path().to_path_buf());
+		store
+			.store("d2", ws.path(), &outputs, meta_for("d2"))
+			.unwrap();
+
+		write(&ws.path().join("dist/notes.txt"), "hand written");
+		let entry = store.lookup("d2").unwrap().unwrap();
+		store.restore(&entry, ws.path()).unwrap();
+
+		assert!(
+			ws.path().join("dist/notes.txt").exists(),
+			"a file no output pattern matches is not ours to delete"
+		);
 	}
 }

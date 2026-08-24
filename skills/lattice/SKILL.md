@@ -96,8 +96,30 @@ Every item here is something models invent. None of it parses.
 - **A persistent task blocks.** Once a run starts a task declared
   `persistent: true`, `lattice run` streams its output and waits. Never call one
   from a blocking foreground command. Run it in the background, or run only its
-  non-persistent prerequisites. If the process exits anyway, the run reports
-  `EXITED (code <n>)` and ends, counting a non-zero exit as a failed task.
+  non-persistent prerequisites. Four things end such a run: the first `Ctrl-C`, a
+  `SIGTERM`, the exit of every persistent task, or the failure of any task in the
+  run. If the process exits anyway, the run reports `EXITED (code <n>)` and ends,
+  counting a non-zero exit as a failed task.
+- **An interrupted run reports no failures.** `Ctrl-C` and `SIGTERM` stop the
+  scheduler and terminate each task's process group. A task stopped that way
+  prints no `FAILED` line and is not counted, so read the exit code. `130` is an
+  interrupt and `1` is a real failure. Do not infer success from `0 failed`.
+- **A manifest-driven workspace can only run a script its manifest declares.**
+  `npm`, `pnpm`, `yarn`, and `bun` read `scripts` in `package.json`. `deno` reads
+  `tasks` in `deno.json` or `deno.jsonc`. A task the manifest does not declare is
+  not run there. The task drops out of the graph and the run carries on. Lattice
+  does not fabricate `npm run <task>`. Every other driver takes the task name on
+  its command line, so `lattice run test` in a `cargo` workspace runs
+  `cargo test` whether or not a target exists. To run a task in a workspace whose
+  manifest does not declare it, add a `scripts` entry in `lattice.json`.
+- **A skipped task warns when it looks like a typo.** A workspace whose manifest
+  declares a script map without the requested task prints
+  `<ws> declares scripts but no "<task>", so the task was skipped`, plus either a
+  `Did you mean` suggestion or advice to declare the task. `tasks` replaces
+  `scripts` in the message for deno. The warning fires on `--dry-run` too, covers
+  only the tasks being run, and is *not* narrowed by `--filter`. A manifest with
+  no script map at all produces no warning, and neither does an `auto: false`
+  workspace. Treat the warning as a config problem, not as a run failure.
 - **A declaration does not override a higher-ranked driver.** Detection resolves
   by role rank first: task runner, then package manager, then build tool, then
   runtime. An `engines` declaration only breaks a tie among candidates already at
@@ -112,8 +134,19 @@ Every item here is something models invent. None of it parses.
   `.gitignore` in the workspace and every ancestor directory. It is correct but
   slower than it needs to be, and it re-runs on changes the command never reads.
 - **Declared `inputs` ignore `.gitignore`.** Once `inputs` is present, only
-  `.lattice`, `.git`, `.hg`, `.svn`, `.jj`, and symlinks are skipped. A glob that
-  reaches into `node_modules` or `target` will hash it.
+  `.lattice`, `.git`, `.hg`, `.svn`, and `.jj` are skipped. A glob that reaches
+  into `node_modules` or `target` will hash it. Symlinks are not skipped. The
+  walk descends a symlinked directory, and a symlinked file contributes the path
+  it points at rather than the bytes on the other end.
+- **A key written twice in `tasks`, `engines`, or `scripts` fails the load.**
+  Editing a config by appending is how this happens. The message names the key,
+  the container, and the position, and its second line reads `Keep one of them:
+  the second replaces the first, so only the last would take effect`. Merge the
+  two entries by hand. There is no last-wins behavior to rely on.
+- **Every `scripts` key must name a task declared under root `tasks`.** A
+  `scripts` entry supplies the command for the root task of the same name and
+  nothing else, so a key outside `tasks` can never run. Such a key is a load
+  error with a `Did you mean` suggestion, not a no-op.
 - **`inputs` cannot name a file above the workspace.** Patterns are relative to
   the workspace directory, and `tasks` is shared by every workspace, so a shared
   root file has no `inputs` spelling that means the same thing everywhere. Put it
@@ -135,7 +168,13 @@ Every item here is something models invent. None of it parses.
   you type.
 - **`lattice run` installs nothing.** It expects dependencies and toolchains to
   be in place. `lattice setup` provisions `engines` and runs each workspace's
-  native installer.
+  native installer. `setup` skips a workspace whose install marker under
+  `.lattice/setup` is newer than every lockfile governing that workspace. Those
+  lockfiles are the one in the workspace *and every one above it* up to the repo
+  root, so a hoisted npm, pnpm, or yarn tree with one root lockfile works.
+  `setup` refuses a workspace name the config does not declare. It gives the
+  installer no stdin, so an installer that prompts fails immediately instead of
+  hanging.
 - **`lattice` never invents a driver.** When a workspace's evidence is ambiguous
   or absent, the run halts with a fix printed. Do not work around a halt by
   guessing a command into `scripts` before asking. See
@@ -242,7 +281,7 @@ The cache key is a sha256 over ten separately hashed components:
 | `patterns` | The `inputs`, `outputs`, and `ignore` glob lists themselves |
 | `env` | The names in the task's `env`, with their resolved values |
 | `globalEnv` | The names in the root `globalEnv`, with their resolved values |
-| `inputs` | Contents of every file `inputs` matched, minus `ignore` and minus `outputs`. With no `inputs`, the whole workspace |
+| `inputs` | Every file `inputs` matched, minus `ignore` and minus `outputs`: its path, its executable bit, and its contents. A symlink contributes its target path instead of contents. With no `inputs`, the whole workspace |
 | `manifests` | Contents of every recognized manifest and lockfile in the workspace, plus lockfiles at the repo root |
 | `globalDependencies` | The root `globalDependencies` patterns and the contents of what they match |
 
@@ -256,6 +295,11 @@ Two consequences worth knowing before debugging a hit or a miss:
   files it reads did not change.
 - A task's own `outputs` never affect its key, so there is no need to repeat them
   in `ignore`.
+- `chmod +x` on a hashed file moves the key. Lattice hashes the executable bit
+  with every file's contents, because the artifact restores file modes. Nothing
+  else about the mode counts.
+- Re-pointing a symlink moves the key, even when the new target holds identical
+  bytes. Lattice hashes the link's target path, not the bytes it points at.
 
 That makes six fields yours to get right:
 
@@ -267,8 +311,12 @@ That makes six fields yours to get right:
   sweeps in logs or an inner tool's cache directory.
 - `outputs` is what gets archived on success and restored on a hit. A file the
   command produces that no `outputs` glob matches is never saved. A task that
-  declares `outputs` and produces none of them is not cached at all, and warns.
-  `test` and `lint` usually need none.
+  declares `outputs` and produces no file under them is not cached at all, and
+  warns. The warning reads `no files matched outputs [...]` when the patterns
+  matched nothing, and `outputs [...] matched only empty directories` when a bare
+  pattern like `"dist"` matched a directory holding nothing. `test` and `lint`
+  usually need none. A hit clears what the recorded `outputs` match, directories
+  included, so a directory the cached run never produced does not survive a hit.
 - `env` holds variable *names*, not `NAME=value` pairs. The resolved value is
   hashed, and a set one is also exported to the task. An unset name is still
   hashed as declared, so adding a name moves the key. Lattice does not read
@@ -281,11 +329,18 @@ That makes six fields yours to get right:
   into every key, and not re-exported to the task, which already inherits it.
 
 Set `cache: false` to opt one task out entirely. `persistent: true` is never
-cached regardless. The cache lives in `.lattice/cache` (move it with
-`settings.cacheDir`) and is safe to delete at any time. With
+cached regardless. The cache lives in `.lattice/cache` and is safe to delete at
+any time. `settings.cacheDir` moves it. The value has to name a directory inside
+the repo, and it cannot be the repo root, because `lattice prune` deletes
+archives and partial writes in whatever directory the value names. With
 `settings.maxCacheSize` set, every run that writes evicts least-recently-used
 entries down to it. With no budget set, the cache grows without limit and
 `lattice prune --max-size <size>` sweeps it by hand.
+
+Files left behind by an interrupted run are reclaimed only once they are an hour
+old, so a `prune` immediately after a `SIGKILL` reports `removed 0 artifacts`.
+The delay lets two `lattice` processes share one cache directory without deleting
+each other's writes.
 
 **Debugging a miss:** run with `-v`. Each miss names the component that moved:
 
@@ -308,6 +363,17 @@ The tool's name has no effect on which.
 | Nothing, `{}`, or an object with only `versionCmd` or only `bin` | Uses whatever is on `PATH`. Installs nothing, checks nothing, not even that the tool exists |
 | A version constraint and no `installCmd` | Runs the tool's version command on the host and fails before any task starts if it does not satisfy the constraint. Installs nothing |
 | An `installCmd` | Installs into `.lattice/toolchains/<engine>/<version>-<hash>/`, version-checks it, pins it, and prepends its `bin` to that task's `PATH` |
+
+`bin` defaults to `"bin"` and is resolved against the install directory. The
+value has to be relative, non-empty, and inside that directory. `"/usr/bin"` is
+a load error, not a way to point a declared toolchain at a host path.
+
+A version Lattice cannot read is never invented. A provisioned engine with no
+`versionCmd` and no built-in rule installs under `unknown-<hash>` and contributes
+`<name>=unknown@<hash>` to the cache key. A `version` constraint on such an
+engine is an error, not a constraint nobody checks. Older releases recorded
+`0.0.0` instead, a version nothing had installed, and fed it into every cache
+key.
 
 The bare string form (`"node": ">=20.0.0"`) works only for the 40 engines
 Lattice has a built-in version rule for. Any other name needs the object form
@@ -365,9 +431,10 @@ Order matters. Skipping ahead is what makes an adoption feel like a rewrite.
    `rust-toolchain.toml` or `rust-toolchain`, `.python-version`, `.ruby-version`,
    `.java-version`, `package.json` (`packageManager` and `engines`), and a
    `toolchain` line in `go.mod`. Then it writes
-   `lattice.json`, a committed `.lattice/schema.json`, and three `.gitignore`
-   lines (`.lattice/cache/`, `.lattice/toolchains/`, `.lattice/bin/`). Without a
-   TTY it behaves as `-y`, and writes a bare skeleton if the scan finds nothing.
+   `lattice.json`, a committed `.lattice/schema.json`, and five `.gitignore`
+   lines (`.lattice/cache/`, `.lattice/toolchains/`, `.lattice/bin/`,
+   `.lattice/setup/`, and `.lattice-setup-marker`). Without a TTY it behaves as
+   `-y`, and writes a bare skeleton if the scan finds nothing.
    It refuses to overwrite an existing `lattice.json` without `--force`.
 2. Check what it proposed. It declares workspaces, not tasks. Confirm with
    `lattice run build --dry-run` that each resolved command is the one that
@@ -377,9 +444,12 @@ Order matters. Skipping ahead is what makes an adoption feel like a rewrite.
 3. Only then add `inputs` and `outputs`.
 4. Keep only the `engines` whose guarantee is actually needed. `init` proposes
    every pin it found, which is usually more than a repo needs enforced.
-5. Add `.lattice-setup-marker` to `.gitignore`. `lattice setup` writes one in
-   each workspace it installs into, and `init` does not cover it, so it becomes a
-   hashed input for every task that declares no `inputs`.
+5. Leave the install markers alone. `lattice setup` writes them under
+   `.lattice/setup`, `init` covers that directory in `.gitignore`, and nothing
+   under `.lattice` is ever hashed into a cache key. Older releases wrote a
+   `.lattice-setup-marker` inside each workspace, which did reach the key of a
+   task with no `inputs`. `init` still ignores that name, and a successful
+   install deletes the file.
 
 Declaring a workspace stops nothing. Its existing `package.json` scripts,
 `Makefile`, and CI steps keep working. Bring workspaces in one at a time and use

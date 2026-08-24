@@ -29,6 +29,8 @@ mean the workspace is otherwise the same as last time. The set is:
 
 - the workspace, the task name, and the fully resolved command
 - the contents of every file matched by `inputs`, minus anything `ignore` removes
+- whether each of those files is executable, and, for a symlink, the path it
+  points at rather than the bytes on the other end
 - the cache key of every task this one depends on
 - the contents of the manifest the command resolves through, so editing the
   `build` script in `package.json` changes the work even though `npm run build`
@@ -90,6 +92,16 @@ A task that declares `outputs` and produces none of them is not cached, and the
 run warns. An empty artifact would verify perfectly on every future lookup, so
 the task would report a hit, restore nothing, and never run again. That is a
 worse outcome than not caching, so Lattice refuses.
+
+Patterns that matched only empty directories get the same refusal. A bare
+`outputs: ["dist"]` matches `dist/` itself, so an empty `dist/` looks like a
+match even though the task wrote nothing. Storing that would be worse than
+storing nothing, because every later hit would restore an empty `dist/` over
+whatever a real run had put there:
+
+```text
+outputs ["dist"] matched only empty directories, so nothing was cached. Check that the task writes its files where the patterns point
+```
 
 ## A damaged entry is a miss, never a wrong answer
 

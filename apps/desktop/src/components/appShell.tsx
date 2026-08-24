@@ -1,4 +1,5 @@
 import { useApp } from '../context/appContext.tsx';
+import { useReconnect } from '../hooks/useReconnect.ts';
 import ConfigView from './configView.tsx';
 import GraphView from './graphView.tsx';
 import ProjectSwitcher from './projectSwitcher.tsx';
@@ -11,6 +12,7 @@ import ThemeControl from './themeControl.tsx';
 
 const AppShell = () => {
 	const { project, view, info, error, dismissError, reload, busy } = useApp();
+	useReconnect(project);
 
 	return (
 		<div className="app-shell">

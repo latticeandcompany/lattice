@@ -178,8 +178,49 @@ template. Two limits on inference:
   no `cargo dev`. A persistent task on a direct-invoke driver needs an explicit
   `scripts` entry.
 
-A task with no command in a workspace is skipped silently when `auto` is true,
-and fatal when `auto` is false.
+A task with no command in a workspace is skipped when `auto` is true, and fatal
+when `auto` is false. The skipped task drops out of the graph and the run carries
+on. An older release fabricated `npm run <task>` for a manifest-driven workspace
+that declared no such script, and the fabricated command failed the build.
+
+The skip is not always silent. A warning names a workspace whose manifest
+declares a script map without the requested task, because a typo in the script
+name looks exactly the same:
+
+```text
+warn web declares scripts but no "build", so the task was skipped. Did you mean "biuld"?
+```
+
+```text
+warn web declares scripts but no "build", so the task was skipped. Declare it in the workspace's manifest, or under "scripts" in lattice.json, if the task should run there
+```
+
+```text
+warn some tasks were skipped: docs declares scripts but no "build"; web declares scripts but no "build" (did you mean "biuld"?). Declare each in the workspace's manifest, or under "scripts" in lattice.json, if the task should run there
+```
+
+`scripts` in that text is the manifest's own word for the map, so deno says
+`tasks`. Two or more skips collapse into the third form, in the order
+`lattice.json` declares the workspaces. The warning is emitted once per run, on
+`--dry-run` as well, and it covers only the tasks being run. `--filter` does not
+narrow it, because the warning is about the config rather than about this run's
+selection.
+
+Two cases stay silent. A manifest with no script map at all is a complete config
+for a package with nothing to build, and a workspace with `auto: false` never
+warns.
+
+A manifest Lattice cannot read gets one warning per workspace instead, and still
+runs nothing there:
+
+```text
+warn web: package.json could not be parsed: expected `,` or `}` at line 4 column 3, so every task it would have named was skipped
+```
+
+The other two reasons are `<file> could not be read: <io error>` and
+`<file> has a "<key>" that is not an object`. Lattice strips `//` and `/* */`
+comments from `deno.json` and `deno.jsonc`, so a commented Deno config resolves
+its tasks. `package.json` is parsed as strict JSON, the way npm parses it.
 
 ## What `lattice setup` installs per driver
 
@@ -216,11 +257,33 @@ workspace, chosen by the resolved driver.
 `node`, `python`, `ruby`, `java`, `kotlin`, `rake`, `just`, `task`, `turbo`, and
 `nx` have no install command. Their workspaces get toolchains and nothing else.
 
-After a successful install, `setup` writes an empty `.lattice-setup-marker` file
-in the workspace directory. It is the mtime `setup` compares lockfiles against
-to decide whether to reinstall. `--force` reinstalls regardless. `lattice init`
-does **not** add this file to `.gitignore`; add it yourself, or it becomes a
-hashed input for every task that declares no `inputs`.
+After a successful install, `setup` writes an empty marker file under
+`.lattice/setup`, one per workspace, named for the workspace's path relative to
+the repo root with `/` written `%2F` and a literal `%` written `%25`. So
+`apps/web` gets `.lattice/setup/apps%2Fweb.marker`, `apps-web` gets
+`.lattice/setup/apps-web.marker`, and the repo root as a workspace gets
+`.lattice/setup/.marker`. Encoding the separator rather than replacing it means
+two paths can never share a marker.
+
+`setup` compares lockfiles against that marker's mtime to decide whether to
+reinstall. The lockfiles it compares are the ones in the workspace and in every
+directory above it up to the repo root, so the one lockfile a hoisted npm, pnpm,
+or yarn tree keeps at the root governs every workspace under it. `--force`
+reinstalls regardless.
+
+`lattice init` writes `.lattice/setup/` to `.gitignore`, and nothing under
+`.lattice` is ever walked for a cache key, so the marker cannot move a hash.
+Older releases wrote a `.lattice-setup-marker` inside each workspace directory,
+which did reach the key of a task with no `inputs`. One of those still counts as
+a marker, so upgrading mid-project reinstalls nothing. `init` still ignores that
+name, and a successful install deletes the file.
+
+A marker that cannot be written is a warning, and the install runs again next
+time:
+
+```text
+lattice: warning: web: dependencies installed, but .lattice/setup/apps%2Fweb.marker could not be written, so the next `lattice setup` will install again: Permission denied (os error 13)
+```
 
 ## Well-known engines
 
@@ -344,13 +407,32 @@ the version, without reinstalling. A match is reused. So installation happens
 once per distinct `installCmd` string, not once per run, and editing the install
 command provisions into a new directory instead of reusing a stale one.
 
-The install stages into `tmp-<hash>` and is renamed to its final name only after
-the version check passes. Nothing is left pinned on a partial failure, so
-rerunning retries from scratch with nothing to clean up by hand.
+The install stages into `tmp-<hash>-<pid>-<n>` and is renamed to its final name
+only after the version check passes. Nothing is left pinned on a partial failure,
+so rerunning retries from scratch with nothing to clean up by hand. The pid and
+the counter give two concurrent `lattice setup` runs a staging directory each,
+even when both provision the same engine. Older releases shared one directory,
+cleared it before use, and promoted a tree assembled from both installs. `setup`
+sweeps staging left by a killed run once the directory is 24 hours old.
 
-When no version command is available, or its output has no parseable version,
-the resolved version is recorded as `0.0.0` and the directory is named
-`0.0.0-<hash>`. Nothing is checked against the constraint in that case.
+When no version command is available, or its output has no parseable version, the
+resolved version is recorded as `unknown`, the directory is named
+`unknown-<hash>`, and the cache key's toolchain component reads
+`<name>=unknown@<hash>`. An older release recorded `0.0.0` instead, a version
+nothing had installed, and that version went into `pins.json` and into every
+cache key.
+
+With a `version` constraint and no way to check it, provisioning is an error
+rather than an unenforced constraint:
+
+```text
+Error: engine 'alpes' has the version constraint '>=2' but no way to check what was installed. 'alpes' is not a well-known engine, so add a `versionCmd` to it
+```
+
+```text
+Error: engine 'alpes': could not read a version from the output of `alpes --version` after install, so the constraint '>=2.0.0' cannot be checked:
+built from source
+```
 
 `installCmd` receives the target directory twice: as the `LATTICE_TOOLCHAIN_DIR`
 environment variable, and by literal substitution of the text
@@ -371,7 +453,31 @@ need `%LATTICE_TOOLCHAIN_DIR%`.
 }
 ```
 
-`bin` defaults to `"bin"` and is resolved relative to the install directory.
+`bin` defaults to `"bin"` and is resolved relative to the install directory. The
+value must be non-empty, relative, and inside the install. A `..` is allowed
+where it does not escape, so `"bin/../libexec"` passes. An absolute `bin` would
+replace the install path outright. A directory Lattice never provisioned would
+go in front of every command, and the run would still report a provisioned
+toolchain. Lattice checks the value when the config loads, and again
+when it reads a pin back out of `pins.json`, so a hand-edited pin does not get
+through either.
+
+When a pinned directory holds a character a `PATH` entry cannot carry, it cannot
+go on `PATH`. On unix that character is `:`, the separator itself. On Windows it
+is `"`, because Windows quotes an entry containing its own `;` separator rather
+than refusing it. Either way this is an error, not a fallback to the host tool:
+
+```text
+Error: the pinned toolchain cannot be put on PATH, because a directory in it contains a character PATH cannot hold: /repo:2/.lattice/toolchains/just/1.30.0-1a2b3c4d/bin
+```
+
+The same check runs in all three places that build a pinned `PATH`: the version
+and install commands Lattice runs, `lattice setup`'s dependency installer, and
+every task Lattice spawns. The first names the single directory involved. The
+other two list every prepended directory, separated by `, `. On a task the check
+arrives as that task's failure, with this message as the task's output, so the
+run exits non-zero instead of running against the host's tool while reporting a
+provisioned toolchain.
 
 ## Resolution and activation
 

@@ -5,8 +5,10 @@
 //! version-checks the result, pins it, and hands the runner a `PATH` prefix
 //! that activates it for the duration of a single task.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use lattice_config::{EngineMap, EngineSpec};
@@ -62,6 +64,7 @@ pub fn classify(name: &str, spec: &EngineSpec) -> EngineMode {
 }
 
 /// The `PATH` prefix and cache-key identity for a resolved engine map.
+#[derive(Debug)]
 pub struct ResolvedToolchains {
 	/// Directories to prepend to a task's `PATH`, in order.
 	pub path_prepend: Vec<PathBuf>,
@@ -78,6 +81,18 @@ pub struct ToolchainPins {
 	pub install_hash: String,
 	pub bin: String,
 }
+
+/// Recorded as the version of a provisioned engine that has no version command
+/// and no constraint to check. There is nothing to ask, so nothing is claimed —
+/// the install hash is what identifies such a toolchain.
+const UNKNOWN_VERSION: &str = "unknown";
+
+/// Prefix of a staging directory inside an engine's toolchain dir.
+const STAGING_PREFIX: &str = "tmp-";
+
+/// How old a staging directory has to be before it is treated as the remains of
+/// a run that died. Long enough that no live install is ever caught by the sweep.
+const STALE_STAGING: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// First 8 hex chars of `sha256(install_cmd)`.
 fn install_hash8(install_cmd: &str) -> String {
@@ -115,11 +130,21 @@ fn shell_command(command: &str) -> Command {
 }
 
 /// Prepend `dir` to a `PATH` value using the platform's separator.
-fn prepend_to_path(dir: &Path) -> std::ffi::OsString {
+///
+/// Falling back to the inherited `PATH` would drop the pin and run whatever
+/// version of the tool the machine happens to have — the one thing pinning
+/// exists to prevent — so a `PATH` that cannot be built is an error.
+fn prepend_to_path(dir: &Path) -> Result<std::ffi::OsString> {
 	let existing = std::env::var_os("PATH").unwrap_or_default();
 	let mut paths: Vec<PathBuf> = vec![dir.to_path_buf()];
 	paths.extend(std::env::split_paths(&existing));
-	std::env::join_paths(paths).unwrap_or(existing)
+	std::env::join_paths(paths).with_context(|| {
+		format!(
+			"the pinned toolchain cannot be put on PATH, because a directory in it contains \
+			 a character PATH cannot hold: {}",
+			dir.display()
+		)
+	})
 }
 
 /// Run a command string through the platform shell, optionally prepending
@@ -131,7 +156,7 @@ fn run_capture(
 ) -> Result<(bool, String)> {
 	let mut command = shell_command(cmd);
 	if let Some(p) = extra_path {
-		command.env("PATH", prepend_to_path(p));
+		command.env("PATH", prepend_to_path(p)?);
 	}
 	for (k, v) in extra_env {
 		command.env(k, v);
@@ -195,6 +220,11 @@ fn find_verified_pin(
 	constraint: Option<&str>,
 	version_cmd: Option<&str>,
 ) -> Option<(PathBuf, ToolchainPins)> {
+	// A constraint with no way to check it can never be confirmed, so no pin
+	// counts as verified; provisioning then says so rather than trusting one.
+	if constraint.is_some() && version_cmd.is_none() {
+		return None;
+	}
 	let suffix = format!("-{install_hash}");
 	let entries = std::fs::read_dir(engine_dir).ok()?;
 	for entry in entries.flatten() {
@@ -212,25 +242,181 @@ fn find_verified_pin(
 		if pins.install_hash != install_hash {
 			continue;
 		}
-		let bin_dir = dir.join(&pins.bin);
+		let Ok(bin_rel) = checked_bin(&pins.engine, &pins.bin) else {
+			continue;
+		};
+		let bin_dir = dir.join(bin_rel);
 		if !bin_dir.is_dir() {
 			continue;
 		}
 		// Re-verify the version if we can; this does not reinstall.
 		if let (Some(vc), Some(cons)) = (version_cmd, constraint) {
-			if let Ok((ok, out)) = run_capture(vc, Some(&bin_dir), &[]) {
-				if !ok {
-					continue;
-				}
-				match parse_version(&out) {
-					Some(v) if satisfies(&v, cons) => {}
-					_ => continue,
-				}
+			if !capture_confirms(run_capture(vc, Some(&bin_dir), &[]), cons) {
+				continue;
 			}
 		}
 		return Some((dir, pins));
 	}
 	None
+}
+
+/// Whether a version command's captured output proves the pin still satisfies
+/// `constraint`. A run that never spawned, exited non-zero, or printed no
+/// version proves nothing — none of those is a pin worth reusing.
+fn capture_confirms(captured: Result<(bool, String)>, constraint: &str) -> bool {
+	let Ok((ok, out)) = captured else {
+		return false;
+	};
+	ok && parse_version(&out).is_some_and(|v| satisfies(&v, constraint))
+}
+
+/// An engine's `bin` as a path relative to its toolchain directory.
+///
+/// An absolute `bin` replaces the toolchain path outright when joined, and one
+/// climbing through `..` leaves `.lattice/toolchains` — either way the `PATH`
+/// prefix would point at a directory Lattice never provisioned, while the
+/// identity still claims a provisioned toolchain.
+fn checked_bin<'a>(name: &str, bin: &'a str) -> Result<&'a Path> {
+	let rel = Path::new(bin);
+	let escapes = rel.components().any(|c| {
+		matches!(
+			c,
+			Component::ParentDir | Component::RootDir | Component::Prefix(_)
+		)
+	});
+	if rel.is_absolute() || escapes {
+		bail!(
+			"engine '{name}': bin '{bin}' has to be a relative path inside the engine's \
+			 toolchain directory"
+		);
+	}
+	Ok(rel)
+}
+
+/// A staging directory name no concurrent run can also be using. The staging
+/// tree is cleared before use, so two runs sharing one delete each other's
+/// half-installed files and promote a tree of mixed provenance.
+fn staging_name(hash: &str) -> String {
+	static NEXT: AtomicUsize = AtomicUsize::new(0);
+	format!(
+		"{STAGING_PREFIX}{hash}-{}-{}",
+		std::process::id(),
+		NEXT.fetch_add(1, Ordering::Relaxed)
+	)
+}
+
+/// Delete staging directories older than `older_than`: a run killed before it
+/// could promote or remove its own leaves one behind for good.
+fn sweep_stale_staging(engine_dir: &Path, older_than: Duration) {
+	let Ok(entries) = std::fs::read_dir(engine_dir) else {
+		return;
+	};
+	for entry in entries.flatten() {
+		if !entry
+			.file_name()
+			.to_string_lossy()
+			.starts_with(STAGING_PREFIX)
+		{
+			continue;
+		}
+		let stale = entry
+			.metadata()
+			.and_then(|m| m.modified())
+			.is_ok_and(|t| t.elapsed().is_ok_and(|age| age >= older_than));
+		if stale {
+			std::fs::remove_dir_all(entry.path()).ok();
+		}
+	}
+}
+
+/// Run `install_cmd` into `staging` and return the version to record for what it
+/// installed. A constraint is enforced here or nowhere: a tool whose version
+/// cannot be read cannot be shown to satisfy one.
+fn install_and_verify(
+	staging: &Path,
+	name: &str,
+	install_cmd: &str,
+	version_cmd: Option<&str>,
+	constraint: Option<&str>,
+	bin: &Path,
+) -> Result<String> {
+	// $LATTICE_TOOLCHAIN_DIR: set as env and literal-substituted so both
+	// `... $LATTICE_TOOLCHAIN_DIR ...` and env-var reads work.
+	let staging_str = staging.to_string_lossy().into_owned();
+	let substituted = install_cmd.replace("$LATTICE_TOOLCHAIN_DIR", &staging_str);
+	let env = vec![("LATTICE_TOOLCHAIN_DIR".to_string(), staging_str)];
+	let (ok, out) = run_capture(&substituted, None, &env)?;
+	if !ok {
+		bail!("engine '{name}': installCmd failed:\n{}", out.trim());
+	}
+
+	let Some(vc) = version_cmd else {
+		if let Some(cons) = constraint {
+			bail!(
+				"engine '{name}' has the version constraint '{cons}' but no way to check what \
+				 was installed. '{name}' is not a well-known engine, so add a `versionCmd` to it"
+			);
+		}
+		return Ok(UNKNOWN_VERSION.to_string());
+	};
+
+	let (ok, out) = run_capture(vc, Some(&staging.join(bin)), &[])?;
+	if !ok {
+		bail!(
+			"engine '{name}': version command `{vc}` failed after install:\n{}",
+			out.trim()
+		);
+	}
+	match parse_version(&out) {
+		Some(v) => {
+			if let Some(cons) = constraint {
+				if !satisfies(&v, cons) {
+					bail!(
+						"engine '{name}' provisioned {v}, which does not satisfy the constraint '{cons}'"
+					);
+				}
+			}
+			Ok(v.to_string())
+		}
+		None => {
+			if let Some(cons) = constraint {
+				bail!(
+					"engine '{name}': could not read a version from the output of `{vc}` after \
+					 install, so the constraint '{cons}' cannot be checked:\n{}",
+					out.trim()
+				);
+			}
+			Ok(UNKNOWN_VERSION.to_string())
+		}
+	}
+}
+
+/// Move a finished staging tree to its content-addressed home, reporting whether
+/// this call is the one that put it there. A concurrent run may have promoted an
+/// identical tree first, in which case that one stands. A directory with no
+/// `pins.json` is the remains of a run that died mid-promotion, and is replaced.
+fn promote_staging(staging: &Path, final_dir: &Path) -> Result<bool> {
+	if final_dir.exists() && !final_dir.join("pins.json").is_file() {
+		std::fs::remove_dir_all(final_dir).ok();
+	}
+	if !final_dir.exists() {
+		match std::fs::rename(staging, final_dir) {
+			Ok(()) => return Ok(true),
+			Err(err) if !final_dir.join("pins.json").is_file() => {
+				std::fs::remove_dir_all(staging).ok();
+				return Err(err).with_context(|| {
+					format!(
+						"failed to move toolchain into place: {} -> {}",
+						staging.display(),
+						final_dir.display()
+					)
+				});
+			}
+			Err(_) => {}
+		}
+	}
+	std::fs::remove_dir_all(staging).ok();
+	Ok(false)
 }
 
 /// Provision (if needed) and resolve every engine in `engines` into a `PATH`
@@ -290,6 +476,7 @@ pub fn provision_and_resolve(
 			} => {
 				let hash = install_hash8(&install_cmd);
 				let engine_dir = root.join(".lattice").join("toolchains").join(name);
+				let bin_rel = checked_bin(name, &bin)?;
 
 				// Reuse an existing verified pin (install once).
 				if let Some((dir, pins)) = find_verified_pin(
@@ -298,7 +485,7 @@ pub fn provision_and_resolve(
 					constraint.as_deref(),
 					version_cmd.as_deref(),
 				) {
-					path_prepend.push(dir.join(&pins.bin));
+					path_prepend.push(dir.join(checked_bin(name, &pins.bin)?));
 					identity_parts.push(format!("{name}={}@{hash}", pins.version));
 					continue;
 				}
@@ -306,80 +493,47 @@ pub fn provision_and_resolve(
 				std::fs::create_dir_all(&engine_dir).with_context(|| {
 					format!("failed to create toolchain dir {}", engine_dir.display())
 				})?;
-				let target = engine_dir.join(format!("tmp-{hash}"));
-				if target.exists() {
-					std::fs::remove_dir_all(&target).ok();
-				}
-				std::fs::create_dir_all(&target)?;
+				sweep_stale_staging(&engine_dir, STALE_STAGING);
+
+				let staging = engine_dir.join(staging_name(&hash));
+				std::fs::create_dir_all(&staging)?;
 
 				log(&format!(
 					"provisioning engine '{name}' via installCmd into {}",
-					target.display()
+					staging.display()
 				));
 
-				// $LATTICE_TOOLCHAIN_DIR: set as env and literal-substituted so
-				// both `... $LATTICE_TOOLCHAIN_DIR ...` and env-var reads work.
-				let target_str = target.to_string_lossy().into_owned();
-				let substituted = install_cmd.replace("$LATTICE_TOOLCHAIN_DIR", &target_str);
-				let env = vec![("LATTICE_TOOLCHAIN_DIR".to_string(), target_str.clone())];
-				let (ok, out) = run_capture(&substituted, None, &env)?;
-				if !ok {
-					bail!("engine '{name}': installCmd failed:\n{}", out.trim());
-				}
-
-				let tmp_bin = target.join(&bin);
-
-				// Version-check the freshly installed tool.
-				let version = if let Some(vc) = &version_cmd {
-					let (ok, out) = run_capture(vc, Some(&tmp_bin), &[])?;
-					if !ok {
-						bail!(
-							"engine '{name}': version command `{vc}` failed after install:\n{}",
-							out.trim()
-						);
+				let version = match install_and_verify(
+					&staging,
+					name,
+					&install_cmd,
+					version_cmd.as_deref(),
+					constraint.as_deref(),
+					bin_rel,
+				) {
+					Ok(version) => version,
+					Err(err) => {
+						std::fs::remove_dir_all(&staging).ok();
+						return Err(err);
 					}
-					match parse_version(&out) {
-						Some(v) => {
-							if let Some(cons) = &constraint {
-								if !satisfies(&v, cons) {
-									bail!(
-										"engine '{name}' provisioned {v}, which does not satisfy the constraint '{cons}'"
-									);
-								}
-							}
-							v.to_string()
-						}
-						None => "0.0.0".to_string(),
-					}
-				} else {
-					"0.0.0".to_string()
 				};
 
 				// Move into the content-addressed, versioned final dir.
 				let final_dir = engine_dir.join(format!("{version}-{hash}"));
-				if final_dir.exists() {
-					std::fs::remove_dir_all(&final_dir).ok();
+				if promote_staging(&staging, &final_dir)? {
+					let pins = ToolchainPins {
+						engine: name.clone(),
+						version: version.clone(),
+						install_hash: hash.clone(),
+						bin: bin.clone(),
+					};
+					std::fs::write(
+						final_dir.join("pins.json"),
+						serde_json::to_string_pretty(&pins)?,
+					)?;
 				}
-				std::fs::rename(&target, &final_dir).with_context(|| {
-					format!(
-						"failed to move toolchain into place: {} -> {}",
-						target.display(),
-						final_dir.display()
-					)
-				})?;
 
-				let pins = ToolchainPins {
-					engine: name.clone(),
-					version: version.clone(),
-					install_hash: hash.clone(),
-					bin: bin.clone(),
-				};
-				std::fs::write(
-					final_dir.join("pins.json"),
-					serde_json::to_string_pretty(&pins)?,
-				)?;
-
-				path_prepend.push(final_dir.join(&bin));
+				path_prepend.push(final_dir.join(bin_rel));
 				identity_parts.push(format!("{name}={version}@{hash}"));
 			}
 		}
@@ -468,15 +622,30 @@ mod tests {
 
 	fn fake_engines() -> EngineMap {
 		// The installCmd provisions a stand-in `faketool` that prints a version.
-		serde_json::from_value(json!({
-			"faketool": {
-				"version": ">=1.0.0",
-				"installCmd": lattice_testkit::install_fake_tool("faketool", "1.2.3"),
-				"versionCmd": "faketool",
-				"bin": "bin"
-			}
+		fake_engine(json!({
+			"version": ">=1.0.0",
+			"installCmd": lattice_testkit::install_fake_tool("faketool", "1.2.3"),
+			"versionCmd": "faketool",
+			"bin": "bin"
 		}))
-		.unwrap()
+	}
+
+	fn fake_engine(spec: serde_json::Value) -> EngineMap {
+		serde_json::from_value(json!({ "faketool": spec })).unwrap()
+	}
+
+	/// An `installCmd` for a stand-in tool that prints no version at all.
+	fn installs_without_a_version() -> String {
+		lattice_testkit::install_fake_tool("faketool", "no-version-here")
+	}
+
+	fn engine_dir(root: &Path) -> PathBuf {
+		root.join(".lattice").join("toolchains").join("faketool")
+	}
+
+	fn read_pins(bin: &Path) -> ToolchainPins {
+		let raw = std::fs::read_to_string(bin.parent().unwrap().join("pins.json")).unwrap();
+		serde_json::from_str(&raw).unwrap()
 	}
 
 	#[test]
@@ -526,5 +695,207 @@ mod tests {
 		assert_eq!(installs2, 0, "second run must reuse the pin");
 		assert_eq!(again.identity, resolved.identity);
 		assert_eq!(again.path_prepend, resolved.path_prepend);
+	}
+
+	/// A tool whose version cannot be read cannot be shown to satisfy a
+	/// constraint. This used to provision happily, print `setup complete`, and pin
+	/// `0.0.0` — a version nothing installed, feeding every cache key.
+	#[test]
+	fn an_unreadable_version_fails_the_constraint_it_cannot_be_checked_against() {
+		let tmp = TempDir::new().unwrap();
+		let engines = fake_engine(json!({
+			"version": ">=99.0.0",
+			"installCmd": installs_without_a_version(),
+			"versionCmd": "faketool",
+			"bin": "bin"
+		}));
+
+		let err = provision_and_resolve(tmp.path(), &engines, &mut |_| {}).unwrap_err();
+		let msg = format!("{err:#}");
+		assert!(msg.contains("could not read a version"), "{msg}");
+		assert!(msg.contains(">=99.0.0"), "{msg}");
+
+		// Nothing was pinned, and the staging directory went with the failure.
+		let left: Vec<_> = std::fs::read_dir(engine_dir(tmp.path()))
+			.unwrap()
+			.flatten()
+			.map(|e| e.file_name())
+			.collect();
+		assert!(
+			left.is_empty(),
+			"a refused install leaves nothing: {left:?}"
+		);
+	}
+
+	/// The same config is strict without an `installCmd`, so it cannot be silent
+	/// with one.
+	#[test]
+	fn a_constraint_with_no_version_command_is_refused_either_way() {
+		let tmp = TempDir::new().unwrap();
+		let validate_only = fake_engine(json!({ "version": ">=1.0.0" }));
+		let provisioned = fake_engine(json!({
+			"version": ">=1.0.0",
+			"installCmd": installs_without_a_version(),
+			"bin": "bin"
+		}));
+
+		for engines in [validate_only, provisioned] {
+			let err = provision_and_resolve(tmp.path(), &engines, &mut |_| {}).unwrap_err();
+			let msg = format!("{err:#}");
+			assert!(msg.contains("add a `versionCmd`"), "{msg}");
+		}
+	}
+
+	/// With nothing to check against there is nothing to claim either: the install
+	/// hash is what identifies such a toolchain.
+	#[test]
+	fn an_engine_with_no_constraint_records_an_unknown_version() {
+		let tmp = TempDir::new().unwrap();
+		let engines = fake_engine(json!({
+			"installCmd": installs_without_a_version(),
+			"versionCmd": "faketool",
+			"bin": "bin"
+		}));
+
+		let resolved = provision_and_resolve(tmp.path(), &engines, &mut |_| {}).unwrap();
+		assert!(
+			resolved.identity.starts_with("faketool=unknown@"),
+			"{}",
+			resolved.identity
+		);
+		assert_eq!(read_pins(&resolved.path_prepend[0]).version, "unknown");
+	}
+
+	/// A version check that never ran is not a check that passed. The pin lookup
+	/// used to accept the pin outright when the command could not be spawned.
+	#[test]
+	fn a_version_check_that_did_not_run_confirms_nothing() {
+		assert!(capture_confirms(Ok((true, "1.2.3".into())), ">=1.0.0"));
+		assert!(!capture_confirms(Ok((true, "0.9.0".into())), ">=1.0.0"));
+		assert!(!capture_confirms(Ok((false, "1.2.3".into())), ">=1.0.0"));
+		assert!(!capture_confirms(
+			Ok((true, "no-version-here".into())),
+			">=1.0.0"
+		));
+		assert!(!capture_confirms(
+			Err(anyhow::anyhow!("failed to spawn `faketool`")),
+			">=1.0.0"
+		));
+	}
+
+	/// Two runs provisioning one engine at once each need staging of their own: a
+	/// shared directory is cleared before use, so one run deletes the other's
+	/// half-installed files and what gets promoted is a mix of both.
+	#[test]
+	fn concurrent_provisions_do_not_clear_each_others_staging() {
+		let tmp = TempDir::new().unwrap();
+		let root = tmp.path().to_path_buf();
+
+		let runs: Vec<_> = (0..4)
+			.map(|_| {
+				let root = root.clone();
+				std::thread::spawn(move || {
+					provision_and_resolve(&root, &fake_engines(), &mut |_| {})
+						.map(|resolved| resolved.path_prepend)
+				})
+			})
+			.collect();
+
+		for run in runs {
+			let prepend = run.join().unwrap().expect("every concurrent run installs");
+			let bin = &prepend[0];
+			assert!(
+				bin.join(lattice_testkit::fake_tool_file("faketool"))
+					.is_file(),
+				"{} is missing the tool that was installed into it",
+				bin.display()
+			);
+			assert_eq!(read_pins(bin).version, "1.2.3");
+		}
+
+		let staged: Vec<String> = std::fs::read_dir(engine_dir(tmp.path()))
+			.unwrap()
+			.flatten()
+			.map(|e| e.file_name().to_string_lossy().into_owned())
+			.filter(|name| name.starts_with(STAGING_PREFIX))
+			.collect();
+		assert!(staged.is_empty(), "staging left behind: {staged:?}");
+	}
+
+	/// A run that is killed leaves its staging directory behind for good, so the
+	/// next one sweeps whatever is old enough to belong to nobody.
+	#[test]
+	fn stale_staging_is_swept_and_live_staging_is_not() {
+		let tmp = TempDir::new().unwrap();
+		let stale = tmp.path().join(staging_name("deadbeef"));
+		let promoted = tmp.path().join("1.2.3-deadbeef");
+		std::fs::create_dir_all(&stale).unwrap();
+		std::fs::create_dir_all(&promoted).unwrap();
+
+		sweep_stale_staging(tmp.path(), Duration::ZERO);
+		assert!(!stale.exists());
+		assert!(promoted.is_dir(), "a promoted toolchain is not staging");
+
+		let live = tmp.path().join(staging_name("deadbeef"));
+		std::fs::create_dir_all(&live).unwrap();
+		sweep_stale_staging(tmp.path(), STALE_STAGING);
+		assert!(live.is_dir(), "a running install must not be swept");
+	}
+
+	/// Degrading to the inherited `PATH` would run whatever version of the tool
+	/// the machine happens to have, which is the one thing a pin exists to
+	/// prevent. A repo path holding a character `PATH` cannot carry has to fail.
+	///
+	/// The path never has to exist: building the value is what fails.
+	#[test]
+	fn a_path_that_cannot_be_built_fails_instead_of_dropping_the_pin() {
+		let root = PathBuf::from(format!("repo{}one", lattice_testkit::unjoinable_char()));
+
+		let err = prepend_to_path(&root).unwrap_err();
+		let msg = format!("{err:#}");
+		assert!(msg.contains("a character PATH cannot hold"), "{msg}");
+	}
+
+	/// The version check is the first thing that needs the pinned `PATH`, so
+	/// provisioning stops there rather than reporting a tool it never ran.
+	///
+	/// Unix only, because the repo has to sit at such a path for this to be
+	/// reachable, and the character Windows refuses in a `PATH` entry is also
+	/// illegal in a Windows file name.
+	#[test]
+	#[cfg(unix)]
+	fn provisioning_stops_when_the_pinned_path_cannot_be_built() {
+		let tmp = TempDir::new().unwrap();
+		let root = tmp
+			.path()
+			.join(format!("repo{}one", lattice_testkit::unjoinable_char()));
+		std::fs::create_dir_all(&root).unwrap();
+
+		let err = provision_and_resolve(&root, &fake_engines(), &mut |_| {}).unwrap_err();
+		let msg = format!("{err:#}");
+		assert!(msg.contains("cannot be put on PATH"), "{msg}");
+	}
+
+	/// `bin` is joined onto the toolchain directory, so an absolute one replaces
+	/// it outright and `..` climbs out of `.lattice/toolchains` — either way the
+	/// PATH prefix points somewhere Lattice never provisioned while the identity
+	/// still claims a provisioned toolchain.
+	#[test]
+	fn a_bin_outside_the_toolchain_directory_is_refused() {
+		let tmp = TempDir::new().unwrap();
+		for bad in ["/usr/bin", "../../..", "bin/../../elsewhere"] {
+			let engines = fake_engine(json!({
+				"installCmd": lattice_testkit::install_fake_tool("faketool", "1.2.3"),
+				"versionCmd": "faketool",
+				"bin": bad
+			}));
+			let err = provision_and_resolve(tmp.path(), &engines, &mut |_| {}).unwrap_err();
+			let msg = format!("{err:#}");
+			assert!(msg.contains("relative path inside"), "bin '{bad}': {msg}");
+		}
+		assert!(
+			!tmp.path().join(".lattice").exists(),
+			"a refused bin installs nothing"
+		);
 	}
 }

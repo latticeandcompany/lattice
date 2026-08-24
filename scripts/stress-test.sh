@@ -269,7 +269,7 @@ SCANDIR="$ENVROOT/scandir"
 mkdir -p "$SCANDIR"
 w "$SCANDIR/.gitignore" "generated/
 "
-w "$SCANDIR/apps/web/package.json" '{ "name": "web" }'
+w "$SCANDIR/apps/web/package.json" '{ "name": "web", "scripts": { "build": "tsc" } }'
 w "$SCANDIR/apps/web/pnpm-lock.yaml" ""
 w "$SCANDIR/services/api/Cargo.toml" "[package]
 name = \"api\"
@@ -299,7 +299,7 @@ t_has "scanned run plans api" "api"
 # runs instead of halting on the ambiguity.
 UNDRIVEN="$ENVROOT/undriven"
 mkdir -p "$UNDRIVEN"
-w "$UNDRIVEN/apps/web/package.json" '{ "name": "web" }'
+w "$UNDRIVEN/apps/web/package.json" '{ "name": "web", "scripts": { "build": "tsc" } }'
 w "$UNDRIVEN/apps/web/package-lock.json" '{}'
 w "$UNDRIVEN/crates/core/Cargo.toml" "[package]
 name = \"core\"
@@ -412,6 +412,18 @@ t_file "$PROD/.lattice/toolchains/faketool" "toolchains dir created under .latti
 lat "$PROD" setup ; t_ok "setup re-run exits 0 (pin reused)"
 lat "$PROD" setup --force ; t_ok "setup --force exits 0"
 lat "$PROD" setup core ; t_ok "setup <workspace> scopes cleanly"
+
+# Nothing machine-local belongs in the user's source tree: the install marker
+# lives under .lattice/, where it is already ignored and out of the fingerprint
+# of a task that declares no inputs.
+t_nofile "$PROD/libs/core/.lattice-setup-marker"    "setup leaves no marker in a workspace directory"
+t_nofile "$PROD/services/api/.lattice-setup-marker" "setup leaves no marker in any workspace directory"
+
+# A name that is not a declared workspace used to select nothing and exit 0, so
+# a typo in CI installed nothing and still went green.
+lat "$PROD" setup no-such-workspace ; t_bad "setup rejects an undeclared workspace name"
+t_has "unknown-workspace names the offender" "no-such-workspace"
+t_has "unknown-workspace lists what is declared" "core"
 
 # =========================================================================
 # 5. run: ordering, dependencies, dry-run, filter.
@@ -593,6 +605,87 @@ lat "$EMPTYOUT" run build ; t_ok "a task producing none of its declared outputs 
 t_has "unmatched outputs are reported rather than cached" "no files matched outputs"
 lat "$EMPTYOUT" run build ; t_hasnt "an unmatched-outputs task is not a hit next run" "cache hit"
 
+# The same refusal, reached through the bare-directory form. `dist` matches the
+# directory itself, so an empty one used to count as a produced artifact — and a
+# hit then restored nothing while deleting whatever a real run had left there.
+BAREOUT="$ENVROOT/bare-empty-output"
+mkdir -p "$BAREOUT/w"
+w "$BAREOUT/lattice.json" '{
+  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "mkdir -p dist" } } ],
+  "tasks": { "build": { "outputs": ["dist"] } }
+}'
+lat "$BAREOUT" run build ; t_ok "a bare-directory output that stays empty still succeeds"
+t_has "an empty output directory is not cached" "matched only empty directories"
+lat "$BAREOUT" run build ; t_hasnt "an empty-directory output is not a hit next run" "cache hit"
+
+# A bare directory that actually holds something is still captured whole.
+w "$BAREOUT/lattice.json" '{
+  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "mkdir -p dist/deep && echo out > dist/deep/o.txt" } } ],
+  "tasks": { "build": { "outputs": ["dist"] } }
+}'
+lat "$BAREOUT" run build ; t_ok "a bare-directory output with content primes"
+rm -rf "$BAREOUT/w/dist"
+lat "$BAREOUT" run build ; t_has "a bare-directory output hits" "cache hit"
+t_file "$BAREOUT/w/dist/deep/o.txt" "a bare-directory output restores its subtree"
+
+# Restoring a hit reproduces the tree the run produced, rather than leaving
+# directories behind that the cached run never made.
+mkdir -p "$BAREOUT/w/dist/stale"
+w "$BAREOUT/w/dist/stale/extra.txt" "left over from a later run"
+lat "$BAREOUT" run build ; t_has "restore-over-stale is a hit" "cache hit"
+t_nofile "$BAREOUT/w/dist/stale" "a hit clears directories the cached run did not produce"
+
+# Inputs reached through a symlink. The walk used to stop at any symlink, so a
+# workspace whose sources were symlinked hashed nothing and hit forever.
+LN_OK=1
+( cd "$ENVROOT" && ln -s . lncheck ) 2>/dev/null || LN_OK=0
+rm -f "$ENVROOT/lncheck"
+if [ "$LN_OK" = "1" ]; then
+  SYMIN="$ENVROOT/symlinked-inputs"
+  mkdir -p "$SYMIN/w" "$SYMIN/real/nested"
+  w "$SYMIN/real/nested/a.txt" "one"
+  ( cd "$SYMIN/w" && ln -s ../real src )
+  w "$SYMIN/lattice.json" '{
+    "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo built" } } ],
+    "tasks": { "build": { "inputs": ["src/**"] } }
+  }'
+  lat "$SYMIN" run build ; t_ok "a task whose inputs are behind a symlink primes"
+  lat "$SYMIN" run build ; t_has "unchanged symlinked inputs hit" "cache hit"
+  w "$SYMIN/real/nested/a.txt" "two CHANGED"
+  lat "$SYMIN" run build ; t_hasnt "an edit behind a symlinked directory busts the cache" "cache hit"
+
+  # Re-pointing a symlinked file is a change to what the task reads, so the key
+  # has to move even though no file contents changed.
+  SYMFILE="$ENVROOT/symlink-swap"
+  mkdir -p "$SYMFILE/w"
+  w "$SYMFILE/w/prod.yaml" "prod"
+  w "$SYMFILE/w/staging.yaml" "staging"
+  ( cd "$SYMFILE/w" && ln -s prod.yaml active.yaml )
+  w "$SYMFILE/lattice.json" '{
+    "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo built" } } ],
+    "tasks": { "build": { "inputs": ["active.yaml"] } }
+  }'
+  lat "$SYMFILE" run build ; t_ok "a symlinked input file primes"
+  lat "$SYMFILE" run build ; t_has "an unmoved symlink hits" "cache hit"
+  ( cd "$SYMFILE/w" && ln -sf staging.yaml active.yaml )
+  lat "$SYMFILE" run build ; t_hasnt "re-pointing a symlink busts the cache" "cache hit"
+
+  # The executable bit rides along in the artifact, so it belongs in the key.
+  EXECBIT="$ENVROOT/exec-bit"
+  mkdir -p "$EXECBIT/w/bin"
+  w "$EXECBIT/w/bin/run.sh" "#!/bin/sh
+echo hi
+"
+  w "$EXECBIT/lattice.json" '{
+    "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo packaged" } } ],
+    "tasks": { "build": { "inputs": ["bin/**"] } }
+  }'
+  lat "$EXECBIT" run build ; t_ok "a task keyed on a bin directory primes"
+  lat "$EXECBIT" run build ; t_has "unchanged mode hits" "cache hit"
+  chmod +x "$EXECBIT/w/bin/run.sh"
+  lat "$EXECBIT" run build ; t_hasnt "making an input executable busts the cache" "cache hit"
+fi
+
 # =========================================================================
 # 7. run: PATH injection, concurrency, loquacious, other tasks.
 # =========================================================================
@@ -725,6 +818,53 @@ t_ok   "a persistent task exiting 0 does not fail the run"
 t_has  "clean persistent exit is reported" "exited (code 0)"
 t_has  "clean persistent exit counts none" "0 failed"
 
+# Fail-fast has to reach a run a dev server is holding open. The wait for a
+# persistent child used to ignore the abort the failure had already raised, so
+# the run sat there streaming until someone interrupted it by hand.
+FFREPO="$ENVROOT/failfast-persistent"
+mkdir -p "$FFREPO/app"
+cat > "$FFREPO/lattice.json" <<'JSON'
+{
+  "workspaces": [
+    { "name": "app", "path": "app", "auto": false, "scripts": {
+      "build": "echo BUILD_BROKE; exit 2",
+      "dev":   "echo READY_FF; sleep 3119"
+    } }
+  ],
+  "tasks": { "build": {}, "dev": { "persistent": true } }
+}
+JSON
+lat_timeout "$FFREPO" 25 run build dev
+t_ran "a failure ends a run that a persistent task is holding open"
+t_bad "that run still reports the failure"
+t_has "the failing task is named" "BUILD_BROKE"
+if pgrep -f "sleep 3119" >/dev/null 2>&1; then fail "fail-fast kills the dev server it started" "the dev server's sleep survived"; else pass "fail-fast kills the dev server it started"; fi
+
+# The signal a CI runner sends when a job is cancelled is SIGTERM, not SIGINT.
+# It used to be watched everywhere except the wait that actually holds the run
+# open, so a cancelled job hung until the runner force-killed it.
+TERMLOG="$ENVROOT/dev-term.log"
+: > "$TERMLOG"
+( cd "$PROD" && exec "$BIN" run dev --filter docs ) > "$TERMLOG" 2>&1 &
+BG_PID=$!
+i=0
+while [ $i -lt 150 ]; do
+  grep -q "READY_DEV" "$TERMLOG" 2>/dev/null && break
+  kill -0 "$BG_PID" 2>/dev/null || break
+  sleep 0.1; i=$((i + 1))
+done
+kill -TERM "$BG_PID" 2>/dev/null
+j=0
+while kill -0 "$BG_PID" 2>/dev/null && [ $j -lt 60 ]; do sleep 0.1; j=$((j + 1)); done
+if kill -0 "$BG_PID" 2>/dev/null; then
+  kill -9 "$BG_PID" 2>/dev/null; wait "$BG_PID" 2>/dev/null
+  fail "persistent run terminates on SIGTERM" "still running after 6s — hung"
+else
+  wait "$BG_PID" 2>/dev/null
+  pass "persistent run terminates on SIGTERM"
+fi
+BG_PID=""
+
 # =========================================================================
 # 9. Keep-going vs fail-fast.
 # =========================================================================
@@ -743,6 +883,22 @@ cat > "$FAILREPO/lattice.json" <<'JSON'
 JSON
 lat "$FAILREPO" run build ; t_bad "fail-fast: failing task yields non-zero exit"
 t_has "fail-fast surfaces the failure" "FAILED"
+
+# Output was read as text a line at a time, and a byte that would not decode
+# read as end-of-output — so a tool that printed one stray byte lost everything
+# after it, including the error that explained the failure.
+ODDBYTE="$ENVROOT/odd-byte"
+mkdir -p "$ODDBYTE/w"
+cat > "$ODDBYTE/lattice.json" <<'JSON'
+{
+  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": {
+    "build": "printf 'warning \\377 here\\n'; echo THE_REAL_ERROR; exit 1"
+  } } ],
+  "tasks": { "build": {} }
+}
+JSON
+lat "$ODDBYTE" run build ; t_bad "a task printing an undecodable byte still fails"
+t_has "output survives a byte that will not decode" "THE_REAL_ERROR"
 
 # -v so skip notices and streamed output are visible for assertions.
 lat "$FAILREPO" run test --continue -v ; t_bad "--continue still exits non-zero when a task failed"
@@ -796,6 +952,20 @@ w "$DET/pkgs/override/pnpm-lock.yaml" "";     w "$DET/pkgs/override/package.json
 w "$DET/pkgs/composition/.nvmrc" "20";        w "$DET/pkgs/composition/pnpm-lock.yaml" "";  w "$DET/pkgs/composition/package.json" "$PKG"
 # bun is a runtime *and* a package manager; it outranks a bare node runtime.
 w "$DET/pkgs/dual-role/.nvmrc" "20";          w "$DET/pkgs/dual-role/bun.lockb" "";         w "$DET/pkgs/dual-role/package.json" "$PKG"
+# deno.jsonc allows comments. Parsed as strict JSON it fails, and a failed parse
+# used to be indistinguishable from "this driver has no manifest" — which meant
+# every task got a command invented for it.
+w "$DET/pkgs/deno-jsonc/deno.jsonc" '{
+  // the tasks this package actually declares
+  "tasks": { "build": "echo x" }
+}'
+# A manifest with no scripts at all is a complete, ordinary package. The task
+# simply does not exist here, so it drops out of the graph instead of becoming
+# an invented `npm run build` that fails the whole run.
+w "$DET/pkgs/no-scripts/package-lock.json" ""; w "$DET/pkgs/no-scripts/package.json" '{ "name": "types" }'
+# A manifest that declares a scripts section but misspells the task is the case
+# worth saying something about: the package clearly meant to build.
+w "$DET/pkgs/typo-script/package-lock.json" ""; w "$DET/pkgs/typo-script/package.json" '{ "name": "typo", "scripts": { "biuld": "tsc" } }'
 cat > "$DET/lattice.json" <<'JSON'
 {
   "workspaces": [
@@ -829,7 +999,10 @@ cat > "$DET/lattice.json" <<'JSON'
     { "name": "kotlin", "path": "pkgs/kotlin" },
     { "name": "override-bun", "path": "pkgs/override", "engines": { "bun": ">=1.0.0" } },
     { "name": "composition", "path": "pkgs/composition" },
-    { "name": "dual-role", "path": "pkgs/dual-role" }
+    { "name": "dual-role", "path": "pkgs/dual-role" },
+    { "name": "deno-jsonc", "path": "pkgs/deno-jsonc" },
+    { "name": "no-scripts", "path": "pkgs/no-scripts" },
+    { "name": "typo-script", "path": "pkgs/typo-script" }
   ],
   "tasks": {
     "build": { "outputs": ["dist/**"] },
@@ -838,6 +1011,14 @@ cat > "$DET/lattice.json" <<'JSON'
 }
 JSON
 lat "$DET" run build --dry-run ; t_ok "detection dry-run resolves all workspaces"
+t_has   "a commented deno.jsonc still resolves its tasks" "deno-jsonc:build"
+t_hasnt "a manifest with no scripts invents no command"   "no-scripts:build"
+t_hasnt "a manifest with no scripts invents nothing for typos either" "typo-script:build"
+# The skip is silent for a package that declares no scripts at all, and spoken
+# for one that declares some and misspelled this one.
+t_has   "a misspelled script is named once"        'typo-script declares scripts but no "build"'
+t_has   "a misspelled script gets a suggestion"    "biuld"
+t_hasnt "a scriptless package is not nagged about" "no-scripts declares"
 t_has  "detect npm (package-lock.json)"     "npm run build"
 t_has  "detect pnpm (pnpm-lock.yaml)"       "pnpm run build"
 t_has  "detect yarn (yarn.lock)"            "yarn build"
@@ -927,10 +1108,59 @@ lat "$ERR" run build ; t_bad "same-role conflict halts"
 # auto:false workspace missing a command for the requested root task.
 mkerr manual_nocmd; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "test": "echo t" } } ], "tasks": { "build": {} } }
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "test": "echo t" } } ], "tasks": { "build": {}, "test": {} } }
 JSON
 lat "$ERR" run build ; t_bad "manual workspace missing root command halts"
 t_has "manual-missing message" "declares no command"
+
+# A script naming a task that does not exist is unreachable, so it is refused
+# rather than silently never running.
+mkerr manual_stray; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "biuld": "echo b" } } ], "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "a script naming no task is refused"
+t_has "stray-script message"    "is not defined in \`tasks\`"
+t_has "stray-script suggestion" "Did you mean"
+
+# A repeated key is last-wins in JSON, so the first declaration vanishes — and
+# with it whatever it said about what the task hashes and caches.
+mkerr dupkey; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+  "tasks": { "build": { "outputs": ["dist/**"] }, "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "a duplicate task key is refused"
+t_has "duplicate-key message" "duplicate key \`build\`"
+
+# An out-of-range timeout used to saturate into no timeout at all — the opposite
+# of what was asked for.
+mkerr bigtimeout; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+  "tasks": { "build": { "timeout": 1e30 } } }
+JSON
+lat "$ERR" run build ; t_bad "an oversized timeout is refused"
+t_has "oversized-timeout message" "maximum of 365 days"
+
+mkerr fractimeout; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+  "tasks": { "build": { "timeout": 1.5 } } }
+JSON
+lat "$ERR" run build ; t_bad "a fractional timeout is refused rather than rounded"
+t_has "fractional-timeout message" "whole number of seconds"
+
+# An engine's bin is joined onto the toolchain directory, so an absolute value
+# would put a host directory on every task's PATH while claiming a pinned tool.
+mkerr enginebin; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+  "tasks": { "build": {} },
+  "engines": { "alpes": { "installCmd": "true", "bin": "/usr/bin" } } }
+JSON
+lat "$ERR" run build ; t_bad "an absolute engine bin is refused"
+t_has "engine-bin message" "toolchain"
 
 # Dependency cycle.
 mkerr cycle; mkdir -p "$ERR/a"
@@ -1095,6 +1325,42 @@ t_has "prune under limit removes nothing" "removed 0 artifacts"
 # Prune with neither flag nor setting.
 lat "$DET" prune ; t_bad "prune with no size and no setting fails"
 t_has "prune-no-size message" "no cache size limit set"
+
+# Debris is only reclaimed once it is old enough to be nothing else. A cache
+# write records its metadata first and its archive second, so a store running
+# right now in another process looks exactly like an abandoned one on disk —
+# sweeping eagerly meant two Lattice runs on one repo deleted each other's work.
+SWEEP="$ENVROOT/sweep-grace"; mkdir -p "$SWEEP/pkg/.cache"
+cat > "$SWEEP/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
+  "tasks": { "build": { "outputs": ["dist/**"] } },
+  "settings": { "cacheDir": ".lattice/cache" } }
+JSON
+lat "$SWEEP" run build ; t_ok "sweep fixture primes its cache"
+w "$SWEEP/.lattice/cache/c0ffee.tar.gz" "an artifact being written right now"
+w "$SWEEP/.lattice/cache/deadbeef.tar.gz" "an artifact nobody is coming back for"
+touch -t 202001010000 "$SWEEP/.lattice/cache/deadbeef.tar.gz"
+lat "$SWEEP" prune --max-size 1GB ; t_ok "prune over a generous budget exits 0"
+t_file   "$SWEEP/.lattice/cache/c0ffee.tar.gz"   "prune leaves a leftover new enough to be a live write"
+t_nofile "$SWEEP/.lattice/cache/deadbeef.tar.gz" "prune still reclaims an abandoned leftover"
+
+# cacheDir names a directory prune deletes inside, so it has to stay somewhere
+# of its own inside the repo.
+badcache() {
+  BADC="$ENVROOT/badcache"; rm -rf "$BADC"; mkdir -p "$BADC/pkg"
+  cat > "$BADC/lattice.json" <<JSON
+{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "echo b" } } ],
+  "tasks": { "build": {} },
+  "settings": { "cacheDir": "$1" } }
+JSON
+  lat "$BADC" run build
+}
+badcache "/tmp/lattice-stress-absolute" ; t_bad "an absolute cacheDir is refused"
+t_has "absolute cacheDir message" "not relative to the repo root"
+badcache "../outside" ; t_bad "a cacheDir above the repo is refused"
+t_has "escaping cacheDir message" "outside the repo root"
+badcache "." ; t_bad "a cacheDir that is the repo root is refused"
+t_has "repo-root cacheDir message" "the repo root itself"
 
 # =========================================================================
 # 12b. Correctness guardrails: the failures that used to be silent.

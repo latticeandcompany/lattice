@@ -91,6 +91,17 @@ process group, gives them five seconds, then kills what is left. Without that
 pass-on, tasks spawned into their own process groups would outlive the runner's
 shutdown.
 
+`SIGTERM` ends the run wherever it arrives, including a run a `persistent` task
+is holding open, such as a job that starts a dev server and tests against it.
+Such a run used to ignore `SIGTERM` and hang until the runner force-killed it.
+The hang cost a cancelled job the rest of its timeout and left the step's result
+unreported. A cancel now stops the run on the signal itself.
+
+Lattice does not report a task stopped that way as a failure. The log shows the
+tasks that were running and then the summary, with no `FAILED` line for the ones
+the cancel stopped. A `0 failed` summary next to exit `130` is correct, so read
+the exit code rather than the summary to tell a cancel from a failure.
+
 ## Collect every failure in one run
 
 By default one failure stops the run, so a broken `lint` keeps `test` and
@@ -150,6 +161,9 @@ wherever `settings.cacheDir` points.
 ```
 
 The cache action's `path` and `settings.cacheDir` must name the same directory.
+`settings.cacheDir` has to name a directory inside the repo, and it cannot be
+the repo root, so a path under the runner's home directory is not an option.
+Point the cache action at the repo-relative path instead.
 
 `actions/cache`'s save step is skipped whenever the restore got an exact key
 hit, which would freeze a static key after its first save. Give the save a key
@@ -208,6 +222,12 @@ lattice prune --max-size 2GB
 With neither the setting nor the flag, `prune` fails rather than guess a limit,
 and the cache grows without bound. See
 [Caching](/lattice/docs/caching#keeping-the-cache-to-a-size).
+
+A `prune` here does not reclaim debris the run just left behind. A leftover has
+to sit untouched for an hour first, so `prune` frees only the entries the size
+limit evicts. The wait keeps two steps that share one checkout from deleting each
+other's cache writes. If a step runs `lattice` while another `lattice` is still
+going, neither loses what it stored.
 
 ## A complete workflow
 

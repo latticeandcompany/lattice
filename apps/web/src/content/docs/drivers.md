@@ -85,9 +85,9 @@ way, because a task runner outranks a package manager.
 `pnpm-lock.yaml` and `bun.lockb`, leave Lattice nothing to prefer, so it halts:
 
 ```text
-Error: workspace 'app' has an ambiguous or undeclared task driver.
-Candidate tools seen: bun, pnpm
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'app' has an ambiguous or undeclared driver.
+Candidate drivers: bun, pnpm
+Declare the driver in lattice.json, under this workspace:
   "engines": { "bun": ">=0.0.0" }
 ```
 
@@ -109,9 +109,9 @@ stops the run before any task starts. Here it is for a workspace containing only
 a `package.json`:
 
 ```text
-Error: workspace 'app' has an ambiguous or undeclared task driver.
-Candidate tools seen: pnpm, npm, yarn, bun
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'app' has an ambiguous or undeclared driver.
+Candidate drivers: pnpm, npm, yarn, bun
+Declare the driver in lattice.json, under this workspace:
   "engines": { "pnpm": ">=0.0.0" }
 ```
 
@@ -119,9 +119,9 @@ With no ecosystem marker either, as in a workspace holding only a `.nvmrc`, the
 candidate list is empty and the message says so:
 
 ```text
-Error: workspace 'app' has an ambiguous or undeclared task driver.
-No task driver could be detected (no lockfile, wrapper, or native declaration).
-Declare the task driver explicitly by adding to this workspace in lattice.json:
+Error: workspace 'app' has an ambiguous or undeclared driver.
+Lattice detected no driver. The directory holds no lockfile, no wrapper, and no native declaration.
+Declare the driver in lattice.json, under this workspace:
   "auto": false, "scripts": { "build": "<command>" }
 ```
 
@@ -159,9 +159,47 @@ Such a workspace needs a `scripts` entry for every task it participates in.
 Asking for one it does not list fails rather than being skipped:
 
 ```text
-Error: workspace 'app' is "auto": false but declares no command for task 'build'; add it under this workspace's "scripts" map in lattice.json
+Error: workspace 'app' has "auto": false and declares no command for task 'build'. Add the command under this workspace's "scripts" map in lattice.json
 ```
 
-The silent skip applies only to an `auto: true` workspace whose detected driver
-has no command for a given task. See [Workspaces](/lattice/docs/workspaces) for
-the full `scripts` and `auto` reference.
+The skip applies only to an `auto: true` workspace whose driver has no command
+for a given task. See [Workspaces](/lattice/docs/workspaces) for the full
+`scripts` and `auto` reference.
+
+## What a driver can run
+
+Resolving a driver is not the same as resolving a command. A driver falls into
+one of two groups, and the group decides where a task's command comes from.
+
+One group takes the task name on its command line. `cargo`, `go`, `make`,
+`just`, `gradle`, and most of the table work this way, and the invoke form is the
+command. `lattice run test` in a `cargo` workspace runs `cargo test` whether or
+not such a target exists, and `cargo` reports the missing target rather than
+Lattice.
+
+The other group reads its tasks out of a manifest. `npm`, `pnpm`, `yarn`, and
+`bun` read `scripts` in `package.json`, and `deno` reads `tasks` in `deno.json`
+or `deno.jsonc`. Such a driver can run only a script that manifest declares. A
+requested task the manifest leaves out does not run in that workspace at all. The
+task drops out of the graph, and the run carries on with the workspaces that do
+declare it.
+
+That skip is deliberate. A types-only package with no `build` script has nothing
+to build, and an invented `npm run build` for it fails. Lattice used to invent
+one.
+
+A missing script and a mistyped one look the same from outside, so Lattice warns
+when a manifest declares a script map without the task you asked for:
+
+```text
+warn web declares scripts but no "build", so the task was skipped. Did you mean "biuld"?
+```
+
+Lattice stays quiet when the manifest declares no scripts at all, and when the
+workspace has `auto: false`. See [Errors](/lattice/docs/errors#a-task-was-skipped-because-the-manifest-declares-no-such-script)
+for every shape that warning takes, and for what Lattice says about a manifest
+it cannot parse.
+
+A `scripts` entry in `lattice.json` overrides both groups. It supplies the
+command directly, so it is how you run a task in a workspace whose manifest does
+not declare it.

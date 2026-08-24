@@ -52,7 +52,7 @@ host, parses a version out of the output, and checks it against `>=20.0.0`. On a
 host with Node 18 the run fails before any task starts:
 
 ```text
-engine 'node' 18.19.0 on PATH does not satisfy constraint '>=20.0.0'
+engine 'node' on PATH is 18.19.0, which does not satisfy the constraint '>=20.0.0'
 ```
 
 Version parsing is deliberately loose, because tools disagree about how to print
@@ -139,10 +139,24 @@ directory named for the resolved version and the first 8 hex characters of
 ```
 
 The version is not known while `installCmd` is running, so Lattice installs into
-a temporary `tmp-<hash>` directory and renames it to `<version>-<hash>` only
-after the new tool passes its version check. With no `versionCmd` and no
-built-in rule, the version records as `0.0.0`. `pins.json` records what produced
-the directory:
+a staging directory beside the final one and renames it to `<version>-<hash>`
+only after the new tool passes its version check. The staging directory's name
+carries the process id, so two `lattice setup` runs that provision the same
+engine at once each get their own. They used to share one, clear it before use,
+and promote a tree assembled from both installs. Lattice deletes a staging
+directory a killed run left behind once it is 24 hours old, and no live install
+lasts that long.
+
+With no `versionCmd` and no built-in rule for the engine's name, the version
+records as `unknown`, and the install hash identifies the toolchain. Lattice used
+to record `0.0.0`, a version nothing had installed. That value also went into
+every task's cache key as `<name>=0.0.0@<hash>`, and the key now reads
+`<name>=unknown@<hash>`. A `version` constraint with no way to check it is an
+error rather than a recorded guess, because Lattice cannot enforce a constraint
+it cannot check. See
+[Provisioning failures](/lattice/docs/errors#provisioning-failures).
+
+`pins.json` records what produced the directory:
 
 ```json
 {
@@ -174,6 +188,14 @@ expects the path on its command line.
 
 `installCmd` and `versionCmd` both run through the platform shell, `sh -c` on
 Unix and `cmd /C` on Windows, the same way a task's command does.
+
+`bin` names the directory inside the install that goes on `PATH`, and it has to
+stay inside the install. Give a relative path, with no `..`, no leading `/`, and
+no drive letter. An absolute `bin` would replace the install path outright and
+put a directory Lattice never provisioned in front of every command, and the run
+would still report a provisioned toolchain. Lattice checks the value when the
+config loads and again when it reads a pin back from `pins.json`, so a
+hand-edited pin cannot get past the check either.
 
 ## Activation is per task
 

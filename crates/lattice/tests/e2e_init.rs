@@ -35,7 +35,10 @@ fn init_scaffolds_a_repo_and_runs_cleanly() {
 #[test]
 fn init_declares_the_workspaces_it_finds() {
 	let fx = Fixture::new();
-	fx.write("apps/web/package.json", r#"{ "name": "web" }"#);
+	fx.write(
+		"apps/web/package.json",
+		r#"{ "name": "web", "scripts": { "build": "tsc" } }"#,
+	);
 	fx.write("apps/web/pnpm-lock.yaml", "");
 	fx.write("services/api/Cargo.toml", "[package]\nname = \"api\"\n");
 	fx.write("services/api/Cargo.lock", "");
@@ -69,7 +72,10 @@ fn init_declares_the_workspaces_it_finds() {
 #[test]
 fn init_leaves_out_what_it_cannot_drive_and_says_so() {
 	let fx = Fixture::new();
-	fx.write("apps/web/package.json", r#"{ "name": "web" }"#);
+	fx.write(
+		"apps/web/package.json",
+		r#"{ "name": "web", "scripts": { "build": "tsc" } }"#,
+	);
 	fx.write("apps/web/package-lock.json", "{}");
 	// A bare Cargo.toml with the lock at the repo root is not enough evidence
 	// to drive tasks. Declaring it would halt the very next run.
@@ -96,6 +102,55 @@ fn init_leaves_out_what_it_cannot_drive_and_says_so() {
 		.assert()
 		.success()
 		.stdout(predicate::str::contains("npm run build"));
+}
+
+/// A declared workspace whose manifest plainly runs scripts, and does not have
+/// the one being asked for, is the shape a typo takes — so a run says so, once,
+/// and points at the name it nearly matches. A manifest that declares no scripts
+/// at all is a complete config and stays out of it.
+#[test]
+fn a_run_names_a_task_the_manifest_meant_to_declare_and_did_not() {
+	let fx = Fixture::new();
+	fx.write(
+		"apps/web/package.json",
+		r#"{ "name": "web", "scripts": { "biuld": "tsc" } }"#,
+	);
+	fx.write("apps/web/pnpm-lock.yaml", "");
+	// No `scripts` at all: a types-only package, and nothing to report about it.
+	fx.write("packages/types/package.json", r#"{ "name": "types" }"#);
+	fx.write("packages/types/package-lock.json", "{}");
+
+	fx.lattice().args(["init", "-y"]).assert().success();
+
+	for args in [
+		vec!["run", "build"],
+		vec!["run", "build", "--dry-run"],
+		vec!["run", "build", "-l"],
+	] {
+		let out = fx.lattice().args(&args).assert().success();
+		let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+		assert_eq!(
+			stderr.matches("declares scripts but no").count(),
+			1,
+			"`lattice {}` said it {} times:\n{stderr}",
+			args.join(" "),
+			stderr.matches("declares scripts but no").count()
+		);
+		assert!(
+			stderr.contains(r#"web declares scripts but no "build""#),
+			"`lattice {}`:\n{stderr}",
+			args.join(" ")
+		);
+		assert!(
+			stderr.contains(r#"Did you mean "biuld"?"#),
+			"`lattice {}`:\n{stderr}",
+			args.join(" ")
+		);
+		assert!(
+			!stderr.contains("types"),
+			"a manifest with no scripts is a complete config:\n{stderr}"
+		);
+	}
 }
 
 #[test]

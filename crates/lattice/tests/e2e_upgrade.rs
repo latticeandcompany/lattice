@@ -476,3 +476,52 @@ fn upgrade_outside_a_repo_says_so() {
 		.failure()
 		.stderr(predicates::str::contains("no lattice.json"));
 }
+
+/// A pin is spliced into a download URL and an install filename, so a value that
+/// is not a version has to be refused by name rather than fetched.
+#[test]
+fn a_pin_that_is_not_a_version_is_refused_by_name() {
+	let bin = bin_version();
+	let fx = fixture();
+	fx.config(&CONFIG.replace("0.1.0", "../../../../pwned"));
+	fx.install_managed(&bin);
+
+	fx.managed_lattice(&bin)
+		.args(["run", "greet"])
+		.assert()
+		.failure()
+		.stderr(predicates::str::contains("is not a version"))
+		.stderr(predicates::str::contains("could not download").not());
+
+	let stray: Vec<_> = fx
+		.files_under(".lattice/bin")
+		.into_iter()
+		.filter(|p| {
+			p.components()
+				.any(|c| c.as_os_str().to_string_lossy().starts_with(".staging"))
+		})
+		.collect();
+	assert!(
+		stray.is_empty(),
+		"a rejected pin must not have started an install: {stray:?}"
+	);
+}
+
+/// This repo's own tags carry a `v`, so a hand-edited pin often does too. It
+/// names the same release, and when that release is the running binary there is
+/// no drift to act on — the old reading turned it into a download of `v../`.
+#[test]
+fn a_v_prefixed_pin_naming_this_build_is_not_drift() {
+	let bin = bin_version();
+	let fx = fixture();
+	fx.config(&CONFIG.replace("0.1.0", &format!("v{bin}")));
+	fx.install_managed(&bin);
+
+	// No release is published anywhere, so any download attempt fails outright.
+	fx.managed_lattice(&bin)
+		.args(["run", "greet", "--no-cache"])
+		.assert()
+		.success()
+		.stdout(predicates::str::contains("app:greet: done"))
+		.stderr(predicates::str::contains("switching").not());
+}

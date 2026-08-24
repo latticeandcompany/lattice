@@ -62,3 +62,13 @@ test('clearing resets the drop count too', () => {
 	assert.equal(buffer.dropped, 0);
 	assert.equal(buffer.produced, 0);
 });
+
+// A reader has to end up holding what the buffer holds, or its own copy grows without
+// bound while the buffer stays capped.
+test('since() says how many lines are still held', () => {
+	const buffer = new LineBuffer(3);
+	for (let i = 0; i < 10; i += 1) buffer.push(line(i));
+	assert.equal(buffer.since(0).held, 3);
+	assert.equal(buffer.since(10).held, 3);
+	assert.equal(new LineBuffer(3).since(0).held, 0);
+});

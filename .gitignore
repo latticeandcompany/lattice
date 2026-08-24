@@ -23,6 +23,7 @@ target/
 .lattice/cache/
 .lattice/toolchains/
 .lattice/bin/
+.lattice/setup/
 .lattice-setup-marker
 
 node_modules/
@@ -38,6 +39,7 @@ dist/
 examples/**/.lattice/cache/
 examples/**/.lattice/toolchains/
 examples/**/.lattice/bin/
+examples/**/.lattice/setup/
 .turbo/
 examples/**/.turbo/
 examples/**/.venv/

@@ -15,10 +15,28 @@ use serde_json::{json, Map, Value};
 use lattice_config::schema::SCHEMA_JSON;
 use lattice_workspace::scan::{EnginePin, WorkspaceCandidate};
 
+/// The directory `lattice setup` writes its per-workspace install markers into,
+/// one file per workspace. Named here because the line that ignores it has to
+/// say the same thing.
+pub const SETUP_MARKER_DIR: &str = ".lattice/setup";
+
+/// Where `lattice setup` used to write its marker: one file of this name inside
+/// every workspace directory. Still read, so upgrading mid-project does not
+/// reinstall every workspace, and still ignored, so an old one left in a tree
+/// stays untracked.
+pub const LEGACY_SETUP_MARKER: &str = ".lattice-setup-marker";
+
 /// Lines init ensures are present in `.gitignore`: the cache, provisioned
-/// toolchains, and installed binaries are all per-machine artifacts. The
-/// committed `.lattice/schema.json` stays tracked and is not ignored.
-pub const GITIGNORE_LINES: &[&str] = &[".lattice/cache/", ".lattice/toolchains/", ".lattice/bin/"];
+/// toolchains, installed binaries and setup markers are all per-machine
+/// artifacts. The committed `.lattice/schema.json` stays tracked and is not
+/// ignored, which is why `.lattice/` is listed a directory at a time.
+pub const GITIGNORE_LINES: &[&str] = &[
+	".lattice/cache/",
+	".lattice/toolchains/",
+	".lattice/bin/",
+	".lattice/setup/",
+	LEGACY_SETUP_MARKER,
+];
 
 /// The skeleton written when a scan turns up nothing and there is no one to ask.
 pub fn default_skeleton(version: &str) -> Value {
@@ -211,6 +229,40 @@ mod tests {
 		}
 		// The schema copy is committed, so it must never be ignored.
 		assert!(!out.contains(".lattice/schema.json"));
+	}
+
+	#[test]
+	fn the_setup_marker_directory_is_ignored() {
+		// The ignore line has to be the marker directory `setup` actually writes
+		// into, plus the trailing slash that makes it a directory pattern.
+		let expected = format!("{SETUP_MARKER_DIR}/");
+		assert!(
+			GITIGNORE_LINES.iter().any(|l| *l == expected),
+			"{expected} missing from {GITIGNORE_LINES:?}"
+		);
+
+		let dir = tempfile::tempdir().unwrap();
+		write_artifacts(dir.path(), &default_skeleton("1.0.0")).unwrap();
+		let ignored = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+		assert!(
+			ignored.lines().any(|l| l.trim() == expected),
+			"the setup marker directory is missing from .gitignore:\n{ignored}"
+		);
+	}
+
+	#[test]
+	fn the_legacy_in_workspace_marker_stays_ignored() {
+		// Someone upgrading has one of these in every workspace already. Dropping
+		// the line would turn them all into untracked files in the source tree.
+		assert!(GITIGNORE_LINES.contains(&LEGACY_SETUP_MARKER));
+
+		let dir = tempfile::tempdir().unwrap();
+		write_artifacts(dir.path(), &default_skeleton("1.0.0")).unwrap();
+		let ignored = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+		assert!(
+			ignored.lines().any(|l| l.trim() == LEGACY_SETUP_MARKER),
+			"the legacy setup marker is missing from .gitignore:\n{ignored}"
+		);
 	}
 
 	fn pin(engine: &str, version: &str) -> EnginePin {

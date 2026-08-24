@@ -5,7 +5,7 @@
 //! already records in its native files. Both report what is on disk and stop
 //! there — deciding what goes in the config is the caller's job.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -218,14 +218,35 @@ fn suggested_name(root: &Path, path: &Path) -> String {
 
 /// Two directories can share a base name (`apps/web`, `sites/web`). Where they
 /// do, name both after their full path so the config stays unambiguous.
+///
+/// A path name can collide in turn — `a/b-c` and `a-b/c` both flatten to
+/// `a-b-c` — and a config with two workspaces of one name does not load at all,
+/// so the last word is a counter. `candidates` is in path order, which keeps the
+/// numbering stable between scans.
 fn disambiguate_names(candidates: &mut [WorkspaceCandidate]) {
-	let mut counts: HashMap<String, usize> = HashMap::new();
+	let mut counts: HashMap<&str, usize> = HashMap::new();
 	for c in candidates.iter() {
-		*counts.entry(c.name.clone()).or_default() += 1;
+		*counts.entry(c.name.as_str()).or_default() += 1;
 	}
+	let shared: Vec<String> = counts
+		.into_iter()
+		.filter(|(_, n)| *n > 1)
+		.map(|(name, _)| name.to_string())
+		.collect();
+
+	let mut taken: HashSet<String> = HashSet::new();
 	for c in candidates.iter_mut() {
-		if counts.get(&c.name).copied().unwrap_or(0) > 1 && c.path != "." {
+		if shared.contains(&c.name) && c.path != "." {
 			c.name = c.path.replace('/', "-");
+		}
+		if !taken.insert(c.name.clone()) {
+			let mut n = 2;
+			let mut unique = format!("{}-{n}", c.name);
+			while !taken.insert(unique.clone()) {
+				n += 1;
+				unique = format!("{}-{n}", c.name);
+			}
+			c.name = unique;
 		}
 	}
 }
@@ -448,6 +469,24 @@ mod tests {
 		assert_eq!(name_for("apps/web"), "apps-web");
 		assert_eq!(name_for("sites/web"), "sites-web");
 		assert_eq!(name_for("tools/cli"), "cli");
+	}
+
+	/// The path-based fallback name can collide in turn — `a/b-c` and `a-b/c` both
+	/// flatten to `a-b-c` — and `lattice init` writing two workspaces of one name
+	/// produces a config the next command refuses to load.
+	#[test]
+	fn colliding_path_names_are_still_unique() {
+		let tmp = TempDir::new().unwrap();
+		for dir in ["a/b-c", "z/b-c", "a-b/c", "z/c"] {
+			write(tmp.path(), &format!("{dir}/package.json"), "{}");
+			write(tmp.path(), &format!("{dir}/package-lock.json"), "{}");
+		}
+
+		let found = scan_workspaces(tmp.path());
+		let names: Vec<&str> = found.iter().map(|c| c.name.as_str()).collect();
+		assert_eq!(names.len(), 4);
+		let unique: HashSet<&str> = names.iter().copied().collect();
+		assert_eq!(unique.len(), names.len(), "duplicate name in {names:?}");
 	}
 
 	#[test]

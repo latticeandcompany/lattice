@@ -4,7 +4,8 @@
 // solving with machinery.
 //
 // Run state is deliberately not here. It arrives faster than a frame and lives in
-// `runStore`, which notifies per task.
+// `runStore`, which notifies per task. The one thing this file says to it is that the
+// project its run belonged to has been closed or replaced.
 
 import {
 	createContext,
@@ -17,6 +18,8 @@ import {
 } from 'react';
 
 import * as api from '../lib/api.ts';
+import { guarded, message } from '../lib/guard.ts';
+import { runStore } from '../lib/runStore.ts';
 import type {
 	AppInfo,
 	Catalog,
@@ -114,7 +117,8 @@ interface AppValue extends State {
 	close: () => Promise<void>;
 	forget: (root: string) => Promise<void>;
 	setConfigText: (text: string) => void;
-	saveConfig: (text: string) => Promise<void>;
+	/** False when the write failed; the error is already on screen. */
+	saveConfig: (text: string) => Promise<boolean>;
 	dismissError: () => void;
 }
 
@@ -123,31 +127,36 @@ const AppContext = createContext<AppValue | null>(null);
 export const AppProvider = ({ children }: { children: ReactNode }) => {
 	const [state, dispatch] = useReducer(reduce, initial);
 
-	const guard = useCallback(async (work: () => Promise<void>) => {
-		dispatch({ type: 'busy', busy: true });
-		try {
-			await work();
-		} catch (error) {
-			dispatch({ type: 'error', error: error instanceof Error ? error.message : String(error) });
-		} finally {
-			dispatch({ type: 'busy', busy: false });
-		}
-	}, []);
+	const guard = useCallback(
+		(work: () => Promise<void>) =>
+			guarded(work, {
+				onBusy: (busy) => dispatch({ type: 'busy', busy }),
+				onError: (error) => dispatch({ type: 'error', error }),
+			}),
+		[],
+	);
 
 	const refreshRecents = useCallback(async () => {
 		const recents = await api.projectRecent();
 		dispatch({ type: 'recents', recents });
 	}, []);
 
+	const openRoot = state.project?.root ?? null;
+
 	const openProject = useCallback(
 		async (path: string) => {
 			await guard(async () => {
 				const snapshot = await api.projectOpen(path);
+				// The backend stops a run that belonged to the project being replaced,
+				// so the view of it goes too: two repos that both declare `build` would
+				// otherwise show the old run's states, cache chips and output. Reopening
+				// the same root keeps its run, so it keeps its view as well.
+				if (snapshot.project?.root !== openRoot) runStore.reset();
 				dispatch({ type: 'snapshot', snapshot, root: path });
 				await refreshRecents();
 			});
 		},
-		[guard, refreshRecents],
+		[guard, refreshRecents, openRoot],
 	);
 
 	const pickAndOpen = useCallback(async () => {
@@ -165,6 +174,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 	const close = useCallback(async () => {
 		await guard(async () => {
 			await api.projectClose();
+			runStore.reset();
 			dispatch({ type: 'closed' });
 		});
 	}, [guard]);
@@ -180,12 +190,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 	);
 
 	const saveConfig = useCallback(
-		async (text: string) => {
-			await guard(async () => {
+		(text: string) =>
+			guard(async () => {
 				const snapshot = await api.configSave(text);
 				dispatch({ type: 'snapshot', snapshot });
-			});
-		},
+			}),
 		[guard],
 	);
 
@@ -203,11 +212,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 				// The platform decides whether our own chrome has to leave room for the
 				// traffic lights.
 				document.documentElement.setAttribute('data-platform', info.platform);
+
+				// A reloaded webview starts over; the backend did not. Whatever it still
+				// holds open is what this window should be showing, and `useReconnect`
+				// picks up the run that goes with it.
+				if (await api.projectCurrent()) {
+					dispatch({ type: 'snapshot', snapshot: await api.projectReload() });
+				}
 			} catch (error) {
-				dispatch({
-					type: 'error',
-					error: error instanceof Error ? error.message : String(error),
-				});
+				dispatch({ type: 'error', error: message(error) });
 			}
 		})();
 	}, []);

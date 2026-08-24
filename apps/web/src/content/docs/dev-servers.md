@@ -175,12 +175,26 @@ down. On Unix, Lattice sends `SIGTERM` to each one's whole process group, waits
 up to five seconds, then sends `SIGKILL` to whatever is left. A server launched
 through a shell dies with everything it spawned.
 
+The first press is enough, whenever it lands. Lattice listens for the signal from
+the moment the run starts, so a `Ctrl-C` while the builds ahead of the servers
+are still going is the one that ends the run. It used to take a second press in
+that case. The wait began listening only once the graph had drained, and by then
+the first signal had come and gone.
+
+`SIGTERM` ends the run the same way. A CI runner sends `SIGTERM` to cancel a
+job.
+
 An interrupted run exits `130`, the shell's convention for `SIGINT`, so a CI
 runner can tell a cancelled run from a failed one. The summary line still
-prints, and a server killed this way is not reported as having exited.
+prints, and a server killed this way is not reported as having exited or as
+having failed.
 
-The run also ends on its own once every persistent task in it has exited. There
-is nothing left to wait for, so it prints the summary without a `Ctrl-C`.
+Two other things end the run. One is the last persistent task exiting on its
+own. Nothing is left to wait for, so Lattice prints the summary without a
+`Ctrl-C`. The other is any task in the run failing. The failure stops the
+scheduler, and Lattice takes down the servers already up rather than leave them
+holding the run open with nothing left to schedule. A failed run used to wait for
+a signal only a person was going to send.
 
 ## Read a server that exits
 
@@ -226,12 +240,15 @@ The task holds its concurrency permit for as long as the process runs, because
 the permit is released when the task finishes. With a small `--concurrency`, one
 forgotten dev-server task can starve everything waiting for a slot.
 
-`Ctrl-C` does not get the teardown described above. Lattice starts listening for
-it once a task registers as persistent, and this one never does. No signal
-handler is installed while `lattice run` waits on an ordinary child, so `Ctrl-C`
-falls through to the OS default and kills the `lattice run` process itself with
-no chance to clean up the process group. The server it spawned is orphaned,
-still running and still bound to its port, until you kill it by hand.
+Its output stays collapsed. A run that pulls in a persistent task switches to
+raw, line-by-line output, where a server's lines appear as it prints them. A task
+Lattice does not know is persistent does not trigger the switch, so the live
+display holds the task's output behind a spinner that never resolves. Pass `-v`
+to see the output.
+
+`Ctrl-C` still tears the process group down, because Lattice listens for the
+signal for the whole run and not only while a persistent task is up. The server
+does not outlive the run. What you lose is the run ever finishing on its own.
 
 If a command is meant to keep running, mark it `persistent: true`. If it is
 meant to exit, leave `persistent` unset. The scheduler treats every task as one

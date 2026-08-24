@@ -137,6 +137,12 @@ The hash in the directory name is the first 8 hex characters of
 `sha256(installCmd)`. Change the `installCmd` and Lattice provisions into a new
 directory rather than mutating the old one.
 
+The version in the directory name is the one the tool reported once Lattice had
+installed it. An engine with no `versionCmd` and no built-in version rule has
+nothing to report, so it lands under `unknown-<hash>` and the hash identifies it.
+A `version` you have no way to check is an error instead, because Lattice does
+not record a version it did not read.
+
 ## Give each workspace its own version
 
 Declare `engines` inside a workspace instead of, or in addition to, the root. A

@@ -54,6 +54,29 @@ because you said what it runs.
 Add the entry, or drop `"auto": false` and let detection find the tool. See
 [Workspaces](/lattice/docs/workspaces).
 
+### A task ran in some workspaces and not others
+
+```text
+warn web declares scripts but no "build", so the task was skipped. Did you mean "biuld"?
+```
+
+A workspace driven by `npm`, `pnpm`, `yarn`, `bun`, or `deno` can run only a task
+its manifest declares as a script. A task the manifest does not declare drops out
+of the graph, and the run carries on without it. A misspelled script name and a
+workspace with nothing to do for the task look the same, so the warning fires
+either way.
+
+To fix a typo, correct the name in the manifest. To give the workspace a command
+for the task, add the script to its manifest, or add a `scripts` entry in
+`lattice.json`. If the workspace genuinely has nothing to do for that task, the
+run is already correct and there is nothing to fix. Lattice used to invent
+`npm run build` in that case and fail on it.
+
+`--filter` does not narrow the warning, so a filtered run can name a workspace it
+did not select. To see which workspaces the task resolved in, run
+`lattice run <task> --dry-run`. See
+[What a driver can run](/lattice/docs/drivers#what-a-driver-can-run).
+
 ### A task's resolved command is not the one you expected
 
 An entry in a workspace's `scripts` map always wins. Only a task with no entry
@@ -115,6 +138,35 @@ version-only engine string for a tool Lattice cannot version-check are all
 caught before any task starts, with the field and the value in the message. See
 [Errors](/lattice/docs/errors) for every shape and
 [Configuration](/lattice/docs/configuration) for the field reference.
+
+### A key appears twice in the same object
+
+```text
+Error: duplicate key `build` in tasks (lattice.json line 12, column 3)
+Keep one of them: the second replaces the first, so only the last would take effect
+```
+
+Two entries in `tasks`, `engines`, a workspace's `engines`, or a workspace's
+`scripts` share a key. Only the last of the two would survive, so the second
+entry would drop the first one's fields. Delete whichever you do not want.
+
+The position is where the parser finished the object, not where the repeat sits.
+Read the whole container the message names rather than that one line. Keep
+`"$schema": ".lattice/schema.json"` in the file and your editor underlines the
+repeat as you type it.
+
+### A command in `scripts` is never used
+
+```text
+Error: workspace 'core' declares a script 'biuld', but 'biuld' is not defined in `tasks`, so nothing would ever run it
+Did you mean `build`?
+Defined tasks: build, test
+```
+
+A `scripts` key supplies the command for the root task of the same name, so a key
+that matches no task can never run. Correct the key, or add the task to `tasks`.
+An earlier version accepted the typo, ran the command Lattice detected for the
+workspace, and said nothing about the override you wrote.
 
 ## Caching
 
@@ -185,6 +237,20 @@ this machine, which is common for a build that skips its native step when the
 compiler is missing; drop `outputs` from that task and let the cache entry
 record only that it succeeded.
 
+A second wording covers the near miss:
+
+```text
+lattice: warning: api:build: failed to cache outputs: outputs ["dist"] matched only empty directories, so nothing was cached. Check that the task writes its files where the patterns point
+```
+
+Here a pattern did match, and what it matched was a directory holding no files.
+A bare `outputs: ["dist"]` covers `dist/` itself, so an empty `dist/` counts as
+a match even when the task produced nothing. Run the task, then look inside the
+directory. If it is empty, the command is writing somewhere else, or not writing
+at all. For why Lattice refuses to store that archive, see [Archive format and
+the output
+digest](/lattice/docs/cache-internals#archive-format-and-the-output-digest).
+
 ### The run warns about restoring a cache entry
 
 Restoring outputs into a workspace can fail on permissions or disk space. That
@@ -192,6 +258,33 @@ is a warning, not a failure: the task ran fresh instead, so what is on disk is
 correct. A cache hit itself is all-or-nothing. The metadata has to parse, the
 tarball has to open, and its digest has to match what was recorded, so a corrupt
 entry is a miss and the task reruns rather than replaying something wrong.
+
+### `lattice prune` leaves files behind
+
+```text
+❖ removed 0 artifacts, freed 0B
+```
+
+`lattice prune` reclaims a leftover from an interrupted run only once that
+leftover has sat untouched for an hour. It leaves anything younger where it is,
+and those bytes keep counting against `settings.maxCacheSize` until the hour is
+up. To free the space now, delete the cache directory. Otherwise run
+`lattice prune` again later.
+
+The wait keeps two `lattice` processes sharing one cache directory from deleting
+each other's writes. See [the one-hour grace
+period](/lattice/docs/cache-internals#the-one-hour-grace-period).
+
+### Every task misses the cache after an upgrade
+
+Expected, once. The running Lattice version is part of every key, so a release
+that changes what a key covers moves every key with it. The first run afterwards
+re-runs everything. See [Why the Lattice version is part of every
+key](/lattice/docs/caching#why-the-lattice-version-is-part-of-every-key).
+
+The miss line says `environment changed`, or reports nothing cached for the task
+yet. Both have the same cause. The old entries are still on disk, and they age
+out under `settings.maxCacheSize` or `lattice prune` like any others.
 
 ## Toolchains
 
@@ -237,6 +330,40 @@ from `lattice setup`, which provisions the root engines first.
 To check that a teammate's toolchain resolves before handing them work, have
 them run `lattice setup`.
 
+### `lattice setup` says `dependencies up to date` but a dependency is missing
+
+```text
+● web dependencies up to date
+```
+
+The marker recording the last install is newer than every lockfile that governs
+the workspace, so there is nothing to reinstall. A workspace's lockfiles are the
+one in its own directory and every one above it up to the repo root. That is what
+makes a hoisted npm, pnpm, or yarn tree work, where one root lockfile governs
+every workspace under it.
+
+Lattice used to check the workspace's own directory alone. In that everyday
+layout a workspace directory holds no lockfile, so nothing could invalidate its
+marker, and `lattice setup` reported `dependencies up to date` however far the
+root lockfile had moved. On a version that still behaves that way, run
+`lattice setup --force` to reinstall regardless.
+
+### `lattice setup` fails on an installer that wants to prompt you
+
+```text
+lattice: warning: api: `poetry install` failed
+```
+
+`lattice setup` gives the install command no stdin, so an installer that stops
+for a password, a token, or a confirmation reads end-of-file and exits non-zero.
+Its own output, printed as the install runs, says what it wanted.
+
+To supply the credential without a prompt, put a token in an environment
+variable, configure a credential helper, or write a `.netrc`. Otherwise run that
+installer once by hand outside Lattice, and let the marker cover it afterwards.
+The installer used to inherit the terminal and block on a prompt nothing was
+displaying, so the command hung with no output until something killed it.
+
 ## Output
 
 ### You expected the live display and got plain lines
@@ -272,11 +399,22 @@ Once a run starts a `persistent: true` task it waits, streaming that task's
 output, until you interrupt it. Everything else in the graph finishes first and
 its results are visible above. No flag changes this: it is what a `dev` run is.
 
-`Ctrl-C` stops it, and the run exits `130` with no message about the interrupt.
-A run also ends on its own once every persistent task in it has exited, so a task marked persistent by mistake
-no longer blocks: it gets an `exited (code 0)` line and the run prints its
-summary. For a run that always terminates, leave the persistent task out of the
-names you pass. See [Run dev servers](/lattice/docs/dev-servers).
+Four things end such a run:
+
+- `Ctrl-C`, on the first press. The run exits `130` with no message about the
+  interrupt.
+- A `SIGTERM`, which a CI runner sends when someone cancels the job.
+- Every persistent task in the run exiting on its own. A task marked persistent
+  by mistake no longer blocks. It gets an `exited (code 0)` line, and the run
+  prints its summary.
+- Any task in the run failing. The run ends rather than leaving the dev server
+  holding it open with nothing left to schedule.
+
+The first two used to need a second press, or a force-kill from the runner.
+Lattice started listening for a signal only once the graph had drained, so it
+missed one that arrived while a build was still running. For a run that always
+terminates, leave the persistent task out of the names you pass. See
+[Run dev servers](/lattice/docs/dev-servers).
 
 ### A task cannot depend on your `dev` task
 
@@ -290,20 +428,21 @@ step that produces it. See [Persistent tasks](/lattice/docs/persistent-tasks).
 
 ## Running
 
-### The run printed `FAILED` lines but the summary says `0 failed`
+### A run stopped and nothing says why
 
 ```text
 docs:build: running
 ui:build: running
-docs:build: FAILED
-ui:build: FAILED
 lattice: 2 tasks, 0 cached, 0 failed, 1.49s
 ```
 
 The run was interrupted. `Ctrl-C`, or the `SIGTERM` a CI runner sends when
 someone cancels the job, stops the scheduler and terminates each running task's
-whole process group. Those children exit non-zero, so each task reports `FAILED`,
-and none of them is counted as a failure.
+whole process group. Those children exit non-zero, and none of those exits is a
+task failure. A task the interrupt stopped prints no `FAILED` line, and the
+summary does not count it. The events and the summary agree. They previously did
+not. Every task the interrupt stopped printed `FAILED` above a summary reporting
+`0 failed`.
 
 Nothing prints the word interrupted. The exit code is the only signal, and it is
 `130`, so read `$?` rather than the summary. A build that genuinely broke exits
