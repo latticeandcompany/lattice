@@ -197,7 +197,7 @@ test('a run that ends leaves nothing claiming to be running', () => {
 	const s = store();
 	s.begin(graph);
 	s.ingest(event({ kind: 'event', event: { type: 'started', workspace: 'api', task: 'build' } }));
-	s.settle({ status: 'interrupted', result: { total: 2, cached: 0, failed: 0, elapsedMs: 50 } });
+	s.settle({ status: 'interrupted', result: { total: 2, cached: 0, failed: 0, elapsedMs: 50, savedMs: 0 } });
 
 	assert.equal(s.runView().phase, 'done');
 	assert.equal(s.taskView('api:build').state, 'idle');
@@ -208,9 +208,9 @@ test('a summary is recorded for the run, not for a task', () => {
 	const s = store();
 	s.begin(graph);
 	s.ingest(
-		event({ kind: 'summary', result: { total: 2, cached: 1, failed: 0, elapsedMs: 390 } }),
+		event({ kind: 'summary', result: { total: 2, cached: 1, failed: 0, elapsedMs: 390, savedMs: 1_200 } }),
 	);
-	assert.deepEqual(s.runView().result, { total: 2, cached: 1, failed: 0, elapsedMs: 390 });
+	assert.deepEqual(s.runView().result, { total: 2, cached: 1, failed: 0, elapsedMs: 390, savedMs: 1_200 });
 });
 
 test('notes and warnings accumulate separately', () => {
@@ -323,7 +323,7 @@ test('a run ending moves the revision too, so the final colours land', () => {
 	const s = store();
 	s.begin(graph);
 	const before = s.viewsRev;
-	s.settle({ status: 'completed', result: { total: 2, cached: 2, failed: 0, elapsedMs: 12 } });
+	s.settle({ status: 'completed', result: { total: 2, cached: 2, failed: 0, elapsedMs: 12, savedMs: 2_400 } });
 	assert.notEqual(s.viewsRev, before);
 });
 
@@ -335,7 +335,7 @@ test('a discarded run cannot settle over what replaced it', () => {
 	const epoch = s.epoch;
 
 	s.reset();
-	s.settle({ status: 'interrupted', result: { total: 2, cached: 0, failed: 0, elapsedMs: 90 } }, epoch);
+	s.settle({ status: 'interrupted', result: { total: 2, cached: 0, failed: 0, elapsedMs: 90, savedMs: 0 } }, epoch);
 
 	assert.equal(s.runView().phase, 'idle');
 	assert.equal(s.runView().outcome, null);
@@ -345,7 +345,7 @@ test('the run that is actually showing still settles', () => {
 	const s = store();
 	s.begin(graph);
 	const epoch = s.epoch;
-	s.settle({ status: 'completed', result: { total: 2, cached: 0, failed: 0, elapsedMs: 90 } }, epoch);
+	s.settle({ status: 'completed', result: { total: 2, cached: 0, failed: 0, elapsedMs: 90, savedMs: 0 } }, epoch);
 	assert.equal(s.runView().phase, 'done');
 });
 
