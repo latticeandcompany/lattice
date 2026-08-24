@@ -54,18 +54,27 @@ Read across a row to translate a line you have in front of you.
 | A task starts | `ui:build: running` | `⠋ ui:build  running…` |
 | It finishes | `ui:build: done (1.02s)` | `✓ ui:build  1.02s` |
 | It comes back from cache | `ui:build: cache hit [5341be25]` | `● ui:build  cache hit [5341be25]` |
-| It fails | `ui:build: FAILED` | `✗ ui:build  FAILED` |
+| It fails | `ui:build: FAILED (code 3) after 1.02s` | `✗ ui:build  FAILED (code 3) 1.02s` |
 | A prerequisite failed, so it never starts | `web:build: skipped (dependency failed)` (`-v` only) | `○ web:build  skipped (dependency failed)` |
 | A persistent task exits cleanly | `docs:dev: exited (code 0) after 2.02s` | raw only |
 | A persistent task exits non-zero | `docs:dev: EXITED (code 1) after 2.02s` | raw only |
-| A trace line | `lattice: ui:build: hash 5341be25…` (`-v` only) | `ui:build: hash 5341be25…`, dim |
+| A trace line | `lattice: ui:build: hash 5341be25…` (`-v` only) | not shown |
 | A warning | `lattice: warning: ui:build: …` | `warn ui:build: …` |
 | The run ends | `lattice: 4 tasks, 0 cached, 0 failed, 3.08s` | `❖  4 tasks · 0 cached · 0 failed  3.08s` |
 | Every task came back from cache | `lattice: full cache, nothing to run` | `❖❖❖ FULL CACHE` |
 
 The two persistent rows have no interactive form. A run that can reach a
 persistent task is switched to raw before it starts, so the live display never
-gets to render one exiting.
+gets to render one exiting. The trace row has no interactive form either. The
+hash and cache-miss lines belong to `-v`, and the live display leaves them out.
+
+How much a failure line carries depends on how the task died. A command that ran
+and returned an exit code gets both halves, the code and the time. A task a
+signal killed, and a task Lattice stopped for overrunning its `timeout`, have no
+exit code, so the line carries the time alone: `ui:build: FAILED after 30.00s`.
+A task that failed before its command ever started has neither, and the line is
+the bare word `FAILED`. Its cache key would not compute, or its shell would not
+spawn. It never ran, so there is no time to report.
 
 Four details the table cannot hold. The run header lists every distinct task
 name in the graph, sorted and joined with `+`, so `lattice run lint build` heads
@@ -79,55 +88,61 @@ seconds (`1.02s`); past that it switches to clock form, `4:07` and then
 
 ## Read the live display
 
-A run at a terminal, mid-flight. Each task that started has a spinner line; the
-dim lines above are the hash and cache trace, which interactive mode always
-shows:
+A run at a terminal, mid-flight. Every task that has started has a line, in the
+order they started, and a task that has already ended keeps its line where it
+was until the run is over:
 
 ```text
 ❖ lattice  build  · 4 workspaces
 ────────────────────────────────────────────────────
-ui:build: hash 5341be256174fcac
-docs:build: hash 944775197435b927
-ui:build: cache miss (nothing cached for this task yet)
-docs:build: cache miss (nothing cached for this task yet)
-api:build: hash 1ccd0b3e4b2a53cf
-web:build: hash d25c0cf0f88e0944
-web:build: cache miss (nothing cached for this task yet)
-api:build: cache miss (nothing cached for this task yet)
 ⠸ docs:build                   running…
-⠙ web:build                    running…
-⠋ api:build                    running…
+✓ ui:build                     1.02s
+⠙ api:build                    running…
+⠋ web:build                    running…
 ```
 
-`ui:build` is gone from the bottom of that frame because it finished and `web`
-and `api`, which depend on it, took its place. A task's line settles in place
-when it ends: `✓` and its duration on success, `✗ FAILED` on failure, a teal `●`
-and the short cache key on a hit.
+`ui:build` sits second because it started second, not because of where it
+finished. `web` and `api`, which depend on it, joined underneath once it was
+done. A task's line settles in place when it ends: `✓` and its duration on
+success, `✗ FAILED` with the exit code and the elapsed time on failure, a teal
+`●` and the short cache key on a hit.
+
+Nothing above those lines reports a hash or a cache miss. The task's own line
+already carries both. A hit prints its abbreviated key, and a miss shows up as
+the task running, so the live display leaves the trace to `-v` and the raw
+stream.
 
 Whatever a task prints while it runs is collected rather than shown. A task that
 succeeds never shows its output in this mode. A task that fails gets its output
-dumped under a header once the run reaches it:
+printed under a header once the run reaches it:
 
 ```text
 ❖ lattice  build  · 4 workspaces
 ────────────────────────────────────────────────────
-ui:build: hash b64234148e6c7a2d
-docs:build: hash 944775197435b927
-ui:build: cache miss: inputs changed
 ● docs:build                   cache hit [94477519]
-✗ ui:build output
-    ui: cannot resolve module 'styles'
 ○ web:build                    skipped (dependency failed)
 ○ api:build                    skipped (dependency failed)
+
+✗ ui:build output
+    ui: building 3 files
+    ui: cannot resolve module 'styles'
 ────────────────────────────────────────────────────
 ❖  2 tasks · 1 cached · 1 failed  1.02s
 ```
 
+The captured lines read in the order the task produced them, whichever stream
+each one came from, and they print at full brightness rather than dimmed. A
+compiler's error and the file it was compiling stay next to each other, because
+Lattice appends every line from both pipes to one buffer as it reads them. That
+is arrival order as Lattice reads it. A task that dumps a whole stdout buffer and
+a whole stderr buffer in one burst can still print one stream before the other.
+Output that arrives spread over time is in the order it happened.
+
 That is the whole screen after the run, not a frame from the middle of it.
-Lattice clears the live region when the run ends, so the header, the trace
-lines, the cache hits, the skipped tasks, the failure output, and the summary
-stay, and the `✓` and `✗` lines go with the region they were drawn in. The
-counts in the summary are the record of what ran.
+Lattice clears the live region when the run ends, so the header, the cache hits,
+the skipped tasks, the failure output, and the summary stay, and the `✓` and `✗`
+lines go with the region they were drawn in. The counts in the summary are the
+record of what ran.
 
 Two tasks in that summary, not four: `web:build` and `api:build` were skipped
 because `ui:build` failed, and a skipped task is counted separately from one
@@ -139,12 +154,8 @@ When every task came back from cache, a banner follows the summary:
 ```text
 ❖ lattice  build  · 4 workspaces
 ────────────────────────────────────────────────────
-docs:build: hash 944775197435b927
-ui:build: hash 5341be256174fcac
 ● docs:build                   cache hit [94477519]
 ● ui:build                     cache hit [5341be25]
-api:build: hash 1ccd0b3e4b2a53cf
-web:build: hash d25c0cf0f88e0944
 ● api:build                    cache hit [1ccd0b3e]
 ● web:build                    cache hit [d25c0cf0]
 ────────────────────────────────────────────────────
@@ -196,17 +207,22 @@ banner, under the same rule and with no color, so a CI log can be grepped for
 it.
 
 Without `-v`, a task's own output is collapsed here too. A failure is the
-exception: the captured lines print underneath the `FAILED` marker, each still
-carrying the task's label.
+exception: the captured lines print underneath the `FAILED` line, in the order
+the task produced them, each still carrying the task's label.
 
 ```text
 $ lattice run build --continue | cat
 ui:build: running
 docs:build: cache hit [94477519]
-ui:build: FAILED
+ui:build: FAILED (code 3) after 1.02s
+ui:build: ui: building 3 files
 ui:build: ui: cannot resolve module 'styles'
 lattice: 2 tasks, 1 cached, 1 failed, 1.03s
 ```
+
+`code 3` is the exit code the command returned, and `after 1.02s` is how long it
+ran. A signal or a `timeout` leaves the line `ui:build: FAILED after 1.02s`, and
+a task that never got as far as running its command leaves it `ui:build: FAILED`.
 
 Nothing named `web:build` or `api:build` appears. In raw mode a skipped task is
 silent unless you pass `-v`.
@@ -214,7 +230,9 @@ silent unless you pass `-v`.
 ## Turn on the hash and cache-miss lines
 
 `-v` adds three things to the raw stream: the run header, the per-task trace
-lines, and every task's own stdout and stderr as it is produced.
+lines, and every task's own stdout and stderr as it is produced. This is the only
+place the hash and cache-miss lines appear; the live display does not carry
+them.
 
 ```text
 $ lattice run build -v
@@ -259,8 +277,10 @@ lattice: docs:build: hash 944775197435b927
 lattice: ui:build: cache miss: inputs changed
 ui:build: running
 docs:build: cache hit [94477519]
+ui:build: ui: building 3 files
 ui:build: ui: cannot resolve module 'styles'
-ui:build: FAILED
+ui:build: FAILED (code 3) after 1.03s
+ui:build: ui: building 3 files
 ui:build: ui: cannot resolve module 'styles'
 web:build: skipped (dependency failed)
 api:build: skipped (dependency failed)
@@ -331,9 +351,12 @@ goes to stderr, so redirecting stdout away still leaves the failure dump on the
 terminal.
 
 Two kinds of line sit outside the per-task events. A trace line carries hashing,
-cache, and toolchain detail; raw mode drops it without `-v`, and interactive
-mode shows it dim either way. A warning always prints in both modes, prefixed
-`lattice: warning:` in raw and labeled with a yellow `warn` in interactive.
+cache, and toolchain detail about one task. Raw mode prints it only under `-v`,
+and the live display does not print it at all. A note about the run as a whole is
+the exception in interactive. Provisioning a toolchain and pruning the cache
+print dim, because nothing else on screen would account for the wait. A warning
+always prints in both modes, prefixed `lattice: warning:` in raw and labeled with
+a yellow `warn` in interactive.
 
 ## An invalid byte costs one character
 

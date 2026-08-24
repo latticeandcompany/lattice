@@ -264,7 +264,14 @@ export type TaskEvent =
 			persistent: boolean;
 	  }
 	| { type: 'finished'; workspace: string; task: string; durationMs: number }
-	| { type: 'failed'; workspace: string; task: string }
+	| {
+			type: 'failed';
+			workspace: string;
+			task: string;
+			/** Null when a signal ended it, or when the task failed before it ran. */
+			code: number | null;
+			durationMs: number;
+	  }
 	| {
 			type: 'persistentExited';
 			workspace: string;

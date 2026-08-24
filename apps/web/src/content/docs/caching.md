@@ -167,7 +167,9 @@ when you want one. Run [`lattice prune`](/lattice/docs/cli) to sweep by hand.
 
 Lattice hashes each part of the key separately and then hashes the parts
 together, which keeps the key one number while letting a miss name the part that
-moved. `lattice run build -v` reports it:
+moved. `lattice run build -v` is the only place Lattice reports which part. The
+live display shows a hit's key on the task's own line and leaves the trace to
+`-v`.
 
 ```text
 lattice: app:build: cache miss: inputs changed

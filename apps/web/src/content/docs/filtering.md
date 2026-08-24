@@ -173,7 +173,7 @@ lattice: app:lint: hash 5a5af3015e55e870
 app:lint: running
 lib:lint: running
 lib:lint: lint lib
-app:lint: FAILED
+app:lint: FAILED (code 1) after 0.00s
 lib:lint: done (0.00s)
 lattice: 2 tasks, 0 cached, 1 failed, 0.01s
 lattice: running `build` across 2 workspaces

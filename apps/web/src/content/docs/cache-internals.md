@@ -22,7 +22,8 @@ digests are hashed together in this fixed order to produce the key.
 
 The two-stage form exists so a miss can name a cause. A key alone reports that
 something changed. Comparing components against the ones the task last resolved
-to reports which. That comparison produces `cache miss: inputs changed`.
+to reports which. That comparison produces `cache miss: inputs changed`, which
+prints in the raw stream under `-v` and nowhere else.
 
 1. `environment`. The running Lattice version, the platform as `<os>-<arch>`,
    the shell (`sh -c` or `cmd /C`), the workspace's declared name, and the task

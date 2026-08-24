@@ -856,9 +856,11 @@ lattice: 2 tasks, 0 cached, 2 failed, 0.01s
 ```
 
 Search the per-task lines above the summary for `FAILED` to find which tasks
-failed. `--sequentially` applies the same rule per phase: a failing phase stops
-the remaining phases unless `--continue` is also set, in which case every phase
-runs and the process still exits `1`.
+failed. Each of those lines carries the exit code the command returned and how
+long it ran, and the task's captured output prints under it.
+`--sequentially` applies the same rule per phase: a failing phase stops the
+remaining phases unless `--continue` is also set, in which case every phase runs
+and the process still exits `1`.
 
 ### A task's shell could not be spawned
 

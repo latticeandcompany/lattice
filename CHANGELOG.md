@@ -16,6 +16,40 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### A failure names its exit code, and the live display drops its trace lines — 2026-08-23
+
+- The live display no longer prints per-task trace lines. The dim
+  `ui:build: hash 5341be256174fcac` and `ui:build: cache miss: inputs changed`
+  lines above a running task are gone. A hit already prints its abbreviated key
+  on the task's own line, `● ui:build  cache hit [5341be25]`, and a miss shows up
+  as the task running. The trace prints in the raw stream under `-v`, which is
+  where it was always documented to live
+- Notes about the run as a whole still print dim in the live display:
+  provisioning a toolchain, and pruning the cache
+- The live display's failed line carries the command's exit code and how long the
+  task ran: `✗ ui:build  FAILED (code 3) 1.02s`
+- The raw stream's failed line carries the same detail:
+  `ui:build: FAILED (code 3) after 1.03s`. It was the bare word `FAILED`
+- A line drops the detail it does not have. A task a signal killed, and a task
+  stopped for overrunning its `timeout`, have no exit code, so the line reads
+  `FAILED after 30.00s`. A task that failed before its command ever ran has
+  neither, so the line is the bare word. Its cache key would not compute, or its
+  shell would not spawn, and reporting `0.00s` for a task that never started
+  would be a lie
+- A failing task's captured output reads in arrival order. Both of a child's
+  pipes now append to one buffer as each line is read, so a compiler's error
+  lines stay next to the context they belong to. The whole of stdout used to
+  print and then the whole of stderr, which left the error and its context pages
+  apart. This is arrival order as Lattice reads it, so a task that dumps both
+  streams in one burst can still print one stream before the other. Output that
+  arrives spread over time is in the order it happened
+- The failure block in the live display prints at normal brightness, with a
+  blank line above its `✗ ui:build output` header. It was dim, which is the wrong
+  treatment for the one thing on the screen worth reading
+- The `failed` event carries `code` and `durationMs`, the two fields
+  `persistentExited` already had. The desktop app's failed task row reads
+  `failed (code 101) 1.84s`
+
 ### A task's command is never invented, and a skipped task says so — 2026-08-23
 
 - A workspace driven from a manifest now only ever runs a script that manifest

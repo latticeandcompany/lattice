@@ -37,6 +37,17 @@ test('a signal death is reported as such rather than as code null', () => {
 	assert.equal(statusView({ state: 'exited', exitCode: 1 }, 'web:dev').label, 'exited (code 1)');
 });
 
+test('a failed task names the exit code and how long it ran', () => {
+	assert.equal(
+		statusView({ state: 'failed', exitCode: 101, durationMs: 1840 }, 'web:build').label,
+		'failed (code 101) 1.84s',
+	);
+});
+
+test('a failure before the command ran claims no code and no time', () => {
+	assert.equal(statusView({ state: 'failed', exitCode: null, durationMs: 0 }, 'web:build').label, 'failed');
+});
+
 // `dependency failed` is the only reason the runner produces.
 test('a skipped task says why', () => {
 	const view = statusView({ state: 'skipped', reason: 'dependency failed' }, 'web:build');

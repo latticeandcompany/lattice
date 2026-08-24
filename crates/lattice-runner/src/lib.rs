@@ -38,6 +38,9 @@ use serde::Serialize;
 /// buffered, bounding memory for pathological tasks.
 const MAX_CAPTURED_LINES: usize = 5000;
 
+/// One task's captured output, shared by the two tasks draining its pipes.
+type Captured = Arc<Mutex<Vec<(bool, String)>>>;
+
 /// How long a child gets to exit on its own after being asked to stop, before it
 /// is killed outright. Long enough for a compiler to finish the file it is
 /// writing and drop its lock; short enough that Ctrl-C still feels immediate.
@@ -1043,7 +1046,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		Ok(k) => k,
 		Err(e) => {
 			let captured = vec![(true, format!("failed to compute cache key: {e}"))];
-			emit_failure(&ctx, &ws, &task, captured);
+			emit_failure(&ctx, &ws, &task, None, 0, captured);
 			return TaskOutcome::Failed {
 				workspace: ws,
 				task,
@@ -1118,7 +1121,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	let mut cmd = build_shell_command(&spec.command);
 	cmd.current_dir(&spec.ws_path);
 	if let Err(msg) = apply_path_prepend(&mut cmd, &spec.path_prepend) {
-		emit_failure(&ctx, &ws, &task, vec![(true, msg)]);
+		emit_failure(&ctx, &ws, &task, None, 0, vec![(true, msg)]);
 		return TaskOutcome::Failed {
 			workspace: ws,
 			task,
@@ -1145,7 +1148,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			} else {
 				format!("failed to spawn task: {e}")
 			};
-			emit_failure(&ctx, &ws, &task, vec![(true, msg)]);
+			emit_failure(&ctx, &ws, &task, None, 0, vec![(true, msg)]);
 			return TaskOutcome::Failed {
 				workspace: ws,
 				task,
@@ -1161,8 +1164,8 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		let task2 = task.clone();
 		tokio::spawn(async move {
 			let _ = tokio::join!(
-				drain_pipe(stdout, false, &tx, &ws2, &task2, false, true),
-				drain_pipe(stderr, true, &tx, &ws2, &task2, false, true),
+				drain_pipe(stdout, false, &tx, &ws2, &task2, None, true),
+				drain_pipe(stderr, true, &tx, &ws2, &task2, None, true),
 			);
 		});
 
@@ -1210,13 +1213,18 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	// blocks until something reads it, and would never exit — but joining them
 	// would borrow the child for as long as the draining took, and stopping a task
 	// that overran its timeout needs the handle.
+	let capture: Captured = Arc::new(Mutex::new(Vec::new()));
 	let out_task = {
-		let (tx, ws, task) = (ctx.tx.clone(), ws.clone(), task.clone());
-		tokio::spawn(async move { drain_pipe(stdout, false, &tx, &ws, &task, true, false).await })
+		let (tx, ws, task, cap) = (ctx.tx.clone(), ws.clone(), task.clone(), capture.clone());
+		tokio::spawn(
+			async move { drain_pipe(stdout, false, &tx, &ws, &task, Some(&cap), false).await },
+		)
 	};
 	let err_task = {
-		let (tx, ws, task) = (ctx.tx.clone(), ws.clone(), task.clone());
-		tokio::spawn(async move { drain_pipe(stderr, true, &tx, &ws, &task, true, false).await })
+		let (tx, ws, task, cap) = (ctx.tx.clone(), ws.clone(), task.clone(), capture.clone());
+		tokio::spawn(
+			async move { drain_pipe(stderr, true, &tx, &ws, &task, Some(&cap), false).await },
+		)
 	};
 
 	let mut timed_out = false;
@@ -1233,16 +1241,16 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	};
 
 	// The child is gone, so the pipes are closed and these finish.
-	let out_lines = out_task.await.unwrap_or_default();
-	let err_lines = err_task.await.unwrap_or_default();
+	let _ = out_task.await;
+	let _ = err_task.await;
 
 	if let Some(pid) = child_pid {
 		ctx.children.remove(pid);
 	}
 
-	let mut captured: Vec<(bool, String)> = out_lines;
-	captured.extend(err_lines);
+	let mut captured = std::mem::take(&mut *capture.lock().unwrap());
 	let duration_ms = start.elapsed().as_millis() as u64;
+	let mut exit_code = status.as_ref().ok().and_then(|s| s.code());
 
 	let success = if timed_out {
 		let limit = pt
@@ -1250,6 +1258,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			.map(|t| t.to_string())
 			.unwrap_or_else(|| "its timeout".to_string());
 		captured.push((true, format!("timed out after {limit} and was stopped")));
+		exit_code = None;
 		false
 	} else {
 		match status {
@@ -1302,7 +1311,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		}));
 		TaskOutcome::Ran
 	} else {
-		emit_failure(&ctx, &ws, &task, captured);
+		emit_failure(&ctx, &ws, &task, exit_code, duration_ms, captured);
 		TaskOutcome::Failed {
 			workspace: ws,
 			task,
@@ -1392,7 +1401,14 @@ async fn reap_persistent(ctx: ReapContext) {
 /// A task killed during teardown did not fail. The scheduler already declines to
 /// count it, and emitting the event anyway leaves every front end showing a
 /// failure the summary goes on to deny.
-fn emit_failure(ctx: &TaskRunContext, ws: &str, task: &str, captured: Vec<(bool, String)>) {
+fn emit_failure(
+	ctx: &TaskRunContext,
+	ws: &str,
+	task: &str,
+	code: Option<i32>,
+	duration_ms: u64,
+	captured: Vec<(bool, String)>,
+) {
 	if ctx.shutting_down.load(Ordering::SeqCst) {
 		return;
 	}
@@ -1400,6 +1416,8 @@ fn emit_failure(ctx: &TaskRunContext, ws: &str, task: &str, captured: Vec<(bool,
 	let _ = tx.send(RunnerMsg::Event(TaskEvent::Failed {
 		workspace: ws.to_string(),
 		task: task.to_string(),
+		code,
+		duration_ms,
 	}));
 	let _ = tx.send(RunnerMsg::SurfaceFailure {
 		workspace: ws.to_string(),
@@ -1479,17 +1497,23 @@ fn apply_path_prepend(
 }
 
 /// Read a child pipe line by line, emitting an `Output` event per line and
-/// (when `capture`) buffering up to [`MAX_CAPTURED_LINES`] for failure surfacing.
+/// (when `capture` is set) appending up to [`MAX_CAPTURED_LINES`] to it for
+/// failure surfacing.
+///
+/// Both of a child's pipes are drained into the *same* buffer, because a task's
+/// two streams only make sense read together: a compiler writes the error to
+/// stderr and the file it was compiling to stdout, and splitting them leaves the
+/// reader stitching the two halves back together by hand. Each line is appended
+/// as it is read, so the buffer holds the order the run actually produced.
 async fn drain_pipe<R: AsyncRead + Unpin>(
 	pipe: Option<R>,
 	stderr: bool,
 	tx: &UnboundedSender<RunnerMsg>,
 	ws: &str,
 	task: &str,
-	capture: bool,
+	capture: Option<&Captured>,
 	persistent: bool,
-) -> Vec<(bool, String)> {
-	let mut captured = Vec::new();
+) {
 	if let Some(pipe) = pipe {
 		let mut reader = BufReader::new(pipe);
 		let mut buf = Vec::new();
@@ -1516,12 +1540,14 @@ async fn drain_pipe<R: AsyncRead + Unpin>(
 				stderr,
 				persistent,
 			}));
-			if capture && captured.len() < MAX_CAPTURED_LINES {
-				captured.push((stderr, line));
+			if let Some(capture) = capture {
+				let mut captured = capture.lock().unwrap();
+				if captured.len() < MAX_CAPTURED_LINES {
+					captured.push((stderr, line));
+				}
 			}
 		}
 	}
-	captured
 }
 
 #[cfg(test)]
@@ -1593,7 +1619,9 @@ mod tests {
 					} => {
 						format!("finished:{workspace}:{task}")
 					}
-					TaskEvent::Failed { workspace, task } => format!("failed:{workspace}:{task}"),
+					TaskEvent::Failed {
+						workspace, task, ..
+					} => format!("failed:{workspace}:{task}"),
 					TaskEvent::PersistentExited {
 						workspace,
 						task,
@@ -2818,18 +2846,22 @@ mod tests {
 		let (tx, _rx) = mpsc::unbounded_channel();
 		let bytes = b"warning \xff here\nTHE_REAL_ERROR\n".to_vec();
 
-		let captured = drain_pipe(
+		let capture: Captured = Arc::new(Mutex::new(Vec::new()));
+		drain_pipe(
 			Some(std::io::Cursor::new(bytes)),
 			true,
 			&tx,
 			"app",
 			"build",
-			true,
+			Some(&capture),
 			false,
 		)
 		.await;
 
-		let lines: Vec<String> = captured.into_iter().map(|(_, line)| line).collect();
+		let lines: Vec<String> = std::mem::take(&mut *capture.lock().unwrap())
+			.into_iter()
+			.map(|(_, line)| line)
+			.collect();
 		assert_eq!(lines.len(), 2, "both lines have to survive: {lines:?}");
 		assert!(
 			lines[0].starts_with("warning") && lines[0].ends_with("here"),
@@ -2864,6 +2896,52 @@ mod tests {
 			lines.iter().any(|l| l.contains("THE_REAL_ERROR")),
 			"the message after the byte is the one worth reading: {lines:?}"
 		);
+	}
+
+	/// A compiler writes the error to stderr and the file it was compiling to
+	/// stdout. Buffering the two streams separately and concatenating them meant
+	/// the failure surface read as every stdout line and then every stderr line,
+	/// so the error and its context arrived pages apart. The sleeps are what make
+	/// the interleaving observable: each line is a second apart, so there is no
+	/// burst for the two drains to reorder.
+	#[tokio::test]
+	async fn a_failure_surfaces_both_streams_in_the_order_they_arrived() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let cmd = sh::then([
+			sh::echo("out-1"),
+			sh::sleep(1),
+			sh::echo_err("err-1"),
+			sh::sleep(1),
+			sh::echo("out-2"),
+			sh::exit(3),
+		]);
+		let workspaces = vec![ws("app", root, &[("build", &cmd)])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		execute_tasks(opts(&graph, &workspaces, &config, root, &r))
+			.await
+			.unwrap_err();
+
+		assert_eq!(
+			*r.surfaced_lines.lock().unwrap(),
+			vec!["out-1", "err-1", "out-2"],
+		);
+
+		let events = r.events.lock().unwrap();
+		let failed = events
+			.iter()
+			.find_map(|ev| match ev {
+				TaskEvent::Failed {
+					code, duration_ms, ..
+				} => Some((*code, *duration_ms)),
+				_ => None,
+			})
+			.expect("the run has to report the failure");
+		assert_eq!(failed.0, Some(3), "the exit code the command chose");
+		assert!(failed.1 > 0, "a task that ran took some time: {failed:?}");
 	}
 
 	/// The direct child dying is not the group dying. A task that backgrounds

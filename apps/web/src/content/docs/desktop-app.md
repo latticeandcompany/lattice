@@ -157,7 +157,10 @@ and so on. A key on its own can only tell you that a task missed. See [Cache
 internals](/lattice/docs/cache-internals) for what each name covers.
 
 Output is collected per task and opens on its own when a task fails. Any other
-task's output is behind the chevron on its row.
+task's output is behind the chevron on its row. A failed row reads
+`failed (code 101) 1.84s`, the same detail the CLI's `FAILED` line carries, and
+drops the half it does not have. A task a signal killed has no exit code. A task
+that failed before its command started has neither.
 
 Lines appear within about a tenth of a second, as the task prints them. Output
 used to move only when 256 lines had piled up or a task changed state, so a dev
