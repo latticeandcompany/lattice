@@ -2352,12 +2352,9 @@ mod tests {
 		let ledger = dir.path().join("cache/stats.jsonl");
 		let before = std::fs::read_to_string(&ledger).unwrap();
 
-		// Backdate it past the abandoned threshold: age is what the sweep judges.
-		let old = std::time::SystemTime::now() - ABANDONED_AFTER - Duration::from_secs(60);
-		std::fs::File::open(&ledger)
-			.unwrap()
-			.set_times(std::fs::FileTimes::new().set_modified(old))
-			.unwrap();
+		// Age is what the sweep judges, so the ledger has to look abandoned before
+		// this proves anything.
+		backdate_past_grace(&ledger);
 
 		store.prune(0).unwrap();
 		assert_eq!(std::fs::read_to_string(&ledger).unwrap(), before);
