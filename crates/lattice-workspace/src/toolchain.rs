@@ -141,7 +141,7 @@ fn prepend_to_path(dir: &Path) -> Result<std::ffi::OsString> {
 	std::env::join_paths(paths).with_context(|| {
 		format!(
 			"the pinned toolchain cannot be put on PATH, because a directory in it contains \
-			 the character PATH is split on: {}",
+			 a character PATH cannot hold: {}",
 			dir.display()
 		)
 	})
@@ -844,20 +844,33 @@ mod tests {
 
 	/// Degrading to the inherited `PATH` would run whatever version of the tool
 	/// the machine happens to have, which is the one thing a pin exists to
-	/// prevent. A repo path holding the character `PATH` splits on has to fail.
+	/// prevent. A repo path holding a character `PATH` cannot carry has to fail.
+	///
+	/// The path never has to exist: building the value is what fails.
 	#[test]
 	fn a_path_that_cannot_be_built_fails_instead_of_dropping_the_pin() {
-		let separator = if cfg!(windows) { ';' } else { ':' };
-		let tmp = TempDir::new().unwrap();
-		let root = tmp.path().join(format!("repo{separator}one"));
-		std::fs::create_dir_all(&root).unwrap();
+		let root = PathBuf::from(format!("repo{}one", lattice_testkit::unjoinable_char()));
 
 		let err = prepend_to_path(&root).unwrap_err();
 		let msg = format!("{err:#}");
-		assert!(msg.contains("the character PATH is split on"), "{msg}");
+		assert!(msg.contains("a character PATH cannot hold"), "{msg}");
+	}
 
-		// The version check is the first thing that needs the pinned PATH, so
-		// provisioning stops there rather than reporting a tool it never ran.
+	/// The version check is the first thing that needs the pinned `PATH`, so
+	/// provisioning stops there rather than reporting a tool it never ran.
+	///
+	/// Unix only, because the repo has to sit at such a path for this to be
+	/// reachable, and the character Windows refuses in a `PATH` entry is also
+	/// illegal in a Windows file name.
+	#[test]
+	#[cfg(unix)]
+	fn provisioning_stops_when_the_pinned_path_cannot_be_built() {
+		let tmp = TempDir::new().unwrap();
+		let root = tmp
+			.path()
+			.join(format!("repo{}one", lattice_testkit::unjoinable_char()));
+		std::fs::create_dir_all(&root).unwrap();
+
 		let err = provision_and_resolve(&root, &fake_engines(), &mut |_| {}).unwrap_err();
 		let msg = format!("{err:#}");
 		assert!(msg.contains("cannot be put on PATH"), "{msg}");

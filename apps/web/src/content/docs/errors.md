@@ -705,14 +705,16 @@ the toolchain by its install hash.
 All seven fatal. Two more failures underlie both modes:
 
 ```text
-the pinned toolchain cannot be put on PATH, because a directory in it contains the character PATH is split on: /repo:2/.lattice/toolchains/alpes/1.4.0-a1b2c3d4/bin
+the pinned toolchain cannot be put on PATH, because a directory in it contains a character PATH cannot hold: /repo:2/.lattice/toolchains/alpes/1.4.0-a1b2c3d4/bin
 ```
 
-A toolchain directory holding `:` on unix, or `;` on Windows, cannot go on a
-`PATH`. The separator would split that one directory into two paths that do not
-exist. The fallback would be the inherited `PATH`, which runs whatever version of
-the tool the machine happens to have. Pinning exists to prevent that outcome, so
-every place that builds a pinned `PATH` fails instead:
+A toolchain directory holding `:` on unix cannot go on a `PATH`, because the
+separator would split that one directory into two paths that do not exist. On
+Windows the offending character is `"` rather than the `;` separator, which
+Windows quotes instead of refusing. The fallback would be the inherited `PATH`,
+which runs whatever version of the tool the machine happens to have. Pinning
+exists to prevent that outcome, so every place that builds a pinned `PATH` fails
+instead:
 
 - Running an engine's version or install command. Fatal, and the message names
   the one directory involved.
@@ -723,7 +725,7 @@ every place that builds a pinned `PATH` fails instead:
   any other failure. An earlier version dropped the pin without a word and ran
   the task against the host's tool while still reporting a provisioned toolchain.
 
-Rename the directory, or move the repo somewhere without the separator in its
+Rename the directory, or move the repo somewhere without that character in its
 path.
 
 ```text

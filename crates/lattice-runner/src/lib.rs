@@ -1468,7 +1468,7 @@ fn apply_path_prepend(
 		}
 		Err(_) => Err(format!(
 			"the pinned toolchain cannot be put on PATH, because a directory in it \
-			 contains the character PATH is split on: {}",
+			 contains a character PATH cannot hold: {}",
 			prepend
 				.iter()
 				.map(|p| p.display().to_string())
@@ -1530,13 +1530,13 @@ mod tests {
 	/// A pinned toolchain that cannot go on `PATH` used to be dropped in silence,
 	/// so the task ran against the host's tool while the run claimed the pin.
 	#[test]
-	#[cfg(unix)]
 	fn a_toolchain_dir_that_cannot_go_on_path_fails_instead_of_degrading() {
+		let bad = format!("bin{}dir", lattice_testkit::unjoinable_char());
 		let mut cmd = tokio::process::Command::new("true");
-		let err = apply_path_prepend(&mut cmd, &[PathBuf::from("/tmp/has:colon/bin")])
-			.expect_err("a directory containing the separator cannot be joined");
-		assert!(err.contains("the character PATH is split on"), "{err}");
-		assert!(err.contains("has:colon"), "must name the directory: {err}");
+		let err = apply_path_prepend(&mut cmd, &[PathBuf::from(&bad)])
+			.expect_err("a directory PATH cannot hold must not be joined");
+		assert!(err.contains("a character PATH cannot hold"), "{err}");
+		assert!(err.contains(&bad), "must name the directory: {err}");
 	}
 
 	#[test]

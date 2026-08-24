@@ -462,12 +462,13 @@ toolchain. Lattice checks the value when the config loads, and again
 when it reads a pin back out of `pins.json`, so a hand-edited pin does not get
 through either.
 
-When a pinned directory holds the separator `PATH` is split on, `:` on unix or
-`;` on Windows, it cannot go on `PATH`. That is an error, not a fallback to the
-host tool:
+When a pinned directory holds a character a `PATH` entry cannot carry, it cannot
+go on `PATH`. On unix that character is `:`, the separator itself. On Windows it
+is `"`, because Windows quotes an entry containing its own `;` separator rather
+than refusing it. Either way this is an error, not a fallback to the host tool:
 
 ```text
-Error: the pinned toolchain cannot be put on PATH, because a directory in it contains the character PATH is split on: /repo:2/.lattice/toolchains/just/1.30.0-1a2b3c4d/bin
+Error: the pinned toolchain cannot be put on PATH, because a directory in it contains a character PATH cannot hold: /repo:2/.lattice/toolchains/just/1.30.0-1a2b3c4d/bin
 ```
 
 The same check runs in all three places that build a pinned `PATH`: the version

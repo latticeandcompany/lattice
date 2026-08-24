@@ -191,6 +191,22 @@ pub fn sleep(secs: u64) -> String {
 	}
 }
 
+/// A character that [`std::env::join_paths`] refuses, for a test that needs a
+/// `PATH` entry which cannot be joined.
+///
+/// Not the separator. Unix splits `PATH` on `:` and rejects an entry containing
+/// one, so there the two are the same character. Windows splits on `;` but
+/// quotes an entry that contains one rather than refusing it, and rejects `"`
+/// instead. A test that reaches for the separator on both therefore asserts
+/// nothing on Windows: the join succeeds and the error never arrives.
+pub fn unjoinable_char() -> char {
+	if CMD {
+		'"'
+	} else {
+		':'
+	}
+}
+
 /// A command that leaves behind a background process which ignores `SIGTERM`
 /// and keeps the task's stdout open, then exits itself.
 ///

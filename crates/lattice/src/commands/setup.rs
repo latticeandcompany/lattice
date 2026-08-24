@@ -342,7 +342,7 @@ fn path_with_prepend(path_prepend: &[PathBuf]) -> Result<std::ffi::OsString> {
 			.collect();
 		format!(
 			"the pinned toolchain cannot be put on PATH, because a directory in it \
-			 contains the character PATH is split on: {}",
+			 contains a character PATH cannot hold: {}",
 			shown.join(", ")
 		)
 	})
@@ -671,8 +671,10 @@ mod tests {
 	/// whatever version of the tool is on the machine.
 	#[test]
 	fn a_toolchain_dir_that_cannot_go_on_path_is_an_error() {
-		let separator = if cfg!(windows) { ';' } else { ':' };
-		let unusable = PathBuf::from(format!("toolchains{separator}bin"));
+		let unusable = PathBuf::from(format!(
+			"toolchains{}bin",
+			lattice_testkit::unjoinable_char()
+		));
 		assert!(path_with_prepend(&[unusable]).is_err());
 
 		let usable = PathBuf::from("toolchains");

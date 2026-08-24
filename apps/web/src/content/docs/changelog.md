@@ -89,7 +89,7 @@ for every shape the warning takes.
   to the host's tool. All three places that build one report it: an engine's
   version or install command, `lattice setup`'s dependency installer, and
   spawning a task. The message is `the pinned toolchain cannot be put on PATH,
-  because a directory in it contains the character PATH is split on: <dirs>`, and
+  because a directory in it contains a character PATH cannot hold: <dirs>`, and
   on a task it is reported as that task's failure. Lattice used to drop that
   directory in silence, so the task ran against whatever version of the tool the
   machine had while the run still reported a provisioned toolchain
