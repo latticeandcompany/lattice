@@ -210,6 +210,12 @@ fn prune_leaves_everything_that_is_not_a_cache_entry() {
 		fx.exists(".lattice/c0ffee.tar.gz"),
 		"prune must leave a leftover new enough to be another process's cache write"
 	);
+	// Every artifact in here can be rebuilt. The ledger `lattice stats` reads
+	// cannot: the runs it records already happened.
+	assert!(
+		fx.exists(".lattice/stats.jsonl"),
+		"prune must not take the run ledger"
+	);
 }
 
 /// `maxCacheSize` reads as a budget, so it has to be one. Leaving enforcement to

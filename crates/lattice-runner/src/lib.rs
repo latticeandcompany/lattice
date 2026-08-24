@@ -22,10 +22,11 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
+use chrono::Utc;
 use dagger::{build_schedule, ExecutionGraph, Schedule};
 use lattice_cache::{
 	compute_key_detailed, global_dependencies_digest, CacheMeta, CacheStore, HashInputs,
-	KeyBreakdown, LocalStore,
+	KeyBreakdown, LocalStore, RunRecord,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
 use lattice_events::{CacheMiss, Reporter, RunSummary, TaskEvent};
@@ -980,6 +981,25 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	};
 	reporter.run_summary(summary);
 	reporter.finish();
+
+	// The ledger is what `lattice stats` reads. A run that stored nothing did not
+	// touch the cache directory and should not create one, and a ledger that
+	// cannot be written is never worth failing a run that already succeeded.
+	if !no_store && total > 0 {
+		let record = RunRecord {
+			at: Utc::now(),
+			total,
+			cached,
+			failed,
+			saved_ms: saved_ms_total,
+			elapsed_ms,
+		};
+		if let Err(e) = store.record_run(&record) {
+			reporter.note(&format!(
+				"could not record this run for `lattice stats`: {e}"
+			));
+		}
+	}
 
 	let result = RunResult {
 		total,

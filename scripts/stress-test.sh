@@ -554,6 +554,16 @@ lat "$PROD" run build ; t_has "the leaf edit settles back to full power" "full p
 
 lat "$PROD" run build --filter nonexistent ; t_hasnt "a run that scheduled nothing is not full power" "full power"
 
+# Saved time. A hit skips the task time the run that wrote the entry spent, so a
+# run with hits reports it and `lattice stats` adds those runs up. The ledger is
+# per-repo and lives with the cache.
+lat "$PROD" run build ; t_has "a fully-cached run reports the time it saved" "saved"
+t_file "$PROD/.lattice/cache/stats.jsonl" "the run is recorded in the ledger"
+lat "$PROD" stats ; t_ok "stats exits 0"
+t_has "stats reports a saved total"        "saved"
+t_has "stats reports what it counted"      "runs"
+t_has "stats reports the cache it measured" "cache"
+
 # A change in a dependency has to reach the tasks that depend on it. `core` is
 # upstream of the apps, so editing it must re-run them too — serving a dependent
 # from cache after its dependency rebuilt is how a stale artifact ships.

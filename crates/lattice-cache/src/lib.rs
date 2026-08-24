@@ -94,6 +94,69 @@ pub struct PruneReport {
 	pub bytes_freed: u64,
 }
 
+/// One finished run, appended to the ledger the moment it ends.
+///
+/// The ledger is what `lattice stats` reads. It is a record of runs rather than a
+/// running total because two `lattice run`s in the same repo can finish at the
+/// same moment: an append publishes a line without reading the file first, so
+/// there is no count for the other process to overwrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunRecord {
+	pub at: DateTime<Utc>,
+	pub total: usize,
+	pub cached: usize,
+	pub failed: usize,
+	/// Recorded task time this run's cache hits skipped.
+	pub saved_ms: u64,
+	pub elapsed_ms: u64,
+}
+
+/// What a stretch of the ledger adds up to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Savings {
+	pub runs: usize,
+	pub tasks: usize,
+	pub hits: usize,
+	pub saved_ms: u64,
+	/// Timestamp of the oldest run counted, absent when nothing was.
+	pub since: Option<DateTime<Utc>>,
+}
+
+impl Savings {
+	/// Fold every run in `runs` into one total.
+	pub fn of<'a>(runs: impl IntoIterator<Item = &'a RunRecord>) -> Self {
+		runs.into_iter().fold(Self::default(), |mut acc, r| {
+			acc.runs += 1;
+			acc.tasks += r.total;
+			acc.hits += r.cached;
+			acc.saved_ms += r.saved_ms;
+			acc.since = match acc.since {
+				Some(earliest) if earliest <= r.at => Some(earliest),
+				_ => Some(r.at),
+			};
+			acc
+		})
+	}
+
+	/// Fold only the runs at or after `cutoff`.
+	pub fn since(runs: &[RunRecord], cutoff: DateTime<Utc>) -> Self {
+		Self::of(runs.iter().filter(|r| r.at >= cutoff))
+	}
+
+	/// Fold the last `days` of runs, counted back from now.
+	pub fn recent(runs: &[RunRecord], days: i64) -> Self {
+		Self::since(runs, Utc::now() - chrono::Duration::days(days))
+	}
+
+	/// Share of scheduled tasks that came from cache, as a percentage. `None`
+	/// when no task was ever scheduled — a rate of zero would claim every task
+	/// missed.
+	pub fn hit_rate(&self) -> Option<f64> {
+		(self.tasks > 0).then(|| self.hits as f64 * 100.0 / self.tasks as f64)
+	}
+}
+
 /// A swappable cache backend. [`LocalStore`] is the on-disk implementation.
 pub trait CacheStore: Send + Sync {
 	/// Look up a key. Returns `Some` only if the meta file parses, the artifact
@@ -133,6 +196,28 @@ pub trait CacheStore: Send + Sync {
 	fn last_fingerprint(&self, _workspace: &str, _task: &str) -> Option<KeyBreakdown> {
 		None
 	}
+
+	/// Append a finished run to the ledger.
+	fn record_run(&self, _run: &RunRecord) -> Result<()> {
+		Ok(())
+	}
+
+	/// Every run in the ledger, oldest first.
+	fn recorded_runs(&self) -> Result<Vec<RunRecord>> {
+		Ok(Vec::new())
+	}
+
+	/// How much the store currently holds.
+	fn usage(&self) -> Result<CacheUsage> {
+		Ok(CacheUsage::default())
+	}
+}
+
+/// What the store holds right now: readable entries and the bytes they occupy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CacheUsage {
+	pub entries: usize,
+	pub bytes: u64,
 }
 
 /// The on-disk, content-addressed cache. Artifacts live at
@@ -166,6 +251,14 @@ impl LocalStore {
 		self.cache_dir
 			.join("fingerprints")
 			.join(format!("{}.json", fingerprint_id(workspace, task)))
+	}
+
+	/// Where the run ledger lives. Inside the cache directory on purpose: it is
+	/// per-machine, it is already ignored by every repo that ran `lattice init`,
+	/// and it follows a relocated `cacheDir` instead of being stranded next to the
+	/// old one. Clearing the cache clears the record with it.
+	fn ledger_path(&self) -> PathBuf {
+		self.cache_dir.join("stats.jsonl")
 	}
 
 	/// A staging path unique to this process and moment, so two concurrent stores
@@ -428,6 +521,76 @@ impl CacheStore for LocalStore {
 	fn last_fingerprint(&self, workspace: &str, task: &str) -> Option<KeyBreakdown> {
 		let raw = std::fs::read_to_string(self.fingerprint_path(workspace, task)).ok()?;
 		serde_json::from_str(&raw).ok()
+	}
+
+	/// One line, one `write_all`, opened for append. Nothing is read first, which
+	/// is the point: a counter would have to be read, incremented and written
+	/// back, and two runs finishing together would lose one of the two. Appending
+	/// has nothing to lose.
+	///
+	/// A short append does not interleave on the platforms this runs on, but
+	/// nothing here depends on that: [`CacheStore::recorded_runs`] skips a line it
+	/// cannot parse.
+	fn record_run(&self, run: &RunRecord) -> Result<()> {
+		use std::io::Write;
+		std::fs::create_dir_all(&self.cache_dir)
+			.with_context(|| format!("failed to create cache dir {}", self.cache_dir.display()))?;
+		let mut line = serde_json::to_string(run)?;
+		line.push('\n');
+		let path = self.ledger_path();
+		let mut file = std::fs::OpenOptions::new()
+			.append(true)
+			.create(true)
+			.open(&path)
+			.with_context(|| format!("failed to open the run ledger at {}", path.display()))?;
+		file.write_all(line.as_bytes())
+			.with_context(|| format!("failed to append to the run ledger at {}", path.display()))
+	}
+
+	/// Unparseable lines are skipped rather than fatal. The ledger is a record of
+	/// what happened, not an input to anything: one torn line should cost that
+	/// run's numbers, not the whole history.
+	fn recorded_runs(&self) -> Result<Vec<RunRecord>> {
+		let path = self.ledger_path();
+		let raw = match std::fs::read_to_string(&path) {
+			Ok(raw) => raw,
+			Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+			Err(e) => return Err(e).with_context(|| format!("failed to read {}", path.display())),
+		};
+		Ok(raw
+			.lines()
+			.filter_map(|line| serde_json::from_str(line).ok())
+			.collect())
+	}
+
+	fn usage(&self) -> Result<CacheUsage> {
+		let read_dir = match std::fs::read_dir(&self.cache_dir) {
+			Ok(rd) => rd,
+			Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CacheUsage::default()),
+			Err(e) => {
+				return Err(e).with_context(|| {
+					format!("failed to read cache dir {}", self.cache_dir.display())
+				})
+			}
+		};
+		let keys: Vec<String> = read_dir
+			.flatten()
+			.filter_map(|e| {
+				let name = e.file_name().to_string_lossy().into_owned();
+				name.strip_suffix(".meta.json").map(str::to_string)
+			})
+			.collect();
+		// Counted the way prune counts: an entry is its metadata plus its
+		// artifact, and one whose store never finished is not an entry yet.
+		let mut usage = CacheUsage::default();
+		for key in keys {
+			if !matches!(self.read_meta(&key), Ok(Some(m)) if m.is_complete()) {
+				continue;
+			}
+			usage.entries += 1;
+			usage.bytes += self.entry_size(&key);
+		}
+		Ok(usage)
 	}
 
 	fn prune(&self, max_bytes: u64) -> Result<PruneReport> {
@@ -2123,6 +2286,131 @@ mod tests {
 		write(&dir.path().join("src/main.log"), "different noise");
 		let after = compute_key(&base_inputs(dir.path(), &task, &[])).unwrap();
 		assert_eq!(before, after, "ignored files must not affect the key");
+	}
+
+	fn run_at(days_ago: i64, cached: usize, saved_ms: u64) -> RunRecord {
+		RunRecord {
+			at: Utc::now() - chrono::Duration::days(days_ago),
+			total: 4,
+			cached,
+			failed: 0,
+			saved_ms,
+			elapsed_ms: 1_000,
+		}
+	}
+
+	#[test]
+	fn the_ledger_keeps_every_run_in_the_order_they_were_appended() {
+		let dir = TempDir::new().unwrap();
+		let store = LocalStore::new(dir.path().join("cache"));
+		assert!(
+			store.recorded_runs().unwrap().is_empty(),
+			"a repo that has never run has no history, and asking is not an error"
+		);
+
+		// Oldest first, the order they would really have been appended in.
+		for days_ago in (0..3).rev() {
+			store.record_run(&run_at(days_ago, 2, 500)).unwrap();
+		}
+		let runs = store.recorded_runs().unwrap();
+		assert_eq!(runs.len(), 3);
+		// Appended, so the file order is the run order — the first line is the run
+		// that happened three days ago.
+		assert!(runs[0].at < runs[2].at);
+	}
+
+	#[test]
+	fn a_torn_ledger_line_costs_only_that_run() {
+		use std::io::Write;
+		let dir = TempDir::new().unwrap();
+		let store = LocalStore::new(dir.path().join("cache"));
+		store.record_run(&run_at(1, 2, 700)).unwrap();
+
+		// A run killed mid-append, or a file truncated by something else. The
+		// ledger is a record, not an input: one bad line must not hide the rest.
+		let mut f = std::fs::OpenOptions::new()
+			.append(true)
+			.open(dir.path().join("cache/stats.jsonl"))
+			.unwrap();
+		f.write_all(b"{\"at\":\"2026-0\n").unwrap();
+		drop(f);
+		store.record_run(&run_at(0, 4, 900)).unwrap();
+
+		let runs = store.recorded_runs().unwrap();
+		assert_eq!(runs.len(), 2);
+		assert_eq!(Savings::of(&runs).saved_ms, 1_600);
+	}
+
+	#[test]
+	fn prune_leaves_the_ledger_alone() {
+		// The ledger sits in the cache directory next to the artifacts. Prune
+		// enumerates entries by metadata and sweeps orphans, and the ledger is
+		// neither — but it is the one file in there that cannot be regenerated.
+		let dir = TempDir::new().unwrap();
+		let store = LocalStore::new(dir.path().join("cache"));
+		store.record_run(&run_at(0, 2, 400)).unwrap();
+		let ledger = dir.path().join("cache/stats.jsonl");
+		let before = std::fs::read_to_string(&ledger).unwrap();
+
+		// Backdate it past the abandoned threshold: age is what the sweep judges.
+		let old = std::time::SystemTime::now() - ABANDONED_AFTER - Duration::from_secs(60);
+		std::fs::File::open(&ledger)
+			.unwrap()
+			.set_times(std::fs::FileTimes::new().set_modified(old))
+			.unwrap();
+
+		store.prune(0).unwrap();
+		assert_eq!(std::fs::read_to_string(&ledger).unwrap(), before);
+	}
+
+	#[test]
+	fn savings_add_up_and_a_window_counts_only_what_it_covers() {
+		let runs = vec![
+			run_at(30, 1, 10_000),
+			run_at(3, 2, 20_000),
+			run_at(0, 4, 30_000),
+		];
+		let all = Savings::of(&runs);
+		assert_eq!((all.runs, all.hits, all.tasks), (3, 7, 12));
+		assert_eq!(all.saved_ms, 60_000);
+		assert_eq!(all.since, Some(runs[0].at));
+
+		let week = Savings::recent(&runs, 7);
+		assert_eq!(week.runs, 2);
+		assert_eq!(week.saved_ms, 50_000);
+	}
+
+	#[test]
+	fn a_hit_rate_needs_a_task_to_have_been_scheduled() {
+		// Zero would read as "every task missed", which is not what an empty
+		// ledger says.
+		assert_eq!(Savings::default().hit_rate(), None);
+		let runs = vec![run_at(0, 1, 0)];
+		assert_eq!(Savings::of(&runs).hit_rate(), Some(25.0));
+	}
+
+	#[test]
+	fn usage_counts_finished_entries_and_their_bytes() {
+		let cache = TempDir::new().unwrap();
+		let ws = TempDir::new().unwrap();
+		write(&ws.path().join("dist/app.js"), "console.log(1)");
+		let store = LocalStore::new(cache.path().join("cache"));
+		assert_eq!(store.usage().unwrap(), CacheUsage::default());
+
+		store
+			.store(
+				"abc",
+				ws.path(),
+				&["dist/**/*".to_string()],
+				meta_for("abc"),
+			)
+			.unwrap();
+		// Metadata with no digest yet: a store still in flight is not an entry.
+		store.write_meta(&meta_for("pending")).unwrap();
+
+		let usage = store.usage().unwrap();
+		assert_eq!(usage.entries, 1);
+		assert!(usage.bytes > 0);
 	}
 
 	#[test]

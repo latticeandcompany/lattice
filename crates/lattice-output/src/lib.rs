@@ -447,6 +447,41 @@ pub fn fmt_span(ms: u64) -> String {
 	}
 }
 
+/// A byte count rounded to one decimal (`1.4 GB`), for reporting how much room
+/// something takes.
+///
+/// [`lattice_config::CacheSize`] renders the same number exactly, which is what a
+/// configured limit needs — but a measured size is almost never a round multiple,
+/// and `1503238553B` is not a size anyone can picture.
+pub fn fmt_bytes(bytes: u64) -> String {
+	const UNITS: [(u64, &str); 4] = [
+		(1024 * 1024 * 1024 * 1024, "TB"),
+		(1024 * 1024 * 1024, "GB"),
+		(1024 * 1024, "MB"),
+		(1024, "KB"),
+	];
+	for (unit, name) in UNITS {
+		if bytes >= unit {
+			return format!("{:.1} {}", bytes as f64 / unit as f64, name);
+		}
+	}
+	format!("{bytes} B")
+}
+
+/// A count with thousands separators: `3,390`. Six-figure run counts are the
+/// point of the ledger, and they are unreadable without them.
+pub fn fmt_count(n: usize) -> String {
+	let digits = n.to_string();
+	let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+	for (i, c) in digits.chars().enumerate() {
+		if i > 0 && (digits.len() - i).is_multiple_of(3) {
+			out.push(',');
+		}
+		out.push(c);
+	}
+	out
+}
+
 /// Line stream: `workspace:task: <message>`, one line per event. In loquacious
 /// mode it also prints `note()` trace lines and per-task output. This is the
 /// reporter used when there is no TTY, or `-v` or `settings.loquacious` is set.
@@ -1262,6 +1297,23 @@ mod tests {
 		// Past an hour the seconds go: nobody reads them off a savings total.
 		assert_eq!(fmt_span(3_600_000), "1h 00m");
 		assert_eq!(fmt_span(51_720_000), "14h 22m");
+	}
+
+	#[test]
+	fn fmt_bytes_rounds_to_one_decimal() {
+		assert_eq!(fmt_bytes(0), "0 B");
+		assert_eq!(fmt_bytes(512), "512 B");
+		assert_eq!(fmt_bytes(1024), "1.0 KB");
+		assert_eq!(fmt_bytes(1_503_238_553), "1.4 GB");
+	}
+
+	#[test]
+	fn fmt_count_groups_thousands() {
+		assert_eq!(fmt_count(0), "0");
+		assert_eq!(fmt_count(999), "999");
+		assert_eq!(fmt_count(1_000), "1,000");
+		assert_eq!(fmt_count(3_390), "3,390");
+		assert_eq!(fmt_count(1_234_567), "1,234,567");
 	}
 
 	#[test]

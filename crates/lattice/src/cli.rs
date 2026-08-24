@@ -6,7 +6,7 @@ use lattice_output::{OutputMode, Theme};
 
 use crate::commands::{
 	completions::CompletionsArgs, init::InitArgs, prune::PruneArgs, run::RunArgs, setup::SetupArgs,
-	upgrade::UpgradeArgs, version::VersionArgs,
+	stats::StatsArgs, upgrade::UpgradeArgs, version::VersionArgs,
 };
 use crate::release::ReleaseUrls;
 
@@ -80,6 +80,9 @@ pub enum Commands {
 	/// Evict cache artifacts until the cache is under a size limit.
 	Prune(PruneArgs),
 
+	/// Report the task time this repo's cache has saved.
+	Stats(StatsArgs),
+
 	/// Move this repo to another version of Lattice and pin it.
 	Upgrade(UpgradeArgs),
 
@@ -139,6 +142,7 @@ impl Cli {
 			Some(Commands::Setup(args)) => args.execute(flag_loq, no_version_check).await,
 			Some(Commands::Init(args)) => args.execute(theme).await,
 			Some(Commands::Prune(args)) => args.execute().await,
+			Some(Commands::Stats(args)) => args.execute().await,
 			Some(Commands::Upgrade(args)) => args.execute(base_url.as_deref()).await,
 			Some(Commands::Completions(args)) => args.execute(),
 			Some(Commands::Version(args)) => args.execute(theme).await,
