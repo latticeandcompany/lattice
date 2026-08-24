@@ -8,10 +8,13 @@ import { downloadUrl, platforms } from '../src/lib/desktop.ts';
 // If a name is wrong, GitHub answers 404 rather than falling back. No build-time
 // check can catch that, because the assets do not exist until a tag is pushed. So
 // these tests compare the names against the workflow that produces them.
+// Normalized because `.gitattributes` checks YAML out CRLF, so the patterns below
+// would find nothing on a fresh clone or in CI while passing on a working copy
+// that predates that rule.
 const workflow = readFileSync(
 	fileURLToPath(new URL('../../../.github/workflows/release.yml', import.meta.url)),
 	'utf8',
-);
+).replace(/\r\n/g, '\n');
 
 /** Rebuild the names release.yml stages, from the matrix and the staging step. */
 const stagedByWorkflow = (): Set<string> => {
