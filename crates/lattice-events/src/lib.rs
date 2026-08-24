@@ -91,12 +91,14 @@ pub enum TaskEvent {
 	},
 	/// A task failed. `code` is the command's exit code, `None` when a signal
 	/// ended it or when the task failed before a child ever ran. `duration_ms` is
-	/// `0` in that second case: there was nothing to time.
+	/// `None` in that second case, because a task that never started has no run
+	/// to time. It is not `0`: a command can fail inside a millisecond, and the
+	/// two have to stay tellable apart.
 	Failed {
 		workspace: String,
 		task: String,
 		code: Option<i32>,
-		duration_ms: u64,
+		duration_ms: Option<u64>,
 	},
 	/// A persistent task's process ended without being asked to. `code` is its
 	/// exit code, or `None` when a signal ended it. Anything but `Some(0)` also
@@ -195,7 +197,7 @@ mod tests {
 				workspace: "web".into(),
 				task: "build".into(),
 				code: Some(101),
-				duration_ms: 1840,
+				duration_ms: Some(1840),
 			})
 			.unwrap(),
 			json!({
@@ -203,6 +205,24 @@ mod tests {
 				"code": 101, "durationMs": 1840
 			})
 		);
+	}
+
+	#[test]
+	fn a_failure_before_the_command_ran_sends_both_fields_as_null() {
+		// Both keys have to be present. A front end reads `null` as "there was
+		// nothing to report", and a `durationMs` of `0` would instead claim a
+		// task that ran and took no measurable time.
+		let value = serde_json::to_value(TaskEvent::Failed {
+			workspace: "web".into(),
+			task: "build".into(),
+			code: None,
+			duration_ms: None,
+		})
+		.unwrap();
+		assert_eq!(value["code"], json!(null));
+		assert_eq!(value["durationMs"], json!(null));
+		let keys = value.as_object().unwrap();
+		assert!(keys.contains_key("code") && keys.contains_key("durationMs"));
 	}
 
 	#[test]

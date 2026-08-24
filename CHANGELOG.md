@@ -47,7 +47,9 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
   blank line above its `✗ ui:build output` header. It was dim, which is the wrong
   treatment for the one thing on the screen worth reading
 - The `failed` event carries `code` and `durationMs`, the two fields
-  `persistentExited` already had. The desktop app's failed task row reads
+  `persistentExited` already had. Both are `null` for a task that failed before
+  its command ran, and a `durationMs` of `0` means a command that ran and failed
+  inside a millisecond. The desktop app's failed task row reads
   `failed (code 101) 1.84s`
 
 ### A task's command is never invented, and a skipped task says so — 2026-08-23

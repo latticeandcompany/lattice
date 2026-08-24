@@ -270,7 +270,8 @@ export type TaskEvent =
 			task: string;
 			/** Null when a signal ended it, or when the task failed before it ran. */
 			code: number | null;
-			durationMs: number;
+			/** Null when the task failed before its command ran, so there was no run to time. */
+			durationMs: number | null;
 	  }
 	| {
 			type: 'persistentExited';

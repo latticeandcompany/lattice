@@ -399,13 +399,11 @@ fn exit_desc(code: Option<i32>) -> String {
 /// What a failure line can say about how the task ended: its exit code when the
 /// command produced one, and how long it ran when it ran at all. A task that
 /// failed before it ever spawned — a key that would not compute, a shell that
-/// would not start — has neither, so both come back `None` and the line stays
-/// bare rather than claiming a `0.00s` run.
-fn fail_detail(code: Option<i32>, duration_ms: u64) -> (Option<String>, Option<String>) {
-	(
-		code.map(|c| format!("code {c}")),
-		(duration_ms > 0).then(|| fmt_secs(duration_ms)),
-	)
+/// would not start — has neither, so the line stays bare rather than claiming a
+/// `0.00s` run. A command that failed inside a millisecond did run, and still
+/// reports `0.00s`.
+fn fail_detail(code: Option<i32>, duration_ms: Option<u64>) -> (Option<String>, Option<String>) {
+	(code.map(|c| format!("code {c}")), duration_ms.map(fmt_secs))
 }
 
 /// Under a minute, seconds with two decimals (`1.23s`). Past that, clock form —
@@ -1006,7 +1004,7 @@ mod tests {
 			workspace: ws.clone(),
 			task: task.clone(),
 			code: Some(1),
-			duration_ms: 12,
+			duration_ms: Some(12),
 		});
 
 		let events = r.events.lock().unwrap();
@@ -1027,23 +1025,32 @@ mod tests {
 	#[test]
 	fn a_failure_that_ran_reports_its_code_and_its_time() {
 		assert_eq!(
-			fail_detail(Some(101), 1840),
+			fail_detail(Some(101), Some(1840)),
 			(Some("code 101".to_string()), Some("1.84s".to_string()))
 		);
 	}
 
 	#[test]
 	fn a_failure_before_the_child_ran_claims_neither() {
-		// A key that would not compute or a shell that would not spawn: there is
-		// no exit code, and reporting `0.00s` would imply a run that never
-		// happened.
-		assert_eq!(fail_detail(None, 0), (None, None));
+		// A key that would not compute, or a shell that would not spawn. There is
+		// no exit code, and no run to time.
+		assert_eq!(fail_detail(None, None), (None, None));
+	}
+
+	#[test]
+	fn a_command_that_failed_instantly_still_reports_a_time() {
+		// It ran. A fast enough runner measures no milliseconds, and dropping the
+		// time there would read as a task that never started.
+		assert_eq!(
+			fail_detail(Some(1), Some(0)),
+			(Some("code 1".to_string()), Some("0.00s".to_string()))
+		);
 	}
 
 	#[test]
 	fn a_task_stopped_by_a_signal_still_reports_how_long_it_ran() {
 		assert_eq!(
-			fail_detail(None, 30_000),
+			fail_detail(None, Some(30_000)),
 			(None, Some("30.00s".to_string()))
 		);
 	}

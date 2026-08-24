@@ -68,7 +68,7 @@ export const statusView = (
 				snapshot.exitCode === null || snapshot.exitCode === undefined
 					? ''
 					: ` (code ${snapshot.exitCode})`;
-			const took = snapshot.durationMs ? ` ${fmtSecs(snapshot.durationMs)}` : '';
+			const took = snapshot.durationMs === undefined ? '' : ` ${fmtSecs(snapshot.durationMs)}`;
 			return {
 				icon: 'bi-x-lg',
 				label: `failed${how}${took}`,

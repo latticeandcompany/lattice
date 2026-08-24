@@ -1046,7 +1046,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		Ok(k) => k,
 		Err(e) => {
 			let captured = vec![(true, format!("failed to compute cache key: {e}"))];
-			emit_failure(&ctx, &ws, &task, None, 0, captured);
+			emit_failure(&ctx, &ws, &task, None, None, captured);
 			return TaskOutcome::Failed {
 				workspace: ws,
 				task,
@@ -1121,7 +1121,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 	let mut cmd = build_shell_command(&spec.command);
 	cmd.current_dir(&spec.ws_path);
 	if let Err(msg) = apply_path_prepend(&mut cmd, &spec.path_prepend) {
-		emit_failure(&ctx, &ws, &task, None, 0, vec![(true, msg)]);
+		emit_failure(&ctx, &ws, &task, None, None, vec![(true, msg)]);
 		return TaskOutcome::Failed {
 			workspace: ws,
 			task,
@@ -1148,7 +1148,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			} else {
 				format!("failed to spawn task: {e}")
 			};
-			emit_failure(&ctx, &ws, &task, None, 0, vec![(true, msg)]);
+			emit_failure(&ctx, &ws, &task, None, None, vec![(true, msg)]);
 			return TaskOutcome::Failed {
 				workspace: ws,
 				task,
@@ -1311,7 +1311,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		}));
 		TaskOutcome::Ran
 	} else {
-		emit_failure(&ctx, &ws, &task, exit_code, duration_ms, captured);
+		emit_failure(&ctx, &ws, &task, exit_code, Some(duration_ms), captured);
 		TaskOutcome::Failed {
 			workspace: ws,
 			task,
@@ -1406,7 +1406,7 @@ fn emit_failure(
 	ws: &str,
 	task: &str,
 	code: Option<i32>,
-	duration_ms: u64,
+	duration_ms: Option<u64>,
 	captured: Vec<(bool, String)>,
 ) {
 	if ctx.shutting_down.load(Ordering::SeqCst) {
@@ -2925,10 +2925,16 @@ mod tests {
 			.await
 			.unwrap_err();
 
-		assert_eq!(
-			*r.surfaced_lines.lock().unwrap(),
-			vec!["out-1", "err-1", "out-2"],
-		);
+		// `cmd`'s `echo` keeps the space that separates the word from the joiner
+		// after it, so the lines are compared without their trailing whitespace.
+		let lines: Vec<String> = r
+			.surfaced_lines
+			.lock()
+			.unwrap()
+			.iter()
+			.map(|l| l.trim_end().to_string())
+			.collect();
+		assert_eq!(lines, vec!["out-1", "err-1", "out-2"]);
 
 		let events = r.events.lock().unwrap();
 		let failed = events
@@ -2941,7 +2947,10 @@ mod tests {
 			})
 			.expect("the run has to report the failure");
 		assert_eq!(failed.0, Some(3), "the exit code the command chose");
-		assert!(failed.1 > 0, "a task that ran took some time: {failed:?}");
+		assert!(
+			failed.1.is_some_and(|ms| ms > 0),
+			"a task that slept two seconds took some time: {failed:?}"
+		);
 	}
 
 	/// The direct child dying is not the group dying. A task that backgrounds
