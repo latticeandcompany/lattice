@@ -395,13 +395,23 @@ fn install_and_verify(
 /// this call is the one that put it there. A concurrent run may have promoted an
 /// identical tree first, in which case that one stands. A directory with no
 /// `pins.json` is the remains of a run that died mid-promotion, and is replaced.
-fn promote_staging(staging: &Path, final_dir: &Path) -> Result<bool> {
+fn promote_staging(staging: &Path, final_dir: &Path) -> Result<()> {
+	// The pin has to be inside `staging` already, so the rename publishes a
+	// finished tree. Promoting without it leaves the directory briefly pinless,
+	// which is how another run reads the remains of one that died, so it would
+	// delete a tree still in use. Enforced here because the window it opens is
+	// microseconds wide and no timing test catches it reliably.
+	anyhow::ensure!(
+		staging.join("pins.json").is_file(),
+		"internal error: refusing to promote {} without its pins.json",
+		staging.display()
+	);
 	if final_dir.exists() && !final_dir.join("pins.json").is_file() {
 		std::fs::remove_dir_all(final_dir).ok();
 	}
 	if !final_dir.exists() {
 		match std::fs::rename(staging, final_dir) {
-			Ok(()) => return Ok(true),
+			Ok(()) => return Ok(()),
 			Err(err) if !final_dir.join("pins.json").is_file() => {
 				std::fs::remove_dir_all(staging).ok();
 				return Err(err).with_context(|| {
@@ -416,7 +426,7 @@ fn promote_staging(staging: &Path, final_dir: &Path) -> Result<bool> {
 		}
 	}
 	std::fs::remove_dir_all(staging).ok();
-	Ok(false)
+	Ok(())
 }
 
 /// Provision (if needed) and resolve every engine in `engines` into a `PATH`
@@ -518,20 +528,28 @@ pub fn provision_and_resolve(
 					}
 				};
 
-				// Move into the content-addressed, versioned final dir.
+				// Move into the content-addressed, versioned final dir. The pin is
+				// written into staging first, so the rename publishes a finished
+				// tree in one step. Writing it afterwards left the directory
+				// briefly pinless, which is exactly how a promotion reads the
+				// remains of a run that died, so a second run provisioning the
+				// same engine would delete a tree its owner was still using.
 				let final_dir = engine_dir.join(format!("{version}-{hash}"));
-				if promote_staging(&staging, &final_dir)? {
-					let pins = ToolchainPins {
-						engine: name.clone(),
-						version: version.clone(),
-						install_hash: hash.clone(),
-						bin: bin.clone(),
-					};
-					std::fs::write(
-						final_dir.join("pins.json"),
-						serde_json::to_string_pretty(&pins)?,
-					)?;
+				let pins = ToolchainPins {
+					engine: name.clone(),
+					version: version.clone(),
+					install_hash: hash.clone(),
+					bin: bin.clone(),
+				};
+				if let Err(err) = std::fs::write(
+					staging.join("pins.json"),
+					serde_json::to_string_pretty(&pins)?,
+				) {
+					std::fs::remove_dir_all(&staging).ok();
+					return Err(err)
+						.with_context(|| format!("failed to record the pin for engine '{name}'"));
 				}
+				promote_staging(&staging, &final_dir)?;
 
 				path_prepend.push(final_dir.join(bin_rel));
 				identity_parts.push(format!("{name}={version}@{hash}"));
@@ -801,8 +819,14 @@ mod tests {
 			})
 			.collect();
 
-		for run in runs {
-			let prepend = run.join().unwrap().expect("every concurrent run installs");
+		// Join every run before asserting. Checking one run's directory while the
+		// others are still promoting into it races against the test itself.
+		let prepends: Vec<_> = runs
+			.into_iter()
+			.map(|run| run.join().unwrap().expect("every concurrent run installs"))
+			.collect();
+
+		for prepend in &prepends {
 			let bin = &prepend[0];
 			assert!(
 				bin.join(lattice_testkit::fake_tool_file("faketool"))
@@ -820,6 +844,46 @@ mod tests {
 			.filter(|name| name.starts_with(STAGING_PREFIX))
 			.collect();
 		assert!(staged.is_empty(), "staging left behind: {staged:?}");
+	}
+
+	/// Promoting a tree without its pin is what let a second run mistake a live
+	/// toolchain for the remains of a dead one and delete it. The ordering is a
+	/// correctness requirement, so it is checked rather than merely intended.
+	#[test]
+	fn a_staging_tree_without_its_pin_is_never_promoted() {
+		let tmp = TempDir::new().unwrap();
+		let staging = tmp.path().join("tmp-abc-1-1");
+		std::fs::create_dir_all(staging.join("bin")).unwrap();
+
+		let err = promote_staging(&staging, &tmp.path().join("1.2.3-abc")).unwrap_err();
+		assert!(
+			format!("{err:#}").contains("without its pins.json"),
+			"{err:#}"
+		);
+	}
+
+	/// The loser of a race adopts the published tree instead of replacing it.
+	#[test]
+	fn promotion_leaves_a_published_tree_alone() {
+		let tmp = TempDir::new().unwrap();
+		let final_dir = tmp.path().join("1.2.3-abc");
+		std::fs::create_dir_all(final_dir.join("bin")).unwrap();
+		std::fs::write(final_dir.join("pins.json"), "{}").unwrap();
+		std::fs::write(final_dir.join("bin/faketool"), "the winner").unwrap();
+
+		let staging = tmp.path().join("tmp-abc-2-1");
+		std::fs::create_dir_all(staging.join("bin")).unwrap();
+		std::fs::write(staging.join("pins.json"), "{}").unwrap();
+		std::fs::write(staging.join("bin/faketool"), "the loser").unwrap();
+
+		promote_staging(&staging, &final_dir).unwrap();
+
+		assert!(!staging.exists(), "the loser cleans up after itself");
+		assert_eq!(
+			std::fs::read_to_string(final_dir.join("bin/faketool")).unwrap(),
+			"the winner",
+			"a published tree survives another run's promotion"
+		);
 	}
 
 	/// A run that is killed leaves its staging directory behind for good, so the
