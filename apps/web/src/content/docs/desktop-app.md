@@ -151,6 +151,12 @@ To run one task at a time, set **Concurrency** to **1 at once** instead. See
 **Stop** ends a run the way Ctrl-C does. Scheduling stops, running children are
 terminated, and the run reports as interrupted rather than failed.
 
+When the run ends, the bar carries the same summary the CLI prints —
+`10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s saved` — and appends
+`· full power, nothing to run` when every scheduled task came back from cache.
+The saved figure is task time rather than wall clock, and it is left off when it
+is zero. See [Caching](/lattice/docs/caching).
+
 When a task misses the cache, a row of chips under it reads `cache miss:`
 followed by the parts of the key that moved: `inputs`, `command`, `toolchain`,
 and so on. A key on its own can only tell you that a task missed. See [Cache

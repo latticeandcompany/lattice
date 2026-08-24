@@ -209,8 +209,8 @@ lattice run build -v
 lattice: running `build` across 1 workspace
 lattice: app:build: hash 92e4f1987f6770d8
 app:build: cache hit [92e4f198]
-lattice: 1 tasks, 1 cached, 0 failed, 0.00s
-lattice: full cache, nothing to run
+lattice: 1 tasks, 1 cached, 0 failed, 0.00s, 0.01s saved
+lattice: full power, nothing to run
 ```
 
 Same hash as the first run, so Lattice restored `app/dist` from

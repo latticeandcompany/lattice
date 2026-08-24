@@ -236,7 +236,7 @@ worker:build: [worker] go not installed, skipping native build
 lattice: warning: worker:build: failed to cache outputs: no files matched outputs ["dist/**", "target/debug/**", "bin/**"], so nothing was cached. Check that the patterns are relative to the workspace, and that the task writes there
 worker:build: done (0.01s)
 api:build: cache hit [b00c22c2]
-lattice: 4 tasks, 3 cached, 0 failed, 0.10s
+lattice: 4 tasks, 3 cached, 0 failed, 0.10s, 0.45s saved
 ```
 
 Same hashes as the first run. `build`'s `inputs` is `src/**/*`, no source file
@@ -264,7 +264,7 @@ worker:build: [worker] go not installed, skipping native build
 lattice: warning: worker:build: failed to cache outputs: no files matched outputs ["dist/**", "target/debug/**", "bin/**"], so nothing was cached. Check that the patterns are relative to the workspace, and that the task writes there
 worker:build: done (0.01s)
 api:build: cache hit [b00c22c2]
-lattice: 4 tasks, 2 cached, 0 failed, 0.11s
+lattice: 4 tasks, 2 cached, 0 failed, 0.11s, 0.41s saved
 ```
 
 `web` and `api` are untouched: `build`'s `inputs` resolves per workspace and

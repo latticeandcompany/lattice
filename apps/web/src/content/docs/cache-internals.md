@@ -196,7 +196,8 @@ the key as their stem:
 
 There is no nesting and no sharding by key prefix. The directory is a flat list
 of `<key>.tar.gz` and `<key>.meta.json` pairs beside the `fingerprints/`
-directory.
+directory and the `stats.jsonl` ledger. See [the run
+ledger](#the-run-ledger).
 
 `lattice prune` removes cache entries, orphaned artifacts, and leftover staging
 files, though it removes a leftover only once that leftover has sat untouched for
@@ -237,7 +238,7 @@ declaring `outputs: ["dist/**"]` and `env: ["NODE_ENV"]`:
 | `key` | The cache key. Also the filename stem for both files. |
 | `task` | The task name. |
 | `workspace` | The workspace name. |
-| `durationMs` | How long the task took when this entry was written. |
+| `durationMs` | How long the task took when this entry was written. A later hit reports this as the task time it saved. |
 | `lastUsed` | RFC 3339 timestamp, set on write and refreshed on every hit. Drives eviction order. |
 | `env` | The resolved name and value pairs for the task's declared `env`, as they were when the key was computed. The key is a hash, so this is the only place those values remain legible. |
 | `outputDigest` | SHA-256 hex of the `.tar.gz` bytes, recorded when the artifact is written and checked on every lookup. Empty while the store that wrote this file is still running. |
@@ -384,6 +385,45 @@ store costs that task a rerun.
 
 A modification time in the future counts as recent. Clocks drift on machines that
 share a cache directory, and a bad clock never becomes a reason to delete.
+
+## The run ledger
+
+`stats.jsonl` in the cache directory is a record of finished runs, and it is what
+`lattice stats` reads. One JSON object per line, appended as each run ends:
+
+```text
+{"at":"2026-08-21T19:30:40.501574Z","total":6,"cached":0,"failed":0,"savedMs":0,"elapsedMs":3122}
+{"at":"2026-08-21T19:34:02.118904Z","total":6,"cached":6,"failed":0,"savedMs":6113,"elapsedMs":5}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `at` | RFC 3339 timestamp of when the run finished. |
+| `total` | Tasks the run scheduled and reached: ran, restored, or failed. |
+| `cached` | How many of those came back from cache. |
+| `failed` | How many failed. |
+| `savedMs` | Sum of the `durationMs` recorded in each hit's metadata. Task time, not wall clock: two hits that would have run at the same moment still each add their own. |
+| `elapsedMs` | Wall time for the run, the same figure the summary line prints. |
+
+A line is appended only when the run could store to the cache and scheduled at
+least one task, so `--no-cache` records nothing and neither does a `--filter`
+that matched no workspace. `--force` does store, so it does record. A ledger the
+run could not write is reported as a note rather than failing a run that already
+succeeded.
+
+The ledger is a list of runs rather than a running total because two `lattice`
+processes in one repo can finish at the same moment. Each line is one `O_APPEND`
+write with no prior read, so neither process has a count for the other to
+overwrite. On read, a line that does not parse is skipped: that costs one run's
+numbers and leaves the rest of the history intact.
+
+`lattice prune` never touches the file, in either the eviction pass or the
+leftover sweep. It is the one thing in the cache directory that no later run can
+reconstruct. It is also per-machine and never committed — the `.lattice/cache/`
+line `lattice init` writes into `.gitignore` covers it — and it lives inside the
+cache directory so that it follows a relocated `settings.cacheDir` rather than
+being stranded beside the old one. Deleting the cache deletes the history with
+it.
 
 ## Not part of the key
 

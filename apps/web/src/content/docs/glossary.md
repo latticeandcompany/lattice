@@ -212,6 +212,24 @@ from the current directory to find it, so any subdirectory can run `lattice`
 commands. A workspace may add its own `scripts` and `engines`, and nothing else.
 See [Configuration](/lattice/docs/configuration).
 
+### Run ledger
+
+`stats.jsonl` in the cache directory, holding one appended JSON line per finished
+run: when it ended, how many tasks it scheduled, how many hit the cache, how many
+failed, the [saved time](#saved-time), and the elapsed time. `lattice stats`
+reads it. A run appends a line only when it could store to the cache and
+scheduled at least one task. The file is per-machine, never committed, untouched
+by `lattice prune`, and deleted with the cache directory. See [Cache
+internals](/lattice/docs/cache-internals).
+
+### Saved time
+
+The task time a run's [cache hits](#cache-hit) skipped, summed from the duration
+each entry's metadata recorded when that entry was written. Reported at the end
+of the summary line on any run with hits, and totalled by `lattice stats`. Task
+time rather than wall clock: hits that would have run at the same moment each
+add their own duration. See [Caching](/lattice/docs/caching).
+
 ### Schedule
 
 The runner-facing form of the [task graph](#task-graph), recording for each task

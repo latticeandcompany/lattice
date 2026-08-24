@@ -44,6 +44,7 @@ as if they came from a different tool.
 | engine | A versioned tool constraint under `engines` |
 | toolchain | An engine Lattice has installed under `.lattice/toolchains/` |
 | cache hit | A task whose stored result was verified and restored instead of running |
+| saved time | Task time a run's cache hits skipped, summed from what each entry recorded. Not wall clock |
 | persistent task | A task declared `persistent: true`, such as a dev server |
 
 A workspace is not a project, a package, or a project directory. The repo is not
@@ -89,6 +90,7 @@ Every item here is something models invent. None of it parses.
 | `env` as `"NAME=value"` pairs | Variable names only: `["DATABASE_URL"]` |
 | `extends` or `include` | Nothing. One config file per repo |
 | `maxCacheSize` as a number | A string: `"10GB"` |
+| A flag on `lattice stats`, such as a json or since flag | Nothing. It takes none |
 | Any other key at any level | Nothing. An unknown key fails the load |
 
 ## Rules that will bite you
@@ -362,6 +364,20 @@ Two misses name no component: `cache miss (nothing cached for this task yet)`
 and `cache miss (the entry for this key is no longer in the cache)`. Start with
 whatever the line names rather than bisecting the config.
 
+**What the cache saved:** any run with hits ends its summary with the task time
+those hits skipped — `lattice: 10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s
+saved` — and the tail is omitted when the figure is zero. Each hit contributes
+the duration its entry recorded when it was written, so the figure is task time
+and not wall clock: four cached one-minute tasks that would have run in parallel
+read as `4m 00s saved`. Do not tell anyone it is time off their wall clock.
+
+`lattice stats` totals those figures across every run the repo recorded. The
+record is `stats.jsonl` inside the cache directory, one appended JSON line per
+run. A run appends only when it could store and scheduled at least one task, so
+`--no-cache` records nothing and `--force` does. It is per-machine, never
+committed, untouched by `prune`, and cleared with the cache.
+`references/cli.md` has the fields and the full output.
+
 ## Pinning tool versions
 
 An `engines` entry's *shape*, and nothing else, selects one of three behaviors.
@@ -480,7 +496,8 @@ directory (`.lattice/cache`, or `settings.cacheDir`) with a rolling key, and set
 `lattice prune --max-size <size>` before saving to apply a different limit in CI
 than locally. `--continue` is the right shape for a CI run: it reports every
 failure in one pass and still exits `1`. `CI` being set already forces plain
-output, so `-v` is redundant there.
+output, so `-v` is redundant there. The ledger `lattice stats` reads lives in the
+cache directory, so restoring the cache restores the run history with it.
 
 Give tasks that can hang a `timeout`, so a stuck run fails instead of burning the
 job's whole budget and saving no cache. A cancelled job sends `SIGTERM`: Lattice
@@ -494,9 +511,10 @@ distinguishing from `1` if the pipeline branches on the exit code.
 - `lattice run <tasks> -v` is a real run, with each task's hash and cache outcome
   on its own line.
 - Run it a second time. Every task should report a cache hit, and the run should
-  end with `lattice: full cache, nothing to run`. That line prints only when
-  nothing executed. If a task misses twice in a row with nothing changed, the
-  miss line names the component responsible; start there.
+  end with `lattice: full power, nothing to run`. That line prints only when
+  nothing executed, and it was `full cache` in earlier releases. If a task
+  misses twice in a row with nothing changed, the miss line names the component
+  responsible; start there.
 - `lattice version` says which binary actually ran, which matters when the repo
   pins `latticeVersion`.
 

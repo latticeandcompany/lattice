@@ -73,6 +73,31 @@ lattice run build -v
 Color follows the terminal rather than the mode, so a CI log is free of escape
 codes either way. See [Output and logging](/lattice/docs/output-modes).
 
+Two lines in that log are worth grepping for. The summary is always the last one
+a successful run prints:
+
+```text
+lattice: 10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s saved
+```
+
+The saved figure is appended after the elapsed time rather than inserted before
+it, and it is left off when it is zero, so a job that greps the counts reads the
+same as it always has. It is task time, not wall clock: each hit contributes the
+time the run that wrote its entry spent, so eight hits on a parallel graph can
+report more saved time than the job took.
+
+A run where every scheduled task came back from cache adds one more line under
+the summary:
+
+```text
+lattice: full power, nothing to run
+```
+
+That marker needs at least one task scheduled, no failures, and a hit for every
+task, so a `--filter` that matched no workspace never prints it. If a CI check
+of yours greps for `lattice: full cache, nothing to run`, that is the string
+this one replaced.
+
 ## Exit codes
 
 `lattice run` exits `0` when every task finished successfully, including runs
@@ -201,6 +226,12 @@ and the stored artifact's digest checks out. So the directory you restore does
 not need to match the current commit. Entries left over from an older commit are
 never looked up again, and they cost storage rather than correctness. See
 [Caching](/lattice/docs/caching).
+
+The ledger `lattice stats` reads is a file in that same directory, so a restored
+cache brings the run history with it and `stats` in a job reports across the jobs
+that shared it. Jobs that restore the same snapshot in parallel each append to
+their own copy and only one save wins, so a CI history is lossier than a single
+machine's.
 
 ## Keep the saved cache bounded
 

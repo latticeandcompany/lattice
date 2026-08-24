@@ -288,6 +288,30 @@ The miss line says `environment changed`, or reports nothing cached for the task
 yet. Both have the same cause. The old entries are still on disk, and they age
 out under `settings.maxCacheSize` or `lattice prune` like any others.
 
+### The saved figure is larger than the run took
+
+Expected. The saved figure is task time, not wall clock. Each hit adds the
+duration the run that wrote its entry spent, whether or not those tasks would
+have run at the same moment, so four cached one-minute tasks on independent
+branches report `4m 00s saved` on a run that took a second. The elapsed time
+in front of it is the clock. See [Caching](/lattice/docs/caching).
+
+### `lattice stats` says no runs are recorded
+
+```text
+No runs recorded yet. Run a task and this fills in — every run appends one line.
+```
+
+The ledger is a file inside the cache directory, so anything that clears the
+cache clears the history too: deleting `.lattice`, moving `settings.cacheDir`, or
+a CI job that started from an empty cache. A run also appends nothing when it
+could not store — `--no-cache` — or when it scheduled no task at all, such as a
+`--filter` that matched no workspace.
+
+Run a task without `--no-cache` and `stats` fills in from that run onward. There
+is nothing to recover: the history is a record, not an input, and losing it costs
+the numbers rather than a rebuild.
+
 ## Toolchains
 
 ### An engine check fails on one machine and passes on another

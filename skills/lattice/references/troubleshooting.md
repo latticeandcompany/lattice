@@ -443,14 +443,32 @@ filter that matched nothing, and every task in the graph hitting the cache. The
 third prints:
 
 ```text
-lattice: full cache, nothing to run
+lattice: full power, nothing to run
 ```
 
-That line prints only when nothing executed.
+That line prints only when nothing executed. It was `lattice: full cache,
+nothing to run` in earlier releases, so update anything grepping for the old
+string.
+
+## `lattice stats` reports more saved time than the run took
+
+Working as intended. The saved figure is task time, not wall clock: each hit adds
+the duration the run that wrote its entry spent, whether or not those tasks would
+have run at the same moment. Four cached one-minute tasks on independent branches
+report `4m 00s saved` on a run that took a second.
+
+## `lattice stats` says no runs are recorded
+
+The ledger is a file inside the cache directory, so anything that clears the
+cache clears the history: deleting `.lattice`, moving `settings.cacheDir`, or a
+CI job starting from an empty cache. A run also appends nothing when it could not
+store (`--no-cache`) or scheduled no task at all (a `--filter` that matched
+nothing). Run a task without `--no-cache` and it fills in from there. Nothing is
+recoverable and nothing needs to be: the ledger is a record, not an input.
 
 ## `.lattice/schema.json` is missing, or the editor shows a stale schema
 
-`run`, `setup`, and `prune` write a *missing* schema file. An existing one is
+`run`, `setup`, `prune`, and `stats` write a *missing* schema file. An existing one is
 left alone on purpose, even by a newer release. Delete it and rerun any command
 that loads config, or force a rewrite with `lattice init --force`. It is the one
 thing under `.lattice/` meant to be committed.
