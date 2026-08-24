@@ -61,7 +61,8 @@ Read across a row to translate a line you have in front of you.
 | A trace line | `lattice: ui:build: hash 5341be25…` (`-v` only) | not shown |
 | A warning | `lattice: warning: ui:build: …` | `warn ui:build: …` |
 | The run ends | `lattice: 4 tasks, 0 cached, 0 failed, 3.08s` | `❖  4 tasks · 0 cached · 0 failed  3.08s` |
-| Every task came back from cache | `lattice: full cache, nothing to run` | `❖❖❖ FULL CACHE` |
+| The run ends and something hit | `lattice: 4 tasks, 1 cached, 0 failed, 3.09s, 3.02s saved` | `❖  4 tasks · 1 cached · 0 failed  3.09s · 3.02s saved` |
+| Every task came back from cache | `lattice: full power, nothing to run` | `❖❖❖ FULL POWER` |
 
 The two persistent rows have no interactive form. A run that can reach a
 persistent task is switched to raw before it starts, so the live display never
@@ -85,6 +86,27 @@ to 28 characters and truncates a longer one with `…`, which is what lines the
 glyphs and durations up in a column. And a duration under a minute reads as
 seconds (`1.02s`); past that it switches to clock form, `4:07` and then
 `1:12:30`.
+
+## What the saved figure counts
+
+A run with cache hits ends its summary with a saved figure. It is a sum of one
+number per hit: how long the run that wrote that cache entry spent producing it,
+recorded in the entry's metadata at the time. When the total comes to zero the
+tail is left off, so a run with no hits reads the way it always has.
+
+That makes it task time, not wall clock. Four cached one-minute tasks with
+nothing between them in the graph add up to `4m 00s saved`, even though running
+them would have cost you about a minute of waiting. It is a count of work not
+repeated. The elapsed time next to it is the clock.
+
+Past a minute the two figures are written differently. Under a minute they match
+(`4.27s`). Above it, saved time reads `4m 07s`, then `14h 22m` once it crosses
+an hour, dropping the seconds — where the elapsed time switches to clock form,
+`4:07` and then `1:12:30`.
+
+Each run's figure is also appended to a ledger kept with the cache.
+[`lattice stats`](/lattice/docs/cli) adds them up across every run the repo has
+recorded.
 
 ## Read the live display
 
@@ -127,7 +149,7 @@ printed under a header once the run reaches it:
     ui: building 3 files
     ui: cannot resolve module 'styles'
 ────────────────────────────────────────────────────
-❖  2 tasks · 1 cached · 1 failed  1.02s
+❖  2 tasks · 1 cached · 1 failed  1.02s · 3.02s saved
 ```
 
 The captured lines read in the order the task produced them, whichever stream
@@ -159,14 +181,21 @@ When every task came back from cache, a banner follows the summary:
 ● api:build                    cache hit [1ccd0b3e]
 ● web:build                    cache hit [d25c0cf0]
 ────────────────────────────────────────────────────
-❖  4 tasks · 4 cached · 0 failed  0.00s
+❖  4 tasks · 4 cached · 0 failed  0.00s · 8.12s saved
 
-❖❖❖ FULL CACHE
+❖❖❖ FULL POWER
 ```
 
 The banner needs at least one task scheduled, no failures, and a hit for every
 one. A single miss, a failure, a persistent task in the graph, or a `--filter`
 that matched no workspace all leave it out.
+
+It says `FULL POWER` and not `FULL CACHE`. A full cache is how a disk running out
+of room is described, which is the opposite of what just happened.
+
+`8.12s` against an elapsed `0.00s` is the task-time reading at work: those four
+builds took 8.12 seconds of work between them when they last ran, spread over
+about three seconds of waiting.
 
 ## Read the raw stream
 
@@ -198,13 +227,16 @@ docs:build: cache hit [94477519]
 ui:build: cache hit [5341be25]
 api:build: cache hit [1ccd0b3e]
 web:build: cache hit [d25c0cf0]
-lattice: 4 tasks, 4 cached, 0 failed, 0.01s
-lattice: full cache, nothing to run
+lattice: 4 tasks, 4 cached, 0 failed, 0.01s, 8.12s saved
+lattice: full power, nothing to run
 ```
 
-`lattice: full cache, nothing to run` is the raw form of the `FULL CACHE`
+`lattice: full power, nothing to run` is the raw form of the `FULL POWER`
 banner, under the same rule and with no color, so a CI log can be grepped for
 it.
+
+The saved figure is appended after the elapsed time rather than inserted before
+it, so a log grepped for the counts reads the way it always has.
 
 Without `-v`, a task's own output is collapsed here too. A failure is the
 exception: the captured lines print underneath the `FAILED` line, in the order
@@ -217,7 +249,7 @@ docs:build: cache hit [94477519]
 ui:build: FAILED (code 3) after 1.02s
 ui:build: ui: building 3 files
 ui:build: ui: cannot resolve module 'styles'
-lattice: 2 tasks, 1 cached, 1 failed, 1.03s
+lattice: 2 tasks, 1 cached, 1 failed, 1.03s, 3.02s saved
 ```
 
 `code 3` is the exit code the command returned, and `after 1.02s` is how long it
@@ -254,7 +286,7 @@ web:build: web: built 1 page
 api:build: api: built 1 binary
 api:build: done (2.03s)
 web:build: done (2.03s)
-lattice: 4 tasks, 1 cached, 0 failed, 3.09s
+lattice: 4 tasks, 1 cached, 0 failed, 3.09s, 3.02s saved
 ```
 
 The `lattice: ` prefix marks a line Lattice wrote about the run rather than a
@@ -284,7 +316,7 @@ ui:build: ui: building 3 files
 ui:build: ui: cannot resolve module 'styles'
 web:build: skipped (dependency failed)
 api:build: skipped (dependency failed)
-lattice: 2 tasks, 1 cached, 1 failed, 1.03s
+lattice: 2 tasks, 1 cached, 1 failed, 1.03s, 3.02s saved
 ```
 
 At a terminal, `-v` is also one of the mode triggers, so it is how you get this
@@ -330,8 +362,9 @@ per run, after the mode is settled and before anything prints, which is why a
 `persistent: true` task forcing raw mode keeps its colored labels.
 
 Interactive spends color on the teal accent for the header, the rosette, the
-spinners, and cache hits, plus a green `✓` and a red `✗` on results. Raw colors
-exactly one thing: the label.
+spinners, cache hits, and the saved figure in the summary, plus a green `✓` and
+a red `✗` on results. The elapsed time beside the saved figure stays dim. Raw
+colors exactly one thing: the label.
 
 ## Keep progress and failures apart
 

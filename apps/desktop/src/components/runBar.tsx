@@ -83,7 +83,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						<Spinner label={run.phase === 'stopping' ? 'stopping…' : 'running…'} />
 					) : (
 						run.result &&
-						`${runSummary(run.result)}${isFullCache(run.result) ? ' · full cache, nothing to run' : ''}`
+						`${runSummary(run.result)}${isFullCache(run.result) ? ' · full power, nothing to run' : ''}`
 					)}
 				</div>
 			</div>

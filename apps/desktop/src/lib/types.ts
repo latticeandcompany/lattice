@@ -253,7 +253,14 @@ export type CacheMiss =
 
 export type TaskEvent =
 	| { type: 'started'; workspace: string; task: string }
-	| { type: 'cacheHit'; workspace: string; task: string; key: string }
+	| {
+			type: 'cacheHit';
+			workspace: string;
+			task: string;
+			key: string;
+			/** Task time the hit skipped: how long the run that wrote this entry took. */
+			savedMs: number;
+	  }
 	| { type: 'cacheMiss'; workspace: string; task: string; miss: CacheMiss }
 	| {
 			type: 'output';
@@ -293,6 +300,11 @@ export interface RunResult {
 	cached: number;
 	failed: number;
 	elapsedMs: number;
+	/**
+	 * Recorded task time this run's cache hits skipped. Task time, not wall
+	 * clock: hits that would have run in parallel each add their own.
+	 */
+	savedMs: number;
 }
 
 export type RunOutcome =

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use lattice_events::{OutputLine, Reporter, TaskEvent};
+use lattice_events::{OutputLine, Reporter, RunSummary, TaskEvent};
 use lattice_runner::RunResult;
 
 /// Flush after this many buffered lines.
@@ -245,14 +245,15 @@ impl<S: EventSink> Reporter for ChannelReporter<S> {
 		});
 	}
 
-	fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64) {
+	fn run_summary(&self, s: RunSummary) {
 		self.flush();
 		self.sink.send(RunMessage::Summary {
 			result: RunResult {
-				total,
-				cached,
-				failed,
-				elapsed_ms,
+				total: s.total,
+				cached: s.cached,
+				failed: s.failed,
+				elapsed_ms: s.elapsed_ms,
+				saved_ms: s.saved_ms,
 			},
 		});
 	}
@@ -401,7 +402,13 @@ mod tests {
 	fn a_partial_batch_still_arrives_before_the_summary() {
 		let (reporter, sink) = reporter();
 		reporter.event(output(1));
-		reporter.run_summary(1, 0, 0, 10);
+		reporter.run_summary(RunSummary {
+			total: 1,
+			cached: 0,
+			failed: 0,
+			elapsed_ms: 10,
+			saved_ms: 0,
+		});
 
 		let messages = sink.0.lock().unwrap();
 		let kinds: Vec<&str> = messages

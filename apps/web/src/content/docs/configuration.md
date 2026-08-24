@@ -37,7 +37,7 @@ therefore work from any subdirectory. With no `lattice.json` in the current
 directory or any parent, the command fails before reading anything else:
 
 ```text
-Error: no lattice.json found in this directory or any parent; run `lattice init` to create one
+Error: no lattice.json found in this directory or any parent. Run `lattice init` to create one
 ```
 
 ## `$schema`
@@ -55,11 +55,12 @@ a copy of Lattice's bundled JSON Schema, written next to your config so that
 editors with JSON Schema support validate and autocomplete `lattice.json` as you
 type. Lattice never reads the value.
 
-`lattice run`, `lattice setup`, and `lattice prune` write `.lattice/schema.json`
-only when the file is absent, so a copy you have pinned or hand-edited stays as
-it is. `lattice init` writes it unconditionally as part of scaffolding, along
-with five `.gitignore` lines: `.lattice/cache/`, `.lattice/toolchains/`,
-`.lattice/bin/`, `.lattice/setup/`, and `.lattice-setup-marker`.
+`lattice run`, `lattice setup`, `lattice prune`, and `lattice stats` write
+`.lattice/schema.json` only when the file is absent, so a copy you have pinned
+or hand-edited stays as it is. `lattice init` writes it unconditionally as part
+of scaffolding, along with five `.gitignore` lines: `.lattice/cache/`,
+`.lattice/toolchains/`, `.lattice/bin/`, `.lattice/setup/`, and
+`.lattice-setup-marker`.
 `.lattice/schema.json` is not among them.
 
 ## Unknown keys
@@ -495,7 +496,7 @@ message. See [Errors](/lattice/docs/errors) for all five.
 
 | Problem | Stage | Error |
 | --- | --- | --- |
-| No `lattice.json` in this or any parent directory | before parsing | ``no lattice.json found in this directory or any parent; run `lattice init` to create one`` |
+| No `lattice.json` in this or any parent directory | before parsing | ``no lattice.json found in this directory or any parent. Run `lattice init` to create one`` |
 | Malformed JSON | parsing | `failed to parse lattice.json`, with the underlying JSON error and its position |
 | A workspace object missing `name` or `path` | parsing | ``missing field `name` ``, with line and column |
 | A key Lattice does not recognize, at any level | parsing | ``unknown field `<key>` in <path>``, with position, the nearest valid field, and the fields accepted there |

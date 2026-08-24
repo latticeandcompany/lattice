@@ -65,10 +65,14 @@ pub enum TaskEvent {
 		workspace: String,
 		task: String,
 	},
+	/// A task restored from cache instead of running. `saved_ms` is how long the
+	/// run that wrote this entry took, recorded in its metadata — the task time
+	/// this hit did not have to spend again.
 	CacheHit {
 		workspace: String,
 		task: String,
 		key: String,
+		saved_ms: u64,
 	},
 	CacheMiss {
 		workspace: String,
@@ -116,6 +120,22 @@ pub enum TaskEvent {
 	},
 }
 
+/// What a finished run amounted to, handed to [`Reporter::run_summary`] as one
+/// value so the counts cannot be transposed at a call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunSummary {
+	/// Tasks the run scheduled and reached: ran, cached, or failed.
+	pub total: usize,
+	pub cached: usize,
+	pub failed: usize,
+	/// Wall time from the first spawn to the last one finishing.
+	pub elapsed_ms: u64,
+	/// Recorded task time the hits skipped, summed across them. This is task
+	/// time, not wall clock: four cached one-minute tasks that would have run in
+	/// parallel sum to four minutes here.
+	pub saved_ms: u64,
+}
+
 /// One output abstraction, consumed via events. Must be `Send + Sync`: the
 /// runner shares it across concurrently spawned tasks behind an `Arc`, so all
 /// state lives behind interior mutability.
@@ -124,7 +144,7 @@ pub trait Reporter: Send + Sync {
 	fn event(&self, ev: TaskEvent);
 	/// A failed task's captured output, surfaced together (expand-on-fail).
 	fn surface_failure(&self, workspace: &str, task: &str, captured: &[(bool, String)]);
-	fn run_summary(&self, total: usize, cached: usize, failed: usize, elapsed_ms: u64);
+	fn run_summary(&self, summary: RunSummary);
 	/// Trace/detail line (hashing/cache/toolchain trace) — shown only in loquacious.
 	fn note(&self, msg: &str);
 	fn warn(&self, msg: &str);
@@ -159,6 +179,26 @@ mod tests {
 			})
 			.unwrap(),
 			json!({ "type": "started", "workspace": "web", "task": "build" })
+		);
+	}
+
+	#[test]
+	fn a_cache_hit_reports_the_task_time_it_skipped() {
+		assert_eq!(
+			serde_json::to_value(TaskEvent::CacheHit {
+				workspace: "web".into(),
+				task: "build".into(),
+				key: "d25c0cf0".into(),
+				saved_ms: 3_040,
+			})
+			.unwrap(),
+			json!({
+				"type": "cacheHit",
+				"workspace": "web",
+				"task": "build",
+				"key": "d25c0cf0",
+				"savedMs": 3_040
+			})
 		);
 	}
 

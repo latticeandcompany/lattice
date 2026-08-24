@@ -16,6 +16,41 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### A cached run reports the time it saved, and `lattice stats` adds it up — 2026-08-23
+
+- The run summary reports the task time the run's cache hits skipped:
+  `lattice: 10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s saved`, and
+  `❖  10 tasks · 8 cached · 0 failed  4.20s · 2m 51s saved` in the live display.
+  It appears on any run with hits, not only a fully-cached one, and a run whose
+  hits saved nothing measurable does not mention it
+- The figure is task time, not wall clock. Every cache entry records how long the
+  run that wrote it took, and a hit adds that recorded duration back. Four cached
+  one-minute tasks that would have run in parallel therefore read as `4m 00s
+  saved`, where the wall clock would only have shown about a minute
+- Under a minute the saved figure is written like the elapsed time beside it,
+  `4.27s`. Past a minute it reads `4m 07s`, and past an hour `14h 22m`
+- New command: `lattice stats`. It reports the task time this repo's cache has
+  saved, the runs and hits behind that number, how much room the cache takes, and
+  the last seven days. A repo that has never run says so and exits 0
+- The record behind it is a ledger at `.lattice/cache/stats.jsonl`, one JSON
+  object appended per run. It is per-machine and already ignored by the
+  `.lattice/cache/` line `lattice init` writes. It lives with the cache so that it
+  follows a relocated `cacheDir`, which also means clearing the cache clears the
+  history. `lattice prune` and the leftover sweep leave it alone, and a line that
+  no longer parses costs that run's numbers and nothing else
+- A run appends nothing when it was told not to use the cache, or when it
+  scheduled no task at all
+- The banner under a fully-cached run reads `❖❖❖ FULL POWER`. It was
+  `❖❖❖ FULL CACHE`, which is the phrasing of a disk running out of room — the
+  opposite of what a run that skipped all its work just did. The raw stream's
+  marker line changed with it, from `lattice: full cache, nothing to run` to
+  `lattice: full power, nothing to run`. A CI job grepping for the old string has
+  to be updated. What triggers it has not changed: at least one task scheduled,
+  no failures, and a hit for every one
+- The `cacheHit` event carries `savedMs`, the recorded task time that hit
+  skipped, and a run's result carries the run's total as `savedMs`. The desktop
+  app's run bar reports the same saved figure
+
 ### A failure names its exit code, and the live display drops its trace lines — 2026-08-23
 
 - The live display no longer prints per-task trace lines. The dim

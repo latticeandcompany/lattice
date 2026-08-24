@@ -41,11 +41,20 @@ a script map without one of the tasks being run. The task is not run there and
 drops out of the graph. The warning fires on `--dry-run` too, and `--filter` does
 not narrow it. `references/troubleshooting.md` covers the fixes.
 
-When every task the run scheduled came back from cache, a `FULL CACHE` banner
+The summary line ends with the task time the run's cache hits skipped, on any run
+with hits: `lattice: 10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s saved`, or
+`❖  10 tasks · 8 cached · 0 failed  4.20s · 2m 51s saved` in the live display.
+The tail is appended rather than inserted, and omitted when the figure is zero.
+Each hit contributes the `durationMs` its cache entry recorded, so this is task
+time and not wall clock: four cached one-minute tasks that would have run in
+parallel read as `4m 00s saved`. Never describe it as time off the wall clock.
+
+When every task the run scheduled came back from cache, a `FULL POWER` banner
 follows the summary. In plain output the same condition prints
-`lattice: full cache, nothing to run`. It requires at least one task, zero
+`lattice: full power, nothing to run`. It requires at least one task, zero
 failures, and zero tasks that actually executed, so a filter matching nothing
-does not print it.
+does not print it. The string was `full cache` in earlier releases; a pipeline
+grepping for the old one needs updating.
 
 ## `lattice setup [OPTIONS] [WORKSPACES]...`
 
@@ -179,6 +188,56 @@ processes sharing one checkout would delete each other's cache writes.
 `prune` deletes files in whatever directory `settings.cacheDir` names, so that
 value is validated at load. It has to name a directory inside the repo, and it
 cannot be the repo root.
+
+## `lattice stats`
+
+Reports what the repo's cache has saved, read from the run ledger. No flags of
+its own — there is no `--json`. Needs a `lattice.json` at or above the working
+directory and errors the same way `prune` does without one. Exits `0` either way.
+
+```text
+❖ lattice  stats  since 2026-05-02
+
+  saved      3h 41m of task time
+  runs       412 · 2,904 of 3,390 tasks cached (86%)
+  cache      1.4 GB · 892 entries
+  last 7d    27m 04s saved across 38 runs
+```
+
+`saved` is every recorded run's saved figure added up, so task time and not wall
+clock. `runs` is recorded runs, then hits over scheduled tasks across all of
+them, with the share rounded to a whole percent; the percentage is omitted if no
+task was ever scheduled. `cache` measures the directory as it stands now — bytes
+and complete entries, counted the way `prune` counts, so an entry whose store
+never finished is not counted. `last 7d` is the same saved total and run count
+over the last seven days. The header date is the oldest run on record, and it is
+omitted when there is none.
+
+With an empty or absent ledger, the header carries no date:
+
+```text
+❖ lattice  stats
+
+  No runs recorded yet. Run a task and this fills in — every run appends one line.
+```
+
+The ledger is `stats.jsonl` in the cache directory, `.lattice/cache/stats.jsonl`
+by default. One JSON object per line, appended as each run ends:
+
+```text
+{"at":"2026-08-21T19:34:02.118904Z","total":6,"cached":6,"failed":0,"savedMs":6113,"elapsedMs":5}
+```
+
+- Appended only when the run could store to the cache and scheduled at least one
+  task. `--no-cache` records nothing; `--force` does record. A `--filter` that
+  matched no workspace records nothing.
+- Per-machine, never committed. The `.lattice/cache/` line `lattice init` writes
+  into `.gitignore` covers it.
+- Inside the cache directory on purpose: it follows a relocated
+  `settings.cacheDir`, and clearing the cache clears the history.
+- `prune` never touches it, in either the eviction pass or the leftover sweep.
+- A line that will not parse is skipped on read, costing that run's numbers and
+  nothing else. A ledger the run could not write is a note, not a failure.
 
 ## `lattice upgrade <VERSION>`
 

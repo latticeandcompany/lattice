@@ -612,3 +612,96 @@ fn an_unknown_workspace_key_indexes_the_entry() {
 			"unknown field `glob` in workspaces[1]",
 		));
 }
+
+/// A workspace whose `build` takes a measurable second, so the entry it writes
+/// records a duration a later hit can report as saved.
+fn slow_ws_repo(fx: &Fixture) {
+	fx.write("app/src/f.txt", "hello\n");
+	fx.config_from(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "app", "path": "app", "auto": false,
+      "scripts": { "build": @build@ } }
+  ],
+  "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } }
+}
+"#,
+		&[(
+			"build",
+			sh::all([
+				sh::mkdirs("dist"),
+				sh::sleep(1),
+				sh::write("dist/out.txt", "hi"),
+			]),
+		)],
+	);
+}
+
+#[test]
+fn a_fully_cached_run_reports_full_power_and_the_time_it_saved() {
+	let fx = Fixture::new();
+	slow_ws_repo(&fx);
+
+	// Cold run: nothing to save, and nothing to celebrate.
+	fx.lattice()
+		.args(["run", "build"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("saved").not())
+		.stdout(predicate::str::contains("full power").not());
+
+	// Warm run: the hit skipped the second the cold run spent.
+	fx.lattice()
+		.args(["run", "build"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("1 cached"))
+		.stdout(predicate::str::contains("saved"))
+		.stdout(predicate::str::contains("full power, nothing to run"))
+		// The old phrasing described a disk filling up. It must not come back.
+		.stdout(predicate::str::contains("full cache").not());
+}
+
+#[test]
+fn stats_adds_up_the_runs_the_ledger_recorded() {
+	let fx = Fixture::new();
+	slow_ws_repo(&fx);
+
+	// Nothing has run, so there is nothing to report and that is not an error.
+	fx.lattice()
+		.args(["stats"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("No runs recorded yet"));
+
+	fx.lattice().args(["run", "build"]).assert().success();
+	fx.lattice().args(["run", "build"]).assert().success();
+
+	// Two runs, two scheduled tasks, one of them a hit.
+	fx.lattice()
+		.args(["stats"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("saved"))
+		.stdout(predicate::str::contains("1 of 2 tasks cached (50%)"))
+		.stdout(predicate::str::contains("1 entry"));
+}
+
+#[test]
+fn a_run_that_stored_nothing_records_nothing() {
+	let fx = Fixture::new();
+	slow_ws_repo(&fx);
+
+	// --no-cache means this run neither reads nor writes the cache, so it has no
+	// business writing a ledger line either.
+	fx.lattice()
+		.args(["run", "build", "--no-cache"])
+		.assert()
+		.success();
+	fx.lattice()
+		.args(["stats"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("No runs recorded yet"));
+}

@@ -19,11 +19,32 @@ export const fmtSecs = (ms: number): string => {
 	return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`;
 };
 
+/**
+ * A stretch of saved time: `4.27s`, `4m 07s`, `14h 22m`.
+ *
+ * Under a minute this is `fmtSecs`, so it agrees with the elapsed time beside it.
+ * Past that it says minutes and hours instead of clock time — `14:22:00 saved`
+ * reads like a timestamp.
+ */
+export const fmtSpan = (ms: number): string => {
+	const total = Math.floor((ms + 500) / 1000);
+	if (total < 60) return fmtSecs(ms);
+
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const rest = total % 60;
+	const pad = (value: number) => String(value).padStart(2, '0');
+
+	return hours > 0 ? `${hours}h ${pad(minutes)}m` : `${minutes}m ${pad(rest)}s`;
+};
+
 /** The leading chunk of a cache key, which is all a person needs to compare two. */
 export const shortKey = (key: string): string => key.slice(0, 8);
 
 /**
- * `4 tasks, 1 cached, 0 failed, 0.39s` — the CLI's summary line, verbatim.
+ * `4 tasks, 1 cached, 0 failed, 0.39s` — the CLI's summary line, verbatim. A run
+ * whose hits saved measurable time carries the same tail the CLI adds:
+ * `4 tasks, 3 cached, 0 failed, 0.39s, 2m 51s saved`.
  *
  * The CLI does not singularize `tasks`, so neither does this. A one-task run reads
  * `1 tasks` in both places, which is wrong in both places and has to be fixed in
@@ -34,10 +55,17 @@ export const runSummary = (result: {
 	cached: number;
 	failed: number;
 	elapsedMs: number;
-}): string =>
-	`${result.total} tasks, ${result.cached} cached, ${result.failed} failed, ${fmtSecs(result.elapsedMs)}`;
+	savedMs: number;
+}): string => {
+	const saved = result.savedMs > 0 ? `, ${fmtSpan(result.savedMs)} saved` : '';
+	return `${result.total} tasks, ${result.cached} cached, ${result.failed} failed, ${fmtSecs(result.elapsedMs)}${saved}`;
+};
 
-/** A run where everything came back from cache is worth saying out loud. */
+/**
+ * A run where everything came back from cache is worth saying out loud. The CLI
+ * calls it full power; it deliberately does not call it a full cache, which is
+ * how a disk running out of room is described.
+ */
 export const isFullCache = (result: { total: number; cached: number; failed: number }): boolean =>
 	result.total > 0 && result.cached === result.total && result.failed === 0;
 

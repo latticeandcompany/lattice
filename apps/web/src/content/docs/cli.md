@@ -365,6 +365,68 @@ directory, and removes no directories. For that reason, Lattice requires
 `settings.cacheDir` to name a directory inside the repo and never the repo
 root.
 
+## `lattice stats`
+
+```text
+lattice stats
+```
+
+Reports what this repo's cache has done for it: task time saved, how many runs
+and hits it took, and how much room the cache uses. `stats` has no flags of its
+own, only the [global flags](#global-flags) below.
+
+```sh
+lattice stats
+```
+
+```text
+❖ lattice  stats  since 2026-05-02
+
+  saved      3h 41m of task time
+  runs       412 · 2,904 of 3,390 tasks cached (86%)
+  cache      1.4 GB · 892 entries
+  last 7d    27m 04s saved across 38 runs
+```
+
+| Line | What it counts |
+| --- | --- |
+| `saved` | Every recorded run's saved figure, added up. Task time, not wall clock |
+| `runs` | Recorded runs, then the cache hits and scheduled tasks across all of them, then the share as a percentage |
+| `cache` | The cache directory as it stands now — bytes on disk and complete entries — rather than anything historical |
+| `last 7d` | The same saved total and run count, over the last seven days |
+
+The date in the header is the oldest run still on record. The saved totals are
+task time, not wall clock: each hit contributes the time the run that wrote its
+entry spent, whether or not those tasks would have run at the same moment. See
+[Caching](/lattice/docs/caching).
+
+With nothing recorded, the header carries no date and one line follows it:
+
+```text
+❖ lattice  stats
+
+  No runs recorded yet. Run a task and this fills in — every run appends one line.
+```
+
+`stats` exits `0` either way.
+
+The record is `stats.jsonl` in the cache directory, so
+`.lattice/cache/stats.jsonl` unless `settings.cacheDir` moves it. One JSON
+object is appended per run:
+
+```json
+{ "at": "2026-05-02T14:03:11.482913Z", "total": 10, "cached": 8, "failed": 0, "savedMs": 171204, "elapsedMs": 4198 }
+```
+
+A run appends a line only when it could store to the cache and scheduled at
+least one task, so a `--no-cache` run records nothing. The file is per-machine
+and never committed, `lattice prune` leaves it alone, and clearing the cache
+clears the history with it. A line that no longer parses is skipped on read,
+which costs that run's numbers and nothing else.
+
+`stats` needs a `lattice.json` in the working directory or a parent, the same as
+`prune`, and fails the same way without one.
+
 ## `lattice upgrade`
 
 ```text

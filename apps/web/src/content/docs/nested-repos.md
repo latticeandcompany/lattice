@@ -174,8 +174,8 @@ inner runner executing:
 $ lattice run build
 frontend:build: cache hit [176b1a72]
 api:build: cache hit [25020aef]
-lattice: 2 tasks, 2 cached, 0 failed, 0.01s
-lattice: full cache, nothing to run
+lattice: 2 tasks, 2 cached, 0 failed, 0.01s, 1.44s saved
+lattice: full power, nothing to run
 ```
 
 Edit a file anywhere under `frontend`, say `packages/ui/src/index.js`, and both
@@ -225,7 +225,7 @@ api:serve: running
 api:serve: api serving:
 api:serve: module.exports = {"site":"site@1","button":"ui/button@1"};
 api:serve: done (0.01s)
-lattice: 3 tasks, 2 cached, 0 failed, 0.01s
+lattice: 3 tasks, 2 cached, 0 failed, 0.01s, 0.55s saved
 ```
 
 See [Selecting what runs](/lattice/docs/filtering).

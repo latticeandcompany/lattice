@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fmtSecs, isFullCache, runSummary, shortKey, shortenPath } from '../src/lib/format.ts';
+import {
+	fmtSecs,
+	fmtSpan,
+	isFullCache,
+	runSummary,
+	shortKey,
+	shortenPath,
+} from '../src/lib/format.ts';
 
 // Matched against the Rust fmt_secs, so the window and the terminal never disagree
 // about how long something took.
@@ -28,13 +35,37 @@ test('a key is shortened to the leading chunk', () => {
 // first, then here.
 test('the summary line matches the CLI, plural and all', () => {
 	assert.equal(
-		runSummary({ total: 4, cached: 1, failed: 0, elapsedMs: 390 }),
+		runSummary({ total: 4, cached: 1, failed: 0, elapsedMs: 390, savedMs: 0 }),
 		'4 tasks, 1 cached, 0 failed, 0.39s',
 	);
 	assert.equal(
-		runSummary({ total: 1, cached: 0, failed: 0, elapsedMs: 10 }),
+		runSummary({ total: 1, cached: 0, failed: 0, elapsedMs: 10, savedMs: 0 }),
 		'1 tasks, 0 cached, 0 failed, 0.01s',
 	);
+});
+
+test('a run with hits reports the task time they skipped', () => {
+	assert.equal(
+		runSummary({ total: 4, cached: 3, failed: 0, elapsedMs: 390, savedMs: 171_000 }),
+		'4 tasks, 3 cached, 0 failed, 0.39s, 2m 51s saved',
+	);
+});
+
+// A task that finished inside a millisecond saved nothing measurable, and a
+// trailing `0.00s saved` would be noise on every fast run.
+test('nothing measurable saved says nothing', () => {
+	assert.equal(
+		runSummary({ total: 1, cached: 1, failed: 0, elapsedMs: 2, savedMs: 0 }),
+		'1 tasks, 1 cached, 0 failed, 0.00s',
+	);
+});
+
+test('a saved span reads as minutes and hours past a minute', () => {
+	assert.equal(fmtSpan(4_266), '4.27s');
+	assert.equal(fmtSpan(60_000), '1m 00s');
+	assert.equal(fmtSpan(247_000), '4m 07s');
+	assert.equal(fmtSpan(3_600_000), '1h 00m');
+	assert.equal(fmtSpan(51_720_000), '14h 22m');
 });
 
 test('a full cache needs every task cached and none failed', () => {

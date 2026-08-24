@@ -163,6 +163,39 @@ number would be wrong on one of them, and being wrong in the direction of
 deleting your cache is worse than growing a directory you can see. Set a budget
 when you want one. Run [`lattice prune`](/lattice/docs/cli) to sweep by hand.
 
+## What the cache has saved you
+
+Every entry records how long the run that wrote it took, so a hit knows the task
+time it just skipped. A run with hits reports the total:
+
+```text
+lattice: 10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s saved
+```
+
+That is task time, not wall clock. Each hit adds the seconds its own run spent,
+whether or not those tasks would have run at the same moment, so the figure is a
+count of work not repeated rather than time back on your clock. The elapsed time
+in front of it is the clock. A run with nothing to report leaves the tail off.
+
+`lattice stats` adds those figures up across every run the repo has recorded:
+
+```text
+❖ lattice  stats  since 2026-05-02
+
+  saved      3h 41m of task time
+  runs       412 · 2,904 of 3,390 tasks cached (86%)
+  cache      1.4 GB · 892 entries
+  last 7d    27m 04s saved across 38 runs
+```
+
+The record behind it is a ledger at `.lattice/cache/stats.jsonl`, one line
+appended per run. It sits inside the cache directory deliberately: it is
+per-machine and never committed, the `.lattice/cache/` line `lattice init` puts
+in your `.gitignore` already covers it, it follows a relocated
+`settings.cacheDir` instead of being stranded beside the old one, and clearing
+the cache clears the history with it. A run that could not store — `--no-cache`,
+or a run that scheduled no task at all — appends nothing.
+
 ## Reading a miss
 
 Lattice hashes each part of the key separately and then hashes the parts
@@ -191,7 +224,7 @@ the outside. The key did not move; the entry it named is gone.
 When a run is nothing but hits, the summary says so:
 
 ```text
-lattice: full cache, nothing to run
+lattice: full power, nothing to run
 ```
 
 One miss, one failure, or one persistent task in the graph withholds it. See

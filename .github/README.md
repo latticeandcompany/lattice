@@ -121,8 +121,8 @@ lattice-cache:build: cache hit [941d68ea]
 lattice-workspace:build: cache hit [d9533b10]
 dagger:build: cache hit [eb6d4dc3]
 lattice-runner:build: cache hit [59afe0f7]
-lattice: 6 tasks, 6 cached, 0 failed, 0.03s
-lattice: full cache, nothing to run
+lattice: 6 tasks, 6 cached, 0 failed, 0.03s, 3.32s saved
+lattice: full power, nothing to run
 ```
 
 Both blocks are captured from this repo, which declares each of its crates as a
@@ -173,6 +173,10 @@ file and every task downstream of it runs again, and nothing else does.
 A stored result counts as a hit only when its metadata parses and the archive's
 sha256 matches the digest recorded when it was written, so a corrupt artifact is
 a miss and never a false hit.
+
+Every run appends what its hits skipped to a ledger kept beside the cache, and
+`lattice stats` adds those lines up. The figure is task time rather than wall
+clock: each hit contributes the time the run that wrote its entry spent.
 
 A workspace left on `auto` gets its tool from the evidence in its own directory:
 a declaration file such as `packageManager` or `rust-toolchain.toml`, or a

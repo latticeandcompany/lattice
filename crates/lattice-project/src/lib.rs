@@ -346,7 +346,7 @@ pub async fn run(opts: RunOptions<'_>) -> Result<RunOutcome> {
 mod tests {
 	use std::sync::Mutex;
 
-	use lattice_events::TaskEvent;
+	use lattice_events::{RunSummary, TaskEvent};
 
 	use super::*;
 
@@ -357,7 +357,7 @@ mod tests {
 		fn run_start(&self, _task: &str, _workspaces: usize) {}
 		fn event(&self, _ev: TaskEvent) {}
 		fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
-		fn run_summary(&self, _total: usize, _cached: usize, _failed: usize, _elapsed_ms: u64) {}
+		fn run_summary(&self, _summary: RunSummary) {}
 		fn note(&self, _msg: &str) {}
 		fn warn(&self, msg: &str) {
 			self.0.lock().unwrap().push(msg.to_string());
@@ -443,6 +443,7 @@ mod tests {
 			cached: 0,
 			failed: 0,
 			elapsed_ms: 1,
+			saved_ms: 0,
 		};
 		assert_eq!(RunOutcome::Completed { result }.exit_code(), 0);
 		assert_eq!(RunOutcome::Nothing.exit_code(), 0);

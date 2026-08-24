@@ -36,10 +36,10 @@ has run at this point.
 no lattice.json found in this directory or any parent. Run `lattice init` to create one
 ```
 
-Raised by `lattice run`, `lattice setup`, `lattice prune`, and `lattice upgrade`
-when the walk up from the working directory reaches the filesystem root without
-finding a `lattice.json`. All four print the same text. Fatal. Run `lattice
-init`, or change into the repo.
+Raised by `lattice run`, `lattice setup`, `lattice prune`, `lattice stats`, and
+`lattice upgrade` when the walk up from the working directory reaches the
+filesystem root without finding a `lattice.json`. All five print the same text.
+Fatal. Run `lattice init`, or change into the repo.
 
 ### Config file unreadable or unparseable
 

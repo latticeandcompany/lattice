@@ -537,11 +537,11 @@ else
   fail "no cache-format directory is created" "found a v<n> directory in $PROD/.lattice/cache"
 fi
 
-# Full cache: a run where every scheduled task came back from cache is called
+# Full power: a run where every scheduled task came back from cache is called
 # out; a partial hit and a run that scheduled nothing are not.
 lat "$PROD" run build ; t_ok "run build (whole repo, prime) exits 0"
 lat "$PROD" run build ; t_ok "run build (whole repo, all cached) exits 0"
-t_has "a fully-cached run is called out" "full cache"
+t_has "a fully-cached run is called out" "full power"
 
 # `docs` depends on nothing, so busting it leaves every other task a hit.
 w "$PROD/docs/src/page.src" "docs page v1
@@ -549,10 +549,20 @@ w "$PROD/docs/src/page.src" "docs page v1
 lat "$PROD" run build ; t_ok "run build after leaf edit exits 0"
 t_has   "the busted leaf re-ran"                "docs:build"
 t_has   "its siblings still hit the cache"      "cache hit"
-t_hasnt "a partial hit is not a full cache"     "full cache"
-lat "$PROD" run build ; t_has "the leaf edit settles back to a full cache" "full cache"
+t_hasnt "a partial hit is not called full power" "full power"
+lat "$PROD" run build ; t_has "the leaf edit settles back to full power" "full power"
 
-lat "$PROD" run build --filter nonexistent ; t_hasnt "a run that scheduled nothing is not a full cache" "full cache"
+lat "$PROD" run build --filter nonexistent ; t_hasnt "a run that scheduled nothing is not full power" "full power"
+
+# Saved time. A hit skips the task time the run that wrote the entry spent, so a
+# run with hits reports it and `lattice stats` adds those runs up. The ledger is
+# per-repo and lives with the cache.
+lat "$PROD" run build ; t_has "a fully-cached run reports the time it saved" "saved"
+t_file "$PROD/.lattice/cache/stats.jsonl" "the run is recorded in the ledger"
+lat "$PROD" stats ; t_ok "stats exits 0"
+t_has "stats reports a saved total"        "saved"
+t_has "stats reports what it counted"      "runs"
+t_has "stats reports the cache it measured" "cache"
 
 # A change in a dependency has to reach the tasks that depend on it. `core` is
 # upstream of the apps, so editing it must re-run them too — serving a dependent
@@ -562,7 +572,7 @@ w "$PROD/libs/core/src/lib.src" "core source v3 DEPENDENCY CHANGED
 "
 lat "$PROD" run build ; t_ok "run build after a dependency edit exits 0"
 t_has   "the edited dependency re-ran"            "core:build"
-t_hasnt "its dependents did not hit the cache"    "full cache"
+t_hasnt "its dependents did not hit the cache"    "full power"
 
 # Two workspaces must never share an entry. Every cache key names its workspace,
 # so a hit in one can't restore the other's artifacts.

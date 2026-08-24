@@ -263,8 +263,10 @@ Decide whether the subcommand needs the version-pin handover (extend
 ### Adding a cache backend
 
 Implement the `CacheStore` trait from `lattice-cache`: `lookup`, `store`,
-`restore`, `prune`, `touch`, and the two default-bodied fingerprint methods
-`record_fingerprint` and `last_fingerprint`. `LocalStore` is the only
+`restore`, `prune`, and `touch`. Five more have default bodies —
+`record_fingerprint` and `last_fingerprint` for miss explanations, and
+`record_run`, `recorded_runs`, and `usage` for what `lattice stats` reports — so
+a backend that has no answer for them still compiles. `LocalStore` is the only
 implementation today. The trait exists so a future remote backend can slot in
 without `lattice-runner` changing, and `execute_tasks` holds its store behind
 `Arc<dyn CacheStore>`.
