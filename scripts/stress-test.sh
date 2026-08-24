@@ -882,7 +882,19 @@ cat > "$FAILREPO/lattice.json" <<'JSON'
 }
 JSON
 lat "$FAILREPO" run build ; t_bad "fail-fast: failing task yields non-zero exit"
-t_has "fail-fast surfaces the failure" "FAILED"
+t_has "fail-fast surfaces the failure with the exit code" "FAILED (code 3)"
+
+# The live display is the surface the trace lines used to leak into: the full
+# hash and the miss reason printed dim above a task whose own line already said
+# both. Only a pty renders it, so only a pty can assert they are gone.
+if [ "$PTY_OK" = "1" ]; then
+  ptylat "" "$FAILREPO" run build
+  t_has   "the live display names the exit code"        "FAILED (code 3)"
+  t_hasnt "the live display carries no hash trace"      "hash "
+  t_hasnt "the live display carries no cache-miss trace" "cache miss"
+else
+  say "  ${YEL}skip${RST} live-display assertions (no \`script\` to allocate a pty)"
+fi
 
 # Output was read as text a line at a time, and a byte that would not decode
 # read as end-of-output — so a tool that printed one stray byte lost everything

@@ -438,7 +438,9 @@ fn keep_going_runs_independent_and_reports_failure() {
 		.failure()
 		.stdout(predicate::str::contains("good:build: GOOD-RAN"))
 		.stdout(predicate::str::contains("1 failed"))
-		.stderr(predicate::str::contains("bad:build: FAILED"));
+		.stderr(predicate::str::contains(
+			"bad:build: FAILED (code 1) after ",
+		));
 }
 
 /// The typo case: `persistent: true` on a command that exits straight away. The

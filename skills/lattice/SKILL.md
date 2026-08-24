@@ -196,9 +196,18 @@ lattice run build -v                   # raw workspace:task: lines, not the live
 ```
 
 `-v` (`--verbose`) is worth passing whenever you need to read or grep the
-output. It prints each task's hash and cache outcome as plain lines. Output is
-already in that mode when stdout is not a terminal or `CI` is set to any value,
-so a command run programmatically usually gets it for free.
+output. It prints each task's hash and cache outcome as plain lines, and it is
+the only place those lines appear. The live display prints no per-task trace.
+Output is already in raw mode when stdout is not a terminal or `CI` is set to any
+value, so a command run programmatically usually gets it for free.
+
+A failed task's line reads `web:build: FAILED (code 1) after 1.02s`, and the
+task's captured output follows it, in the order the task produced it across both
+streams. The line drops the detail it does not have. A task a signal killed, and
+one stopped for overrunning its `timeout`, have no exit code, so the line reads
+`FAILED after 30.00s`. A task that failed before its command started has
+neither, so the line reads `FAILED`. Its cache key would not compute, or its
+shell would not spawn.
 
 `--concurrency 0` is accepted and means the default. `--no-cache` neither reads
 nor writes; `--force` skips the read and still writes, which is what replaces a

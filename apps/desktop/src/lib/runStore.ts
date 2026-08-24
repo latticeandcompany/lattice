@@ -321,7 +321,11 @@ class RunStore {
 							this.patch(taskKey, { state: 'done', durationMs: event.durationMs });
 							break;
 						case 'failed':
-							this.patch(taskKey, { state: 'failed' });
+							this.patch(taskKey, {
+								state: 'failed',
+								exitCode: event.code,
+								durationMs: event.durationMs ?? undefined,
+							});
 							break;
 						case 'persistentExited':
 							this.patch(taskKey, {

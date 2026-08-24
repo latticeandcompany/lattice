@@ -61,8 +61,20 @@ export const statusView = (
 				announcement: `${label} done${took}`,
 			};
 		}
-		case 'failed':
-			return { icon: 'bi-x-lg', label: 'failed', announcement: `${label} failed` };
+		case 'failed': {
+			// The same detail the CLI's failure line carries. Neither part is
+			// there for a task that failed before its command ever ran.
+			const how =
+				snapshot.exitCode === null || snapshot.exitCode === undefined
+					? ''
+					: ` (code ${snapshot.exitCode})`;
+			const took = snapshot.durationMs === undefined ? '' : ` ${fmtSecs(snapshot.durationMs)}`;
+			return {
+				icon: 'bi-x-lg',
+				label: `failed${how}${took}`,
+				announcement: `${label} failed${how}`,
+			};
+		}
 		case 'skipped':
 			return {
 				icon: 'bi-slash-circle',

@@ -124,7 +124,8 @@ an older release has to drop it.
 ## A task never hits the cache
 
 Something feeding the hash changes every run. Run with `-v`; the miss line names
-the component that moved:
+the component that moved. `-v` is the only place these two lines print. The live
+display carries no per-task trace:
 
 ```text
 lattice: web:build: hash a1b2c3d4e5f6a7b8
@@ -356,9 +357,11 @@ A *non-persistent* task that never finishes is a hang, not a design. Give the
 tasks that can hang a `timeout`:
 
 ```text
-app:slow: FAILED
+app:slow: FAILED after 1.00s
 app:slow: timed out after 1s and was stopped
 ```
+
+A timeout leaves no exit code, so that line carries the duration alone.
 
 Ctrl-C, or a `SIGTERM`, ends any run. Every running task's process group gets
 `SIGTERM`, five seconds, then `SIGKILL`. The process exits `130` with:
@@ -375,7 +378,7 @@ branches on the exit code.
 That is the default. The first failing task ends the run:
 
 ```text
-app:build: FAILED
+app:build: FAILED (code 1) after 0.31s
 Error: task 'app:build' failed, stopping the run
 ```
 
@@ -383,10 +386,16 @@ Error: task 'app:build' failed, stopping the run
 on the failure report as skipped, and the run still exits `1`:
 
 ```text
-a:build: FAILED
+a:build: FAILED (code 1) after 0.01s
 a:test: skipped (dependency failed)
 lattice: 3 tasks, 0 cached, 1 failed, 0.02s
 ```
+
+A `FAILED` line carries the command's exit code and how long it ran. A task
+killed by a signal, and a task stopped by its `timeout`, have no code, so the
+line reads `FAILED after 30.00s`. A task that failed before its command started
+has neither, so the line reads `FAILED`. The captured output prints under it, in
+arrival order across both streams.
 
 ## `--filter` ran more or fewer workspaces than expected
 

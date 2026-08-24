@@ -172,7 +172,9 @@ workspace, and said nothing about the override you wrote.
 
 ### A task misses the cache every run
 
-Run it with `-v` and read the two lines Lattice prints per task:
+Run it with `-v` and read the two lines Lattice prints per task. `-v` is the
+only place they appear. The live display leaves them out, because a hit shows its
+key on the task's own line and a miss shows up as the task running.
 
 ```text
 lattice: ui:build: hash 26be571e2ec773a7
@@ -383,6 +385,14 @@ Pass `-v`, set `settings.loquacious` to `true` in `lattice.json`, or set `CI` in
 the environment. Any one of them gives you the raw stream, which is also the
 readable form when you are piping `lattice run` into something else.
 
+### The live display shows no hash or cache-miss lines
+
+It never prints them. The trace belongs to the raw stream under `-v`, where a
+`hash` line and a `cache miss:` line print per task. In the live display a hit
+already carries its abbreviated key on the task's own line, and a miss shows up
+as the task running, so a dim copy above it said the same thing twice. Earlier
+releases printed the trace in both modes.
+
 ### Color shows up where it should not
 
 Color follows the terminal, not the output mode. A `-v` run at your shell has
@@ -447,6 +457,16 @@ not. Every task the interrupt stopped printed `FAILED` above a summary reporting
 Nothing prints the word interrupted. The exit code is the only signal, and it is
 `130`, so read `$?` rather than the summary. A build that genuinely broke exits
 `1`. See [Run Lattice in CI](/lattice/docs/continuous-integration).
+
+### A `FAILED` line says less than you expected
+
+`ui:build: FAILED (code 3) after 1.02s` is the full form. The command ran, and
+`code 3` is what it returned. Two kinds of failure cannot fill that in. A task a
+signal killed, and a task Lattice stopped for overrunning its `timeout`, have no
+exit code, so the line reads `ui:build: FAILED after 30.00s`. A task that failed
+before its command ever started has neither a code nor a run to time, so the
+line is the bare word `FAILED`. Its cache key would not compute, or its shell
+would not spawn, and the captured output under the line says which.
 
 ### `--filter` ran more or fewer workspaces than you expected
 

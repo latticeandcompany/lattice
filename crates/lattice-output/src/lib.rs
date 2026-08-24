@@ -396,6 +396,16 @@ fn exit_desc(code: Option<i32>) -> String {
 	}
 }
 
+/// What a failure line can say about how the task ended: its exit code when the
+/// command produced one, and how long it ran when it ran at all. A task that
+/// failed before it ever spawned — a key that would not compute, a shell that
+/// would not start — has neither, so the line stays bare rather than claiming a
+/// `0.00s` run. A command that failed inside a millisecond did run, and still
+/// reports `0.00s`.
+fn fail_detail(code: Option<i32>, duration_ms: Option<u64>) -> (Option<String>, Option<String>) {
+	(code.map(|c| format!("code {c}")), duration_ms.map(fmt_secs))
+}
+
 /// Under a minute, seconds with two decimals (`1.23s`). Past that, clock form —
 /// `4:07` for four minutes, `1:12:30` once it crosses an hour — because
 /// `4350.00s` is not a number anyone can read.
@@ -501,8 +511,22 @@ impl Reporter for CiReporter {
 					fmt_secs(duration_ms)
 				);
 			}
-			TaskEvent::Failed { workspace, task } => {
-				eprintln!("{}: FAILED", self.label(&workspace, &task));
+			TaskEvent::Failed {
+				workspace,
+				task,
+				code,
+				duration_ms,
+			} => {
+				let label = self.label(&workspace, &task);
+				let mut line = format!("{}: FAILED", label);
+				let (desc, secs) = fail_detail(code, duration_ms);
+				if let Some(desc) = desc {
+					line.push_str(&format!(" ({desc})"));
+				}
+				if let Some(secs) = secs {
+					line.push_str(&format!(" after {secs}"));
+				}
+				eprintln!("{}", line);
 			}
 			TaskEvent::PersistentExited {
 				workspace,
@@ -684,12 +708,9 @@ impl Reporter for InteractiveReporter {
 				);
 				self.settle(&workspace, &task, line);
 			}
-			TaskEvent::CacheMiss {
-				workspace,
-				task,
-				miss,
-			} => {
-				self.task_note(&workspace, &task, &miss.describe());
+			TaskEvent::CacheMiss { .. } => {
+				// Why a task missed is a trace line, and the TUI does not carry
+				// them: the miss is already visible as the task running.
 			}
 			TaskEvent::Output { .. } => {
 				// Child output is buffered by the runner and surfaced only on
@@ -708,13 +729,26 @@ impl Reporter for InteractiveReporter {
 				);
 				self.settle(&workspace, &task, line);
 			}
-			TaskEvent::Failed { workspace, task } => {
-				let line = format!(
+			TaskEvent::Failed {
+				workspace,
+				task,
+				code,
+				duration_ms,
+			} => {
+				let (desc, secs) = fail_detail(code, duration_ms);
+				let marker = match desc {
+					Some(desc) => format!("FAILED ({desc})"),
+					None => "FAILED".to_string(),
+				};
+				let mut line = format!(
 					"{} {} {}",
 					style("✗").red().bold(),
 					self.label(&workspace, &task),
-					style("FAILED").red()
+					style(marker).red()
 				);
+				if let Some(secs) = secs {
+					line.push_str(&format!(" {}", style(secs).dim()));
+				}
 				self.settle(&workspace, &task, line);
 			}
 			TaskEvent::PersistentExited {
@@ -766,9 +800,9 @@ impl Reporter for InteractiveReporter {
 			style(format!("{}:{} output", workspace, task)).bold()
 		);
 		self.mp.suspend(|| {
-			eprintln!("{}", header);
+			eprintln!("\n{}", header);
 			for (_stderr, line) in captured {
-				eprintln!("    {}", style(line).dim());
+				eprintln!("    {}", line);
 			}
 		})
 	}
@@ -800,6 +834,13 @@ impl Reporter for InteractiveReporter {
 	fn note(&self, msg: &str) {
 		self.mp.println(style(msg).dim().to_string()).ok();
 	}
+
+	/// Dropped. A per-task note is a trace line — the cache key, why a task
+	/// missed — and the TUI's own line for that task already says everything it
+	/// needs to: a hit prints its abbreviated key, and a miss prints as the task
+	/// running. Repeating the full hash above it says the same thing twice. `-v`
+	/// is where the trace lives.
+	fn task_note(&self, _workspace: &str, _task: &str, _msg: &str) {}
 
 	fn warn(&self, msg: &str) {
 		self.mp
@@ -962,6 +1003,8 @@ mod tests {
 		r.event(TaskEvent::Failed {
 			workspace: ws.clone(),
 			task: task.clone(),
+			code: Some(1),
+			duration_ms: Some(12),
 		});
 
 		let events = r.events.lock().unwrap();
@@ -977,6 +1020,39 @@ mod tests {
 		));
 		assert!(matches!(events[3], TaskEvent::CacheHit { .. }));
 		assert!(matches!(events[4], TaskEvent::Failed { .. }));
+	}
+
+	#[test]
+	fn a_failure_that_ran_reports_its_code_and_its_time() {
+		assert_eq!(
+			fail_detail(Some(101), Some(1840)),
+			(Some("code 101".to_string()), Some("1.84s".to_string()))
+		);
+	}
+
+	#[test]
+	fn a_failure_before_the_child_ran_claims_neither() {
+		// A key that would not compute, or a shell that would not spawn. There is
+		// no exit code, and no run to time.
+		assert_eq!(fail_detail(None, None), (None, None));
+	}
+
+	#[test]
+	fn a_command_that_failed_instantly_still_reports_a_time() {
+		// It ran. A fast enough runner measures no milliseconds, and dropping the
+		// time there would read as a task that never started.
+		assert_eq!(
+			fail_detail(Some(1), Some(0)),
+			(Some("code 1".to_string()), Some("0.00s".to_string()))
+		);
+	}
+
+	#[test]
+	fn a_task_stopped_by_a_signal_still_reports_how_long_it_ran() {
+		assert_eq!(
+			fail_detail(None, Some(30_000)),
+			(None, Some("30.00s".to_string()))
+		);
 	}
 
 	#[test]

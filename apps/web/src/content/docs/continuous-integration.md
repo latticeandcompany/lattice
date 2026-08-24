@@ -114,7 +114,10 @@ lattice run lint test build --continue
 
 The run still exits `1` if anything failed. The summary line carries the failed
 count, and each task skipped because a prerequisite failed prints
-`skipped (dependency failed)` under `-v`.
+`skipped (dependency failed)` under `-v`. Each failure prints one line naming
+the exit code and how long the task ran, `api:test: FAILED (code 1) after
+12.40s`, with the task's captured output under it. A search for `FAILED` in the
+log finds both the tasks that broke and what they printed.
 
 ## Cap parallelism on a small runner
 
@@ -143,8 +146,10 @@ hang a `timeout`:
 
 An overrun stops the task's whole process group and counts as a failure, so the
 run ends the way any other failure ends and later steps still get to save the
-cache. `timeout` accepts `ms`, `s`, `m`, and `h`, or a bare integer of seconds.
-A `persistent` task ignores it.
+cache. A task stopped that way has no exit code, so its line names only the
+time, `api:test: FAILED after 10:00`. The captured output ends with `timed out
+after 10m and was stopped`. `timeout` accepts `ms`, `s`, `m`, and `h`, or a bare
+integer of seconds. A `persistent` task ignores it.
 
 ## Persist the cache between runs
 

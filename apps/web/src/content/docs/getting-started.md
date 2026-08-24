@@ -192,7 +192,8 @@ Your hash may differ from this one. It covers the platform, the shell, and the
 Lattice version as well as the task's inputs. `app/dist/index.txt` now exists.
 
 `-v` prints this plain line-by-line log. Drop it and a terminal gets a live
-display of the same run instead. See [Output and
+display of the same run instead. That display leaves out the `hash` and `cache
+miss` lines, which only `-v` prints. See [Output and
 logging](/lattice/docs/output-modes).
 
 ## Run it again
