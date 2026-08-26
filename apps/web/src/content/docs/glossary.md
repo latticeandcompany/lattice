@@ -7,9 +7,6 @@ order: 8
 
 # Glossary
 
-One entry per term, alphabetically. Each entry links to the page that covers the
-term in depth.
-
 ### Ambiguity
 
 The state in which Lattice cannot name a single [driver](#driver) for an `auto`

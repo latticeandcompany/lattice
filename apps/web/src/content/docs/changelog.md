@@ -1,17 +1,13 @@
 ---
 title: Changelog
-description: Release history for Lattice, reproduced from the repo's CHANGELOG.md.
+description: Release history for Lattice.
 group: Reference
 order: 9
 ---
 
 # Changelog
 
-Newest first. `CHANGELOG.md` in the repo is the source of record, and everything
-below is reproduced from it word for word. This page leaves out the entries and
-paragraphs that only affect the repo, and adds nothing but the links into the
-docs. For the full history, read
-[`CHANGELOG.md`](https://github.com/latticeandcompany/lattice/blob/HEAD/CHANGELOG.md).
+Newest first.
 
 Versions follow semver: a major bump means a breaking change to the
 `lattice.json` schema or the CLI surface. The running Lattice version is one of

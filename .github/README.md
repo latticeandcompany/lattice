@@ -26,7 +26,7 @@ inputs have not changed does not run again.
 
 It runs each workspace with the tool that workspace already uses. Its 34 drivers
 cover JavaScript, Rust, Python, Go, Ruby, the JVM, .NET, Swift, PHP, Elixir,
-Dart, Haskell, and four language-agnostic task runners. Lattice pins each tool's
+Dart, Haskell, and two language-agnostic task runners. Lattice pins each tool's
 version, so every machine builds against the same one.
 
 ## Install
@@ -241,61 +241,14 @@ npx skills add latticeandcompany/lattice
 See [for-agents](https://latticeandcompany.github.io/lattice/for-agents) for what
 the skill contains and how to load it for a single session instead.
 
-## Development
-
-Building Lattice needs Rust 1.88 or later with `rustfmt` and `clippy`. `apps/web`
-and `apps/desktop` also need Node 26 or later.
-
-```bash
-git clone https://github.com/latticeandcompany/lattice
-cd lattice
-cargo build
-cargo test --workspace
-```
-
-| Command | Description |
-|---|---|
-| `cargo build` | Debug build of every crate |
-| `cargo test --workspace` | Unit, integration, and end-to-end tests |
-| `cargo fmt --all --check` | Formatting gate |
-| `cargo clippy --all-targets --all-features -- -D warnings` | Lint gate |
-| `scripts/stress-test.sh` | Full hermetic end-to-end suite |
-| `scripts/dev-link.sh` | Point `./.lattice/bin/lattice` at your dev build |
-
-The repo root has its own `lattice.json`, so `.lattice/bin/lattice run build`
-drives the crates, the docs site, and the desktop app. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Architecture
-
-Cargo workspace:
-
-```text
-crates/
-  lattice/              → CLI: commands, flags, schema emission
-  lattice-config/       → lattice.json types, loading, validation
-  lattice-workspace/    → workspace discovery, driver detection, toolchains
-  dagger/               → task dependency graph and scheduler
-  lattice-cache/        → content-addressed output cache
-  lattice-runner/       → async task executor
-  lattice-events/       → run events and the reporter trait that consumes them
-  lattice-output/       → terminal output and the interactive run UI
-  lattice-project/      → one opened repo, and the pipeline both front ends run
-  lattice-testkit/      → portable shell commands for Lattice's own tests
-apps/
-  web/                  → Astro documentation site
-  desktop/              → Tauri desktop app
-examples/
-  polyglot/             → several languages, mixed detected and declared workspaces
-  nested-repo/          → a subtree with its own task runner, wrapped as one workspace
-```
-
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) first. It covers setup, branching, the
-testing requirements, and the AI-disclosure rule. Participation is governed by
-the [Code of Conduct](CODE_OF_CONDUCT.md). Vulnerabilities go through
-[SECURITY.md](SECURITY.md), never a public issue.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. It covers setup, the build and
+test commands, branching, the testing requirements, and the AI-disclosure rule.
+The crate layout is in
+[architecture](https://latticeandcompany.github.io/lattice/docs/architecture).
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+Vulnerabilities go through [SECURITY.md](SECURITY.md), never a public issue.
 
 ## License
 
