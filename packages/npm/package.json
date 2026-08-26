@@ -1,0 +1,60 @@
+{
+	"name": "@latticeandcompany/lattice",
+	"version": "1.0.0-beta-3",
+	"description": "A high-performance, local toolchain for managing monorepos.",
+	"license": "ISC",
+	"author": "Ryan Mullin",
+	"homepage": "https://latticeandcompany.github.io/lattice",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/latticeandcompany/lattice.git",
+		"directory": "packages/npm"
+	},
+	"bugs": {
+		"url": "https://github.com/latticeandcompany/lattice/issues"
+	},
+	"keywords": [
+		"monorepo",
+		"build",
+		"task-runner",
+		"cache",
+		"toolchain",
+		"lattice"
+	],
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"bin": {
+		"lattice": "./dist/cli.mjs"
+	},
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.mjs",
+			"require": "./dist/index.cjs"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist/index.d.ts",
+		"dist/index.mjs",
+		"dist/index.cjs",
+		"dist/cli.mjs",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"build": "rolldown -c && tsc -p tsconfig.build.json",
+		"check": "tsc --noEmit",
+		"test": "npm run build && node --test \"tests/**/*.test.ts\""
+	},
+	"devDependencies": {
+		"@types/node": "^26.2.0",
+		"rolldown": "^1.2.6",
+		"typescript": "^7.0.2"
+	}
+}
