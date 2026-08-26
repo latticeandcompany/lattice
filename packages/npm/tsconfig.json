@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"target": "es2023",
+		"lib": ["ES2023"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"types": ["node"],
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true,
+		"rewriteRelativeImportExtensions": true,
+		"noEmit": true,
+		"skipLibCheck": true
+	},
+	"include": ["src", "tests", "rolldown.config.ts"]
+}

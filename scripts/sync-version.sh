@@ -146,6 +146,16 @@ if set_json_field apps/web/package-lock.json version 2; then
 	note "apps/web/package-lock.json" "version = $version (both root entries)"
 fi
 
+# The desktop app. check-versions.sh has always asserted this one, but nothing here
+# ever wrote it, so a bump left the tree failing its own check.
+if set_json_field apps/desktop/package.json version; then
+	note "apps/desktop/package.json" "version = $version"
+fi
+
+if set_json_field apps/desktop/package-lock.json version 2; then
+	note "apps/desktop/package-lock.json" "version = $version (both root entries)"
+fi
+
 # `lattice init` writes CARGO_PKG_VERSION into new configs, so the example
 # configs should read as if this release generated them. Their apps' own
 # package.json versions are the examples' versions, not ours, and stay put.
@@ -154,6 +164,18 @@ while IFS= read -r file; do
 		note "$file" "latticeVersion = $version"
 	fi
 done < <(find examples -name lattice.json -not -path "*/node_modules/*")
+
+# The npm wrapper. Its optionalDependencies pin the same version, but they are
+# generated at publish time by scripts/stage.mjs rather than committed — they name
+# packages that do not exist on the registry until the release goes out, and `npm ci`
+# refuses a lockfile it cannot resolve. So only these two need writing.
+if set_json_field packages/npm/package.json version; then
+	note "packages/npm/package.json" "version = $version"
+fi
+
+if set_json_field packages/npm/package-lock.json version 2; then
+	note "packages/npm/package-lock.json" "version = $version (both root entries)"
+fi
 
 # The config sample in the README is the first lattice.json most people read.
 if sed "s|\(\"latticeVersion\"[[:space:]]*:[[:space:]]*\"\)[^\"]*\"|\1$version\"|" \

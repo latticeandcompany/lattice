@@ -58,9 +58,27 @@ curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh -s -- --n
 config, and asks first when it has a terminal to ask on. Set
 `$env:LATTICE_NO_PATH = '1'` to skip that.
 
-To uninstall, delete `.lattice` and drop the `PATH` entry: the `lattice` line
-from the shell config the installer names when it finishes, or the
-`.lattice\bin` entry in your user `PATH` on Windows.
+Or through the package manager the repo already uses:
+
+```sh
+npm install --save-dev @latticeandcompany/lattice@next
+```
+
+npm unpacks one prebuilt binary, the same one the release publishes, and puts
+`lattice` on your package scripts. There is no download step and no `postinstall`
+script. Lattice is pre-1.0, so the `next` tag is the current beta and `latest`
+lags it.
+
+An npm install is the one that does not follow a `latticeVersion` pin. Your
+lockfile has already chosen the version, so Lattice runs what npm installed and
+warns when the two disagree.
+
+[Installation](https://latticeandcompany.github.io/lattice/docs/installation)
+covers all three in full.
+
+To uninstall a script install, delete `.lattice` and drop the `PATH` entry: the
+`lattice` line from the shell config the installer names when it finishes, or
+the `.lattice\bin` entry in your user `PATH` on Windows.
 
 If the repo already has a `lattice.json`, you get the version its
 `latticeVersion` names. `lattice upgrade 0.2.0` moves the repo to another version
