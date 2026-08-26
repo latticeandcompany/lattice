@@ -165,6 +165,18 @@ while IFS= read -r file; do
 	fi
 done < <(find examples -name lattice.json -not -path "*/node_modules/*")
 
+# The npm wrapper. Its optionalDependencies pin the same version, but they are
+# generated at publish time by scripts/stage.mjs rather than committed — they name
+# packages that do not exist on the registry until the release goes out, and `npm ci`
+# refuses a lockfile it cannot resolve. So only these two need writing.
+if set_json_field packages/npm/package.json version; then
+	note "packages/npm/package.json" "version = $version"
+fi
+
+if set_json_field packages/npm/package-lock.json version 2; then
+	note "packages/npm/package-lock.json" "version = $version (both root entries)"
+fi
+
 # The config sample in the README is the first lattice.json most people read.
 if sed "s|\(\"latticeVersion\"[[:space:]]*:[[:space:]]*\"\)[^\"]*\"|\1$version\"|" \
 	.github/README.md | apply .github/README.md; then

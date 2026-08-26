@@ -186,6 +186,78 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: node scripts/checkBrandTokens.mjs
 
+  # The npm wrapper. Nothing here needs a Rust toolchain: the package never builds a
+  # binary, it only finds one, so the whole job is Node.
+  #
+  # The staging step is the important half. publish-npm.sh is otherwise first run on
+  # the day of a release, against a real tag, by hand — a broken stage.mjs would be
+  # discovered at the worst possible moment. Fed fake archives shaped the way
+  # release.yml names real ones, it proves the seven packages assemble and that npm
+  # accepts every manifest.
+  npm:
+    name: npm wrapper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: packages/npm/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: packages/npm
+
+      - name: Type-check
+        run: npm run check
+        working-directory: packages/npm
+
+      # `test` builds first, so this covers the bundle as well as the sources.
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: npm test
+        working-directory: packages/npm
+
+      - name: The seven packages assemble
+        if: ${{ !cancelled() }}
+        working-directory: packages/npm
+        run: |
+          set -eu
+          version="$(node -p "require('./package.json').version")"
+          work="$(mktemp -d)"
+          mkdir -p "$work/extracted" "$work/out"
+
+          # One fake binary per target, named the way release.yml names its archives.
+          node --input-type=module -e '
+            const { ALL_TARGETS } = await import("./src/target.ts");
+            const { mkdirSync, writeFileSync } = await import("node:fs");
+            const [version, out] = process.argv.slice(1);
+            for (const target of ALL_TARGETS) {
+              const dir = `${out}/lattice-${version}-${target.triple}`;
+              mkdirSync(dir, { recursive: true });
+              writeFileSync(`${dir}/${target.exe}`, "not a real binary\n");
+            }
+          ' "$version" "$work/extracted"
+
+          staged="$(node scripts/stage.mjs "$version" "$work/extracted" "$work/out")"
+          count="$(echo "$staged" | wc -l)"
+          [ "$count" -eq 7 ] || { echo "staged $count packages, expected 7" >&2; exit 1; }
+
+          # The wrapper must come last: it depends on the other six at this exact
+          # version, and publishing it first would leave it installable and broken.
+          echo "$staged" | tail -n1 | grep -qE '/lattice$' ||
+            { echo 'stage.mjs did not print the wrapper last' >&2; exit 1; }
+
+          # npm pack is the only thing that actually reads a manifest the way the
+          # registry will.
+          echo "$staged" | while IFS= read -r dir; do
+            (cd "$dir" && npm pack --dry-run)
+          done
+
+          rm -rf "$work"
+
   # Windows has two installers because it has two kinds of shell, and neither had
   # ever been run by anything. They are served a real archive from a local HTTP
   # server rather than github.com: no published release to depend on, no
