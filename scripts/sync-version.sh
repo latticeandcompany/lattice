@@ -146,6 +146,16 @@ if set_json_field apps/web/package-lock.json version 2; then
 	note "apps/web/package-lock.json" "version = $version (both root entries)"
 fi
 
+# The desktop app. check-versions.sh has always asserted this one, but nothing here
+# ever wrote it, so a bump left the tree failing its own check.
+if set_json_field apps/desktop/package.json version; then
+	note "apps/desktop/package.json" "version = $version"
+fi
+
+if set_json_field apps/desktop/package-lock.json version 2; then
+	note "apps/desktop/package-lock.json" "version = $version (both root entries)"
+fi
+
 # `lattice init` writes CARGO_PKG_VERSION into new configs, so the example
 # configs should read as if this release generated them. Their apps' own
 # package.json versions are the examples' versions, not ours, and stay put.
