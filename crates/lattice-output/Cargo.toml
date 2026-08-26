@@ -17,3 +17,8 @@ description = "Lattice terminal output formatting"
 lattice-events = { path = "../lattice-events" }
 console = "0.16"
 indicatif = "0.18"
+
+[dev-dependencies]
+# `in_memory` ships InMemoryTerm, a vt100-backed terminal the reporter can draw
+# into, so a test can read the screen a run actually leaves behind.
+indicatif = { version = "0.18", features = ["in_memory"] }

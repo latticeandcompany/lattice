@@ -687,8 +687,14 @@ impl Default for InteractiveReporter {
 
 impl InteractiveReporter {
 	pub fn new() -> Self {
+		Self::with_multi(MultiProgress::new())
+	}
+
+	/// Draw into a caller-supplied [`MultiProgress`], so a test can hand it a
+	/// terminal it can read back.
+	fn with_multi(mp: MultiProgress) -> Self {
 		Self {
-			mp: MultiProgress::new(),
+			mp,
 			bars: Mutex::new(HashMap::new()),
 		}
 	}
@@ -715,15 +721,23 @@ impl InteractiveReporter {
 	}
 
 	/// Retire a running bar with a final static line (glyph + label + detail).
+	///
+	/// The line is printed above the live region rather than left behind as a
+	/// finished bar. [`MultiProgress::clear`] at the end of the run erases every
+	/// line the multi-progress still owns, so a bar that settles in place is
+	/// wiped when the run ends — and only the tasks that ran ever have a bar,
+	/// since a cache hit returns before `Started`. Leaving them as bars left the
+	/// finished screen listing the cache hits and nothing else.
 	fn settle(&self, workspace: &str, task: &str, line: String) {
 		let key = (workspace.to_string(), task.to_string());
 		let bar = self.bars.lock().unwrap().remove(&key);
 		if let Some(bar) = bar {
-			bar.set_style(ProgressStyle::with_template("{msg}").unwrap());
-			bar.finish_with_message(line);
-		} else {
-			self.mp.println(line).ok();
+			// Finish before removing: the steady tick is a thread that runs until
+			// the bar is finished.
+			bar.finish_and_clear();
+			self.mp.remove(&bar);
 		}
+		self.mp.println(line).ok();
 	}
 }
 
@@ -938,6 +952,7 @@ impl Reporter for InteractiveReporter {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use indicatif::{InMemoryTerm, ProgressDrawTarget};
 
 	#[test]
 	fn not_a_tty_is_raw() {
@@ -1043,6 +1058,123 @@ mod tests {
 				"warn: web:build: cache lookup failed".to_string(),
 			]
 		);
+	}
+
+	/// Drive a run through the interactive reporter and return the screen it
+	/// leaves behind, rendered by a real vt100 emulator.
+	fn interactive_screen(drive: impl FnOnce(&InteractiveReporter)) -> String {
+		let term = InMemoryTerm::new(24, 100);
+		let mp =
+			MultiProgress::with_draw_target(ProgressDrawTarget::term_like(Box::new(term.clone())));
+		let reporter = InteractiveReporter::with_multi(mp);
+		drive(&reporter);
+		reporter.finish();
+		term.contents()
+	}
+
+	/// The bug this guards: a task that ran settled into its progress bar, and
+	/// the `MultiProgress::clear` at the end of the run erased every bar it still
+	/// owned. A cache hit never has a bar — it returns before `Started` — so it
+	/// survived, and the finished screen listed the hits and nothing else.
+	#[test]
+	fn the_finished_screen_keeps_the_tasks_that_ran_not_only_the_cache_hits() {
+		let screen = interactive_screen(|r| {
+			r.run_start("build", 2);
+			r.event(TaskEvent::CacheHit {
+				workspace: "alpha".into(),
+				task: "build".into(),
+				key: "41b4a85a9c".into(),
+				saved_ms: 20,
+			});
+			r.event(TaskEvent::Started {
+				workspace: "bravo".into(),
+				task: "build".into(),
+			});
+			r.event(TaskEvent::Finished {
+				workspace: "bravo".into(),
+				task: "build".into(),
+				duration_ms: 20,
+			});
+			r.run_summary(RunSummary {
+				total: 2,
+				cached: 1,
+				failed: 0,
+				elapsed_ms: 30,
+				saved_ms: 20,
+			});
+		});
+
+		assert!(
+			screen.contains("alpha:build"),
+			"cache hit missing:\n{screen}"
+		);
+		assert!(
+			screen.contains("bravo:build"),
+			"the task that ran was erased when the run ended:\n{screen}"
+		);
+		assert!(screen.contains("2 tasks"), "summary missing:\n{screen}");
+	}
+
+	/// Every terminal state a task can settle into goes through the same path, so
+	/// a failure and a skip have to survive the end of the run as well.
+	#[test]
+	fn the_finished_screen_keeps_failed_and_skipped_tasks() {
+		let screen = interactive_screen(|r| {
+			r.run_start("build", 2);
+			r.event(TaskEvent::Started {
+				workspace: "lib".into(),
+				task: "build".into(),
+			});
+			r.event(TaskEvent::Failed {
+				workspace: "lib".into(),
+				task: "build".into(),
+				code: Some(3),
+				duration_ms: Some(10),
+			});
+			r.event(TaskEvent::Skipped {
+				workspace: "app".into(),
+				task: "build".into(),
+				reason: "dependency failed".into(),
+			});
+		});
+
+		assert!(screen.contains("lib:build"), "failure missing:\n{screen}");
+		assert!(screen.contains("app:build"), "skip missing:\n{screen}");
+	}
+
+	/// The live region is only ever the tasks still running: a settled line moves
+	/// above it, so five finished tasks do not each leave a bar behind.
+	#[test]
+	fn settled_tasks_leave_the_live_region() {
+		let screen = interactive_screen(|r| {
+			r.run_start("build", 3);
+			for name in ["one", "two", "three"] {
+				r.event(TaskEvent::Started {
+					workspace: name.into(),
+					task: "build".into(),
+				});
+			}
+			for name in ["one", "two"] {
+				r.event(TaskEvent::Finished {
+					workspace: name.into(),
+					task: "build".into(),
+					duration_ms: 5,
+				});
+			}
+			// `three` is still running, so its bar is cleared with the live region
+			// and the two settled lines are all that remain.
+			r.run_summary(RunSummary {
+				total: 3,
+				cached: 0,
+				failed: 0,
+				elapsed_ms: 5,
+				saved_ms: 0,
+			});
+		});
+
+		assert_eq!(screen.matches("one:build").count(), 1, "{screen}");
+		assert_eq!(screen.matches("two:build").count(), 1, "{screen}");
+		assert!(!screen.contains("three:build"), "{screen}");
 	}
 
 	fn _assert_send_sync<T: Send + Sync>() {}
