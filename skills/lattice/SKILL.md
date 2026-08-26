@@ -181,6 +181,15 @@ Every item here is something models invent. None of it parses.
   or absent, the run halts with a fix printed. Do not work around a halt by
   guessing a command into `scripts` before asking. See
   [When detection halts](#when-detection-halts).
+- **An npm-installed binary ignores `latticeVersion`.** Lattice also ships as
+  `@latticeandcompany/lattice` on npm, a wrapper whose six platform packages each
+  carry one prebuilt binary. Only a binary under `.lattice/bin` switches to the
+  pinned version. One in `node_modules`, one from `cargo install`, and one built
+  from source all run as they are. The wrapper prints a warning to stderr when the
+  pin and the installed version disagree, then runs anyway, so a repo can pin one
+  version and run another. If a run behaves like a different release, compare
+  `lattice version` with `latticeVersion` before anything else, and bring the two
+  into line rather than silencing the warning.
 
 ## Running tasks
 

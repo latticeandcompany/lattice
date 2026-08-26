@@ -20,6 +20,40 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Lattice installs from npm — 2026-08-26
+
+- New package: `@latticeandcompany/lattice`. `npm install --save-dev
+  @latticeandcompany/lattice` puts `lattice` on a repo's package scripts and
+  `npx lattice` on the command line. `pnpm`, `yarn`, and `bun` take the same
+  package name. Pre-1.0 releases publish under the `next` dist-tag, so a bare
+  install keeps resolving to the last stable one
+- The binary is not in that package. Six sibling packages carry one build each,
+  one per published target, and the wrapper depends on all six as
+  `optionalDependencies`. Each declares the `os`, `cpu`, and `libc` it is for, so
+  a package manager unpacks only the one that matches. The install downloads
+  nothing beyond those packages and runs no `postinstall` script, so it works
+  offline, from a lockfile, behind a proxy, and under `--ignore-scripts`
+- The binaries are the ones the release already publishes.
+  `scripts/publish-npm.sh` downloads a released tag's archives, checks them
+  against the checksums file published beside them, and repackages those exact
+  bytes
+- An npm install does not follow a `latticeVersion` pin, the one way it differs
+  from `install.sh`. A binary under `.lattice/bin` switches to the pinned
+  version. A binary in `node_modules` cannot, because the lockfile has already
+  chosen the version. Lattice runs the installed version and prints the mismatch
+  on stderr. `settings.versionCheck`, `--no-version-check`, and
+  `LATTICE_NO_VERSION_CHECK` silence that warning, and they silence the binary's
+  own version check the same way
+- The package exports `binaryPath()`, the resolved path to the binary, so another
+  tool can spawn Lattice directly instead of running `npx`. It exports `version`
+  beside it. `import` and `require()` both reach the two
+- Linux x86_64 gets both a glibc and a musl package. Package managers honor npm's
+  `libc` field inconsistently, so the wrapper also chooses between the two at
+  runtime. Windows on ARM gets the x86_64 build, which is the fallback the
+  installers already make. Lattice publishes no build for Linux, aarch64 (musl),
+  and says so rather than guessing
+- See [Installation](/lattice/docs/installation)
+
 ## A cached run reports the time it saved, and `lattice stats` adds it up — 2026-08-23
 
 - The run summary reports the task time the run's cache hits skipped:
