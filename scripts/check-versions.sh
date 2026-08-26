@@ -12,6 +12,11 @@
 #   lattice.json           engines.cargo    (must match rust-version)
 #   .github/README.md      the Rust badge   (must match rust-version)
 #
+# ...plus the prose and fenced samples in the docs, the README, and the agent
+# skill, which quote the version in shapes no key addresses. The files that must
+# track it are listed in scripts/version-doc-files.txt; sync-version.sh rewrites
+# exactly that list, and section 5 asserts both directions of it.
+#
 # Usage: scripts/check-versions.sh [expected-version]
 # With an argument, every version must also equal it — that is how release.yml
 # refuses to build a tag that disagrees with the tree.
@@ -118,7 +123,51 @@ for f in .github/README.md .github/CONTRIBUTING.md apps/web/src/content/docs/get
 	if grep -q "1\.75" "$f" 2>/dev/null; then bad "$f still claims Rust 1.75"; fi
 done
 
-# --- 5. optional pin against a tag -------------------------------------------
+# --- 5. the docs, the README, and the skill quote the current version --------
+# scripts/version-doc-files.txt is the one list of files whose version
+# references must track the release; sync-version.sh rewrites exactly these.
+# Nothing asserted them before, which is how the README's sample lattice.json
+# sat a release behind without anything noticing.
+list='scripts/version-doc-files.txt'
+if [ ! -f "$list" ]; then
+	bad "$list is missing"
+else
+	stale=''
+	while IFS= read -r file; do
+		case "$file" in ''|\#*) continue ;; esac
+		if [ ! -f "$file" ]; then
+			stale="$stale $file(absent)"
+		elif ! text "$file" | grep -qF "$CARGO_VERSION"; then
+			stale="$stale $file"
+		fi
+	done <"$list"
+
+	if [ -z "$stale" ]; then
+		good "docs, README, and skill quote $CARGO_VERSION"
+	else
+		bad "no mention of $CARGO_VERSION in:$stale — run \`scripts/sync-version.sh $CARGO_VERSION\`"
+	fi
+
+	# A page that grows a version sample but never joins the list would drift
+	# silently on the next bump. Changelogs are exempt on purpose: an entry names
+	# the version that shipped it, which is history, not a current reference.
+	unlisted=''
+	for f in .github/README.md apps/web/src/content/docs/*.md \
+		skills/*/*.md skills/*/*/*.md; do
+		case "$f" in *changelog.md|*CHANGELOG.md) continue ;; esac
+		[ -f "$f" ] || continue
+		text "$f" | grep -qF "$CARGO_VERSION" || continue
+		grep -qxF "$f" "$list" || unlisted="$unlisted $f"
+	done
+
+	if [ -z "$unlisted" ]; then
+		good "every page naming $CARGO_VERSION is in $list"
+	else
+		bad "name $CARGO_VERSION but are not in $list:$unlisted"
+	fi
+fi
+
+# --- 6. optional pin against a tag -------------------------------------------
 if [ "$#" -ge 1 ]; then
 	if [ "$CARGO_VERSION" = "$1" ]; then good "matches expected version $1"
 	else bad "tree says $CARGO_VERSION, expected $1"; fi

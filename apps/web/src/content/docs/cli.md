@@ -7,10 +7,7 @@ order: 2
 
 # CLI reference
 
-Every subcommand, every argument, every flag, and every exit code. The
-descriptions in the tables below are the text `lattice <command> --help` prints.
-Where this page and `--help` disagree, `--help` is right and this page is a docs
-bug.
+Every subcommand, every argument, every flag, and every exit code.
 
 Sections appear in the order the commands appear in `lattice --help`. For the
 reasoning behind a flag rather than its definition, see [Selecting what
@@ -31,7 +28,7 @@ The splash is the ASCII rosette, then a version line and the tagline. Without
 the rosette art, those two lines are:
 
 ```text
-❖ lattice  1.0.0-beta-2  (aarch64)
+❖ lattice  1.0.0-beta-3  (aarch64)
 A high-performance, local toolchain for managing monorepos.
 ```
 
@@ -512,7 +509,7 @@ lattice version --json
 ```
 
 ```json
-{"version":"1.0.0-beta-2","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.0.0-beta-3","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 ## Global flags

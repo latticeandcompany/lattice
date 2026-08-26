@@ -279,7 +279,7 @@ lattice --version
 ```
 
 ```text
-lattice 1.0.0-beta-2
+lattice 1.0.0-beta-3
 ```
 
 `lattice version` prints the same version under the mark. For a
@@ -290,7 +290,7 @@ lattice version --json
 ```
 
 ```json
-{"version":"1.0.0-beta-2","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.0.0-beta-3","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 Running `lattice` with no arguments prints the mark and points you at `--help`.

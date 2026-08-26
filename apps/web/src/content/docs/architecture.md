@@ -8,7 +8,7 @@ order: 7
 # Architecture
 
 This page is for people about to change Lattice itself. It names crates,
-modules, and types directly. The rest of the docs do not.
+modules, and types directly.
 
 ## Crate layout
 

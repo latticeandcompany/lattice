@@ -268,7 +268,7 @@ Prints a completion script to stdout. `<SHELL>` is one of `bash`, `elvish`,
 Prints the splash, or a single-line JSON object with `--json`:
 
 ```json
-{"version":"1.0.0-beta-2","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.0.0-beta-3","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 `upgrade`, `version`, and `completions` run as the binary that was invoked and

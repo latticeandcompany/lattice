@@ -1,0 +1,40 @@
+# Files whose Lattice version references must track the released version.
+#
+# Read by both scripts/sync-version.sh (which rewrites them) and
+# scripts/check-versions.sh (which asserts they are current). One list, so the
+# two can never disagree about what needs updating.
+#
+# These files quote the version in prose and in fenced samples, in shapes no
+# single key can address: `"latticeVersion": "<v>"`, the `lattice version`
+# banner, `lattice version --json` output, and SKILL.md's `compatibility:` line.
+# sync-version.sh therefore replaces the literal outgoing version wherever it
+# appears in these files rather than matching a pattern.
+#
+# That literal replacement is deliberate, and it is what keeps the illustrative
+# versions safe. Several pages quote versions that must never move:
+# upgrading.md walks through 0.1.0 -> 0.2.0 and includes a fictional
+# `"latticeVersion": "0.2.0"`, errors.md pins a fictional 0.4.0 to show a
+# mismatch, and the README says `lattice upgrade 0.2.0`. A key-anchored or
+# semver-anchored rewrite would corrupt all of them. Matching only the outgoing
+# version cannot.
+#
+# Do not add a changelog here. Changelog entries name the version that shipped
+# them and are history, not a current-version reference.
+#
+# Adding a version sample to a new page? Add the page here. check-versions.sh
+# fails on any docs or skills page that names the current version and is absent
+# from this list, so it will tell you.
+
+.github/README.md
+
+apps/web/src/content/docs/cli.md
+apps/web/src/content/docs/configuration.md
+apps/web/src/content/docs/errors.md
+apps/web/src/content/docs/getting-started.md
+apps/web/src/content/docs/installation.md
+apps/web/src/content/docs/multi-language-monorepo.md
+apps/web/src/content/docs/nested-repos.md
+
+skills/lattice/SKILL.md
+skills/lattice/references/cli.md
+skills/lattice/references/configuration.md

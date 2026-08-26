@@ -5,7 +5,8 @@
 # (which this script overwrites) and the MSRV (which it only propagates — bump
 # rust-version by hand, then run this to spread it). The crates inherit
 # `version.workspace = true` and the binary reads CARGO_PKG_VERSION, so the only
-# hand-written copies are the ones listed below.
+# hand-written copies are the ones listed below, plus the docs, README, and skill
+# files named in scripts/version-doc-files.txt.
 #
 # Usage: scripts/sync-version.sh <version>
 # Example: scripts/sync-version.sh 0.2.0
@@ -177,10 +178,31 @@ if set_json_field packages/npm/package-lock.json version 2; then
 	note "packages/npm/package-lock.json" "version = $version (both root entries)"
 fi
 
-# The config sample in the README is the first lattice.json most people read.
-if sed "s|\(\"latticeVersion\"[[:space:]]*:[[:space:]]*\"\)[^\"]*\"|\1$version\"|" \
-	.github/README.md | apply .github/README.md; then
-	note ".github/README.md" "sample latticeVersion = $version"
+# The docs, the README, and the agent skill quote the version in prose and in
+# fenced samples: `"latticeVersion": "<v>"`, the `lattice version` banner, the
+# `--json` output, SKILL.md's `compatibility:` line. No single key addresses
+# them, so replace the outgoing version literally wherever it appears in the
+# files scripts/version-doc-files.txt lists.
+#
+# Literal is the whole point. upgrading.md walks through 0.1.0 -> 0.2.0 and
+# includes a fictional `"latticeVersion": "0.2.0"`; errors.md pins a fictional
+# 0.4.0 to show a mismatch; the README says `lattice upgrade 0.2.0`. Anchoring
+# on the key or on a semver shape would rewrite those too. Matching only
+# "$current" cannot touch a version that was never the current one.
+if [ "$current" = "$version" ]; then
+	echo "  (docs already at $version — nothing to rewrite)"
+else
+	# Escape the regex metacharacters a semver can hold. Only '.' and '+' occur
+	# in practice, but a pre-release suffix is nearly free-form.
+	current_re="$(printf '%s' "$current" | sed 's/[.[\*^$()+?{|]/\\&/g')"
+	while IFS= read -r file; do
+		case "$file" in ''|\#*) continue ;; esac
+		[ -f "$file" ] || { echo "  MISSING  $file (listed but not on disk)" >&2; continue; }
+
+		if sed "s|$current_re|$version|g" "$file" | apply "$file"; then
+			note "$file" "version references = $version"
+		fi
+	done <"$root/scripts/version-doc-files.txt"
 fi
 
 # Nothing writes a version badge: check-versions.sh asserts the hardcoded one

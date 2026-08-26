@@ -16,6 +16,45 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Every version reference updates from one list — 2026-08-26
+
+- `scripts/version-doc-files.txt` is a new list of the files whose version
+  references have to track the release: the README, seven docs pages, and the
+  three agent-skill files. `scripts/sync-version.sh` rewrites exactly that list
+  and `scripts/check-versions.sh` asserts it, so the two cannot disagree about
+  what needs updating
+- The sync replaces the outgoing version literally rather than matching a
+  pattern. Several pages quote versions that must never move: `upgrading.md`
+  walks through 0.1.0 to 0.2.0 and includes a fictional `"latticeVersion":
+  "0.2.0"`, `errors.md` pins a fictional 0.4.0 to show a mismatch, and the README
+  says `lattice upgrade 0.2.0`. Anchoring on the `latticeVersion` key or on a
+  semver shape would have rewritten all of them
+- Previously only the README's sample `latticeVersion` was written, by a
+  key-anchored `sed`, and nothing asserted it. That is how it came to sit a
+  release behind: the docs, the skill, and the README all still said
+  `1.0.0-beta-2`. They now say `1.0.0-beta-3`
+- The check runs both directions. A listed file that does not name the current
+  version fails and names the script to run. A docs or skills page that names the
+  current version and is not on the list also fails, so a page that grows a
+  version sample is caught when it is written rather than at the next bump.
+  Changelogs are exempt: an entry names the version that shipped it
+- CI already runs `check-versions.sh`, so both assertions gate every pull request
+  and every tag
+
+### The docs stop explaining how the docs get made — 2026-08-26
+
+- The changelog page opened by naming `CHANGELOG.md` as the source of record and
+  describing which entries it reproduced. The CLI reference said that where it
+  and `--help` disagreed, the page was a docs bug. The glossary said it was
+  alphabetical. All deleted, along with a line of docs policy in the
+  architecture page
+- The README lost `## Development` and `## Architecture`. Both repeated content
+  that `CONTRIBUTING.md` and the architecture page carry in fuller form, and the
+  crate tree had to be hand-synced against the workspace
+- The README said Lattice's drivers cover twelve languages "and four
+  language-agnostic task runners". Two are: `just` and `task`. `turbo` and `nx`
+  belong to the Node ecosystem
+
 ### Lattice installs from npm — 2026-08-26
 
 - New package: `@latticeandcompany/lattice`. `npm install --save-dev
