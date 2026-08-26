@@ -86,7 +86,7 @@ key from an earlier release, or a note under a key of your own, has to drop it.
 ## `latticeVersion`
 
 ```json
-{ "latticeVersion": "1.0.0-beta-2" }
+{ "latticeVersion": "1.0.0-beta-3" }
 ```
 
 | Field | Type | Required | Default |
@@ -534,7 +534,7 @@ A repo with a Node app, a Rust service, and a Python library:
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0-beta-2",
+  "latticeVersion": "1.0.0-beta-3",
   "workspaces": [
     { "name": "web", "path": "apps/web", "engines": { "node": ">=20.0.0" } },
     {

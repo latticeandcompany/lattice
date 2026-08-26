@@ -368,7 +368,7 @@ is spawned.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0-beta-2",
+  "latticeVersion": "1.0.0-beta-3",
   "workspaces": [
     { "name": "web", "path": "apps/web", "engines": { "node": ">=20.0.0" } },
     { "name": "api", "path": "services/api", "dependsOn": ["shared"] },

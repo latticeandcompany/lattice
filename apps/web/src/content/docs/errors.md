@@ -1167,7 +1167,7 @@ rather than a symlink, and the message is `failed to copy <from> to <to>`.
 
 ```text
 this repo pins lattice 0.4.0. That version is not installed, and Lattice could not download it.
-Run with --no-version-check to use lattice 1.0.0-beta-2 instead
+Run with --no-version-check to use lattice 1.0.0-beta-3 instead
 ```
 
 A binary Lattice installed under `.lattice/bin` hands the invocation to the

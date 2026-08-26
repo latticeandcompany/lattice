@@ -153,7 +153,7 @@ it is a real shell command that you can also run by hand.
 
 ```json
 {
-  "latticeVersion": "1.0.0-beta-2",
+  "latticeVersion": "1.0.0-beta-3",
   "workspaces": [
     { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } },
     { "name": "api", "path": "services/api", "engines": { "go": ">=1.22" } },

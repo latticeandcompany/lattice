@@ -28,7 +28,7 @@ The splash is the ASCII rosette, then a version line and the tagline. Without
 the rosette art, those two lines are:
 
 ```text
-❖ lattice  1.0.0-beta-2  (aarch64)
+❖ lattice  1.0.0-beta-3  (aarch64)
 A high-performance, local toolchain for managing monorepos.
 ```
 
@@ -509,7 +509,7 @@ lattice version --json
 ```
 
 ```json
-{"version":"1.0.0-beta-2","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.0.0-beta-3","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 ## Global flags
