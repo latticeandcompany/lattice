@@ -2,6 +2,8 @@
 import Layout from '../layouts/Layout.astro';
 import Rosette from '../components/rosette.tsx';
 import DownloadPicker from '../components/downloadPicker.tsx';
+import DesktopWindow from '../components/desktopWindow.tsx';
+import DesktopGraph from '../components/desktopGraph.tsx';
 import { platforms, downloadUrl } from '../lib/desktop.ts';
 import { licenseUrl, releasesUrl } from '../lib/nav.ts';
 import { withBase } from '../lib/base.ts';
@@ -25,7 +27,7 @@ const capabilities: Capability[] = [
 		body: 'Every workspace in the repo, with the tasks it can run. Lattice names the tool it picked for each one, so a workspace headed for the wrong driver shows up before you start it.',
 	},
 	{
-		title: 'Watch the graph fill in',
+		title: 'Visualize your dependency graph',
 		body: 'The graph is drawn in dependency order and fills in as your build moves through it, so you can see where a run stopped. Click any task to isolate it with everything it depends on and everything that depends on it.',
 	},
 	{
@@ -82,21 +84,38 @@ const firstLaunch = [
 
 			<DownloadPicker client:load />
 		</div>
+
+		{/* client:only, not client:visible: the app's store hooks read through
+		    useSyncExternalStore with no server snapshot, because nothing inside Tauri
+		    ever server-renders. The reserved height keeps the fold from jumping when
+		    the island mounts. */}
+		<div class="mx-auto mt-5 desktop-window-slot" style="max-width: 72rem;">
+			<DesktopWindow client:only="react" />
+		</div>
 	</section>
 
+	{/* The graph is drawn by the app's own pipeline and fed by the same run as the
+	    window above, so it fills in beside the four claims that describe it. It sticks
+	    while they scroll because all four are about the thing it is drawing. */}
 	<section class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
-		<div class="mx-auto" style="max-width: 52rem;">
-			{
-				capabilities.map((capability) => (
-					<article class="capability">
-						<h2 class="capability__title">{capability.title}</h2>
-						<p class="capability__body">{capability.body}</p>
-						{capability.sample && (
-							<pre class="capability__sample"><code>{capability.sample}</code></pre>
-						)}
-					</article>
-				))
-			}
+		<div class="mx-auto capabilities" style="max-width: 76rem;">
+			<div class="capabilities__graph">
+				<DesktopGraph client:only="react" />
+			</div>
+
+			<div>
+				{
+					capabilities.map((capability) => (
+						<article class="capability">
+							<h2 class="capability__title">{capability.title}</h2>
+							<p class="capability__body">{capability.body}</p>
+							{capability.sample && (
+								<pre class="capability__sample"><code>{capability.sample}</code></pre>
+							)}
+						</article>
+					))
+				}
+			</div>
 		</div>
 	</section>
 
@@ -207,6 +226,73 @@ const firstLaunch = [
 </Layout>
 
 <style>
+	/* The frame the app's task list sits in on this page. Everything inside it is the
+	   app's own components; this is only the frame. Clipped at the bottom because the
+	   run continues past the fold, which is why it is the hero rather than a picture
+	   beside one. The rules are global for the same reason the picker's are below:
+	   Astro's scoping does not reach into a React island. */
+	.capabilities {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 2.5rem;
+	}
+	@media (min-width: 62em) {
+		.capabilities {
+			grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+			gap: 3.5rem;
+		}
+		.capabilities__graph {
+			position: sticky;
+			top: 2rem;
+			align-self: start;
+		}
+	}
+	.capabilities__graph {
+		min-width: 0;
+		min-height: 22rem;
+	}
+
+	.desktop-window-slot {
+		min-height: 30rem;
+	}
+	:global(.desktop-window) {
+		position: relative;
+		max-height: 30rem;
+		border: 1px solid var(--border);
+		border-radius: 12px 12px 0 0;
+		background: var(--surface);
+		overflow: hidden;
+		box-shadow: 0 32px 70px -40px rgba(2, 13, 12, 0.45);
+	}
+	:global(.desktop-window__bar) {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		padding: 0.65rem 1rem;
+		border-bottom: 1px solid var(--border-subtle);
+		background: var(--surface-2);
+		font-size: 0.9rem;
+	}
+	:global(.desktop-window__body) {
+		padding: 1rem 1rem 0;
+	}
+	:global(.desktop-window__body .card:last-child) {
+		margin-bottom: 0;
+	}
+	:global(.desktop-window__fade) {
+		position: absolute;
+		inset: auto 0 0;
+		height: 9rem;
+		background: linear-gradient(
+			to bottom,
+			transparent,
+			color-mix(in srgb, var(--surface) 70%, transparent) 45%,
+			var(--surface) 92%
+		);
+		pointer-events: none;
+	}
+
 	.desktop-hero {
 		padding-top: clamp(3.5rem, 10vh, 6rem);
 		padding-bottom: clamp(3rem, 8vh, 5rem);

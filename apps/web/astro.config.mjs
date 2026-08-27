@@ -14,5 +14,11 @@ export default defineConfig({
 	integrations: [react(), sitemap(), mdx()],
 	vite: {
 		plugins: [tailwindcss()],
+		// The /desktop hero renders the desktop app's own components from source rather
+		// than copies of them, so the dev server has to be allowed to read outside this
+		// project, and React has to resolve to this project's single copy — apps/desktop
+		// keeps its own node_modules, and two Reacts means the hooks throw.
+		resolve: { dedupe: ['react', 'react-dom'] },
+		server: { fs: { allow: ['..'] } },
 	},
 });
