@@ -221,6 +221,29 @@ pub fn stubborn_background(secs: u64) -> String {
 	format!("(trap '' TERM; sleep {secs}) & sleep {secs}")
 }
 
+/// A command that leaves behind a background process in a process group of its
+/// own, still holding the task's stdout.
+///
+/// `set -m` is what puts the job in its own group, and it has to run under a
+/// shell that will turn job control on without a controlling terminal. The
+/// runner spawns `sh -c`, and `/bin/sh` is dash on Debian and Ubuntu, which
+/// answers `set -m` with `can't access tty; job control turned off` and leaves
+/// the background job in the same group as everything else. The test then ran
+/// against a leftover the kill did reach, and asserted a warning that had no
+/// reason to fire. Naming bash is what keeps the escape real on both platforms;
+/// it is assumed present, which is true of every runner this is tested on.
+///
+/// The escape is the whole point: a leftover inside the task's group is reached
+/// by the runner's kill, so it proves nothing about the case where the pipe
+/// outlives every process the runner can name. `tauri dev` starting its
+/// `beforeDevCommand` in a fresh group is the shape this stands in for.
+///
+/// Unix only, for the reason [`stubborn_background`] gives.
+#[cfg(unix)]
+pub fn escaped_background(secs: u64) -> String {
+	format!("bash -c 'set -m; sleep {secs} & sleep {secs}'")
+}
+
 /// A command that prints `text`, then a byte that is not valid UTF-8, then
 /// `after` — each on its own line.
 ///

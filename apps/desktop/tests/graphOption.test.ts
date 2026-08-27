@@ -131,13 +131,26 @@ test('a tooltip for an unknown node is empty rather than broken', () => {
 	assert.equal(tooltipHtml(null, dump, new Map()), '');
 });
 
-test('every encoding the graph uses is in the legend', () => {
-	// A shape or an opacity needs a key as much as a hue would.
-	assert.ok(LEGEND.length >= 6);
-	const text = LEGEND.map((entry) => entry.label).join(' ');
-	for (const word of ['cache hit', 'persistent', 'dependency', 'failed']) {
+test('the legend names the states and stays short enough to read', () => {
+	// A key long enough to need reading is one nobody reads, so it covers the states
+	// a node can be in and leaves the rest to the arrows and the tooltip.
+	assert.ok(LEGEND.length <= 4);
+	const text = LEGEND.map((entry) => entry.label).join(' ').toLowerCase();
+	for (const word of ['ran', 'cache hit', 'failed', 'persistent']) {
 		assert.ok(text.includes(word), `the legend never mentions ${word}`);
 	}
+	for (const entry of LEGEND) {
+		assert.ok(entry.icon.startsWith('bi-'), `${entry.label} has no glyph`);
+	}
+});
+
+test('an empty tooltip carries no surface with it', () => {
+	// ECharts shows its tooltip container whether or not the formatter returned
+	// anything, so a panel drawn by the container appears as a bare rectangle over
+	// the canvas the moment the pointer is on an edge rather than a node.
+	assert.equal(tooltipHtml({ id: 'nope' }, dump, new Map()), '');
+	const real = tooltipHtml({ id: 'api:build' }, dump, new Map());
+	assert.ok(real.startsWith('<div class="card'), 'the panel is the formatter\'s own markup');
 });
 
 test('a done node takes the highest contrast fill', () => {

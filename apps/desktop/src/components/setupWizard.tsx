@@ -93,12 +93,12 @@ const SetupWizard = () => {
 	if (!pendingRoot) {
 		return (
 			<div className="app-main__scroll">
-				<div className="empty-state">
+				<div className="d-flex flex-column align-items-center justify-content-center gap-3 text-center text-body-secondary py-5">
 					<i className="bi bi-folder2-open fs-1" aria-hidden="true" />
-					<h1 className="h4 fw-bold" style={{ color: 'var(--text)' }}>
+					<h1 className="h4 fw-bold text-body">
 						Open a project to get started
 					</h1>
-					<p style={{ maxWidth: '28rem' }}>
+					<p className="tw:max-w-[28rem]">
 						Choose a directory. If it holds a lattice.json, Lattice opens the project. If it does
 						not, Lattice scans for workspaces and proposes one.
 					</p>
@@ -112,13 +112,13 @@ const SetupWizard = () => {
 
 	return (
 		<div className="app-main__scroll">
-			<div className="app-main__inner" style={{ maxWidth: '48rem' }}>
-				<h1 className="fw-bold mb-4" style={{ fontSize: '2rem', letterSpacing: '-0.02em' }}>
+			<div className="app-main__inner tw:max-w-[48rem]">
+				<h1 className="fw-bold mb-4 tw:text-[2rem] tw:tracking-[-0.02em]">
 					Set up this project
 				</h1>
 
 				{error && (
-					<div className="notice notice--bad mb-3">
+					<div className="alert alert-danger d-flex align-items-start gap-2 mb-3" role="alert">
 						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 						<div className="selectable">{error}</div>
 					</div>
@@ -268,10 +268,10 @@ const CandidateRow = ({
 		/>
 		<LanguageMark tool={candidate.driver} language={language} />
 		<label className="flex-grow-1 tw:min-w-0" htmlFor={`candidate-${candidate.path}`}>
-			<span className="d-block" style={{ fontWeight: 500 }}>
+			<span className="d-block fw-medium">
 				{candidate.name}
 			</span>
-			<span className="scan-row__meta d-block">
+			<span className="font-monospace text-body-secondary d-block tw:text-[0.72rem]">
 				{candidate.path} · {candidate.marker}
 				{candidate.driver ? ` · driver: ${candidate.driver}` : ' · no driver found'}
 			</span>
@@ -298,10 +298,12 @@ const PinRow = ({
 			aria-label={`Pin ${pin.engine} at ${pin.version}`}
 		/>
 		<label className="flex-grow-1" htmlFor={`pin-${pin.engine}`}>
-			<span className="chip me-2">
+			<span className="badge border bg-body-tertiary text-body-secondary fw-normal font-monospace me-2">
 				{pin.engine} {pin.version}
 			</span>
-			<span className="scan-row__meta">pinned in {pin.source}</span>
+			<span className="small text-body-secondary">
+				pinned in <code>{pin.source}</code>
+			</span>
 		</label>
 	</div>
 );

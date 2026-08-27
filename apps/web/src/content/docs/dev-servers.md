@@ -184,6 +184,15 @@ the first signal had come and gone.
 `SIGTERM` ends the run the same way. A CI runner sends `SIGTERM` to cancel a
 job.
 
+A second `Ctrl-C` exits at once, without finishing the teardown. It exists for
+the case the first press cannot cover: a launcher that starts its own children
+in a fresh process group leaves them outside the group Lattice signals, and one
+of them may hold the task's output open. Lattice waits half a second for that
+output to close, warns that a process was left running, and exits anyway — so
+the second press is a way out of a wait, not something a normal run needs.
+`tauri dev` is the common launcher of this kind; it starts its
+`beforeDevCommand` in a group of its own.
+
 An interrupted run exits `130`, the shell's convention for `SIGINT`, so a CI
 runner can tell a cancelled run from a failed one. The summary line still
 prints, and a server killed this way is not reported as having exited or as

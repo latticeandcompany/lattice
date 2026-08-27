@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use dagger::{build_execution_graph_selected, ExecutionGraph};
 use lattice_config::LatticeConfig;
 use lattice_events::Reporter;
-use lattice_runner::{execute_tasks, ExecuteOptions, RunFailure, RunInterrupted, RunResult};
+use lattice_runner::{
+	execute_tasks, ExecuteOptions, RunFailure, RunInterrupted, RunResult, EXIT_INTERRUPTED,
+};
 use lattice_workspace::{discover_workspaces, skipped_task_notes, Workspace};
 
 /// A repo Lattice has read: where it is, what it declares, and what that resolves
@@ -221,14 +223,12 @@ pub enum RunOutcome {
 }
 
 impl RunOutcome {
-	/// The process exit status this outcome corresponds to. 130 is the shell's
-	/// convention for a run ended by SIGINT (128 + 2), which lets a CI runner tell
-	/// a cancelled job from a failed build.
+	/// The process exit status this outcome corresponds to.
 	pub fn exit_code(&self) -> i32 {
 		match self {
 			Self::Completed { .. } | Self::Nothing => 0,
 			Self::Failed { .. } => 1,
-			Self::Interrupted { .. } => 130,
+			Self::Interrupted { .. } => EXIT_INTERRUPTED,
 		}
 	}
 

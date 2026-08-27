@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { useApp } from '../context/appContext.tsx';
 import * as api from '../lib/api.ts';
 import { insertInto, removeAt, setValue } from '../lib/configEdit.ts';
 import type { ConfigDiagnostic, LatticeConfig } from '../lib/types.ts';
+import FieldHint from './fieldHint.tsx';
+import IconButton from './iconButton.tsx';
 import LanguageMark from './languageMark.tsx';
 import Spinner from './spinner.tsx';
 
 type Tab = 'form' | 'json';
+type Section = 'project' | 'engines' | 'workspaces' | 'tasks';
 
 // The editor's source of truth is the text, never a parsed object.
 //
@@ -18,10 +21,14 @@ type Tab = 'form' | 'json';
 //
 // Every control is labelled in English and carries the key it writes beside it. The
 // English is what makes the form usable by someone who has not read the schema; the
-// key is what stops the form from being the place the schema goes to hide.
+// key is what stops the form from being the place the schema goes to hide. The
+// sentences explaining each one are a click away rather than on the page: four
+// sections of labelled inputs is a form, and the same four with a paragraph under
+// every input is a document.
 const ConfigView = () => {
 	const { project, configText, diagnostics, setConfigText, saveConfig, busy, catalog } = useApp();
 	const [tab, setTab] = useState<Tab>('form');
+	const [open, setOpen] = useState<Section>('project');
 	const [live, setLive] = useState<ConfigDiagnostic[]>([]);
 	const [dirty, setDirty] = useState(false);
 
@@ -61,30 +68,32 @@ const ConfigView = () => {
 
 	const engineNames = catalog?.engines.map((engine) => engine.name) ?? [];
 	const pinned = Object.entries(parsed?.engines ?? {});
+	const workspaces = parsed?.workspaces ?? [];
+	const tasks = Object.entries(parsed?.tasks ?? {});
 
 	return (
 		<div className="app-main__scroll">
-			<div className="app-main__inner" style={{ maxWidth: '56rem' }}>
+			<div className="app-main__inner tw:max-w-[56rem]">
 				<div className="d-flex align-items-center gap-2 mb-3">
-					<div className="command-tabs" role="group" aria-label="Editor">
+					<div className="btn-group btn-group-sm" role="group" aria-label="Editor">
 						<button
 							type="button"
-							className={`command-tab${tab === 'form' ? ' command-tab--active' : ''}`}
+							className={`btn btn-outline-secondary${tab === 'form' ? ' active' : ''}`}
 							onClick={() => setTab('form')}
+							aria-pressed={tab === 'form'}
 						>
 							Form
 						</button>
 						<button
 							type="button"
-							className={`command-tab${tab === 'json' ? ' command-tab--active' : ''}`}
+							className={`btn btn-outline-secondary${tab === 'json' ? ' active' : ''}`}
 							onClick={() => setTab('json')}
+							aria-pressed={tab === 'json'}
 						>
 							JSON
 						</button>
 					</div>
-					<span className="command-tab__hint">
-						{dirty ? 'Unsaved changes' : 'Saved'}
-					</span>
+					<span className="small text-body-secondary">{dirty ? 'Unsaved changes' : 'Saved'}</span>
 					<button
 						type="button"
 						className="btn btn-primary btn-sm ms-auto px-3 py-2 d-inline-flex align-items-center gap-2"
@@ -105,13 +114,17 @@ const ConfigView = () => {
 				</div>
 
 				{problems.length > 0 && (
-					<div className="notice notice--bad mb-3">
+					<div className="alert alert-danger d-flex align-items-start gap-2 mb-3" role="alert">
 						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 						<div className="flex-grow-1">
 							{problems.map((problem, index) => (
 								<div key={index} className="selectable">
 									{problem.message}
-									{problem.line !== null && <span className="chip ms-2">line {problem.line}</span>}
+									{problem.line !== null && (
+										<span className="badge border bg-body-tertiary text-body-secondary fw-normal ms-2">
+											line {problem.line}
+										</span>
+									)}
 								</div>
 							))}
 						</div>
@@ -128,8 +141,7 @@ const ConfigView = () => {
 						</div>
 						<div className="card-body p-0">
 							<textarea
-								className="code-card__body selectable w-100 border-0 bg-transparent"
-								style={{ minHeight: '28rem', resize: 'vertical', color: 'var(--text)' }}
+								className="code-card__body selectable w-100 border-0 bg-transparent text-body tw:min-h-[28rem] tw:resize-y"
 								spellCheck={false}
 								value={text}
 								onChange={(event) => edit(event.target.value)}
@@ -138,24 +150,27 @@ const ConfigView = () => {
 						</div>
 					</div>
 				) : parsed === null ? (
-					<div className="notice">
+					<div className="alert alert-secondary d-flex align-items-start gap-2" role="alert">
 						<i className="bi bi-braces" aria-hidden="true" />
 						<div>
 							lattice.json is not valid JSON, so the form cannot show it. Fix it in the JSON tab.
 						</div>
 					</div>
 				) : (
-					<>
-						<section className="mb-4">
-							<h2 className="h5 fw-bold mb-3">Project</h2>
-							<p className="step__hint mb-2">Settings for the whole project, not for one workspace.</p>
+					<div className="accordion">
+						<Panel
+							id="project"
+							title="Project"
+							open={open}
+							onOpen={setOpen}
+							summary="Settings for the whole project"
+						>
 							<div className="row g-3">
 								<div className="col-12 col-md-6">
-									<Label
-										htmlFor="lattice-version"
-										text="Lattice version"
-										jsonKey="latticeVersion"
-									/>
+									<Label htmlFor="lattice-version" text="Lattice version" jsonKey="latticeVersion">
+										A Lattice that installed itself switches to this version. Any other install
+										warns and runs anyway.
+									</Label>
 									<input
 										id="lattice-version"
 										className="form-control form-control-sm"
@@ -165,17 +180,11 @@ const ConfigView = () => {
 											edit(setValue(text, ['latticeVersion'], event.target.value || undefined))
 										}
 									/>
-									<div className="form-text">
-										A Lattice that installed itself switches to this version. Any other install
-										warns and runs anyway.
-									</div>
 								</div>
 								<div className="col-12 col-md-6">
-									<Label
-										htmlFor="cache-dir"
-										text="Cache directory"
-										jsonKey="settings.cacheDir"
-									/>
+									<Label htmlFor="cache-dir" text="Cache directory" jsonKey="settings.cacheDir">
+										A path inside the project. Leave it empty to use .lattice/cache.
+									</Label>
 									<input
 										id="cache-dir"
 										className="form-control form-control-sm"
@@ -185,90 +194,90 @@ const ConfigView = () => {
 											edit(setValue(text, ['settings', 'cacheDir'], event.target.value || undefined))
 										}
 									/>
-									<div className="form-text">
-										A path inside the project. Leave it empty to use .lattice/cache.
-									</div>
 								</div>
 								<div className="col-12 col-md-6">
-									<Label
-										htmlFor="max-cache"
-										text="Cache size limit"
-										jsonKey="settings.maxCacheSize"
-									/>
+									<Label htmlFor="max-cache" text="Cache size limit" jsonKey="settings.maxCacheSize">
+										After a run, Lattice deletes the least recently used entries to get back under
+										this.
+									</Label>
 									<input
 										id="max-cache"
 										className="form-control form-control-sm"
 										placeholder="10GB"
 										value={parsed.settings?.maxCacheSize ?? ''}
 										onChange={(event) =>
-											edit(
-												setValue(text, ['settings', 'maxCacheSize'], event.target.value || undefined),
-											)
+											edit(setValue(text, ['settings', 'maxCacheSize'], event.target.value || undefined))
 										}
 									/>
-									<div className="form-text">
-										After a run, Lattice deletes the least recently used entries to get back under
-										this.
-									</div>
 								</div>
 							</div>
-						</section>
+						</Panel>
 
-						<section className="mb-4">
-							<h2 className="h5 fw-bold mb-3">Engines</h2>
-							<p className="step__hint mb-2">
-								Tool versions this project pins. A run fails before any task starts if the tool on
-								PATH does not match. To have Lattice install the tool instead, give the engine an
-								installCmd in the JSON tab.
+						<Panel
+							id="engines"
+							title="Engines"
+							count={pinned.length}
+							open={open}
+							onOpen={setOpen}
+							summary="Tool versions this project pins"
+						>
+							<p className="small text-body-secondary">
+								A run fails before any task starts if the tool on PATH does not match. To have
+								Lattice install the tool instead, give the engine an installCmd in the JSON tab.
 							</p>
 							{pinned.length === 0 ? (
-								<p className="form-text">
+								<p className="small text-body-secondary mb-0">
 									Nothing is pinned, so every task uses the tools already on the machine.
 								</p>
 							) : (
-								pinned.map(([name, spec]) => (
-									<div className="scan-row" key={name}>
-										<span className="chip">{name}</span>
-										<input
-											className="form-control form-control-sm"
-											style={{ maxWidth: '12rem' }}
-											value={typeof spec === 'string' ? spec : (spec.version ?? '')}
-											onChange={(event) =>
-												edit(
-													setValue(
-														text,
-														typeof spec === 'string'
-															? ['engines', name]
-															: ['engines', name, 'version'],
-														event.target.value,
-													),
-												)
-											}
-											aria-label={`${name} version`}
-										/>
-										{!engineNames.includes(name) && typeof spec === 'string' && (
-											<span className="scan-row__meta">Not one of the engines Lattice knows by name</span>
-										)}
-										<button
-											type="button"
-											className="icon-btn ms-auto"
-											title={`Stop pinning ${name}`}
-											aria-label={`Stop pinning ${name}`}
-											onClick={() => edit(removeAt(text, ['engines', name]))}
-										>
-											<i className="bi bi-x" aria-hidden="true" />
-										</button>
-									</div>
-								))
+								<ul className="list-group list-group-flush">
+									{pinned.map(([name, spec]) => (
+										<li className="list-group-item d-flex align-items-center gap-2 px-0" key={name}>
+											<span className="badge border bg-body-tertiary text-body-secondary fw-normal font-monospace">
+												{name}
+											</span>
+											<input
+												className="form-control form-control-sm tw:max-w-[12rem]"
+												value={typeof spec === 'string' ? spec : (spec.version ?? '')}
+												onChange={(event) =>
+													edit(
+														setValue(
+															text,
+															typeof spec === 'string'
+																? ['engines', name]
+																: ['engines', name, 'version'],
+															event.target.value,
+														),
+													)
+												}
+												aria-label={`${name} version`}
+											/>
+											{!engineNames.includes(name) && typeof spec === 'string' && (
+												<span className="small text-body-secondary">
+													Not one of the engines Lattice knows by name
+												</span>
+											)}
+											<IconButton
+												className="ms-auto"
+												icon="bi-x"
+												label={`Stop pinning ${name}`}
+												onClick={() => edit(removeAt(text, ['engines', name]))}
+											/>
+										</li>
+									))}
+								</ul>
 							)}
-						</section>
+						</Panel>
 
-						<section className="mb-4">
-							<h2 className="h5 fw-bold mb-3">Workspaces</h2>
-							<p className="step__hint mb-2">
-								Every directory with its own manifest. Lattice runs tasks in each one listed here.
-							</p>
-							{(parsed.workspaces ?? []).map((workspace, index) => {
+						<Panel
+							id="workspaces"
+							title="Workspaces"
+							count={workspaces.length}
+							open={open}
+							onOpen={setOpen}
+							summary="Every directory with its own manifest"
+						>
+							{workspaces.map((workspace, index) => {
 								const resolved = project.workspaces.find(
 									(candidate) => candidate.name === workspace.name,
 								);
@@ -281,8 +290,7 @@ const ConfigView = () => {
 													language={resolved?.driver?.language ?? null}
 												/>
 												<input
-													className="form-control form-control-sm"
-													style={{ maxWidth: '12rem' }}
+													className="form-control form-control-sm tw:max-w-[12rem]"
 													placeholder="Workspace name"
 													value={workspace.name}
 													onChange={(event) =>
@@ -299,19 +307,15 @@ const ConfigView = () => {
 													}
 													aria-label={`Workspace ${index + 1} path`}
 												/>
-												<button
-													type="button"
-													className="icon-btn"
-													title={`Remove ${workspace.name}`}
-													aria-label={`Remove ${workspace.name}`}
+												<IconButton
+													icon="bi-x"
+													label={`Remove ${workspace.name}`}
 													onClick={() => edit(removeAt(text, ['workspaces', index]))}
-												>
-													<i className="bi bi-x" aria-hidden="true" />
-												</button>
+												/>
 											</div>
-											<div className="form-check form-switch">
+											<div className="form-check form-switch d-flex align-items-center gap-2 mb-0">
 												<input
-													className="form-check-input"
+													className="form-check-input mt-0"
 													type="checkbox"
 													id={`auto-${index}`}
 													checked={workspace.auto !== false}
@@ -325,13 +329,13 @@ const ConfigView = () => {
 														)
 													}
 												/>
-												<label className="form-check-label small" htmlFor={`auto-${index}`}>
-													Driver detection <span className="form-key">auto</span>
+												<label className="form-check-label small mb-0" htmlFor={`auto-${index}`}>
+													Driver detection <JsonKey>auto</JsonKey>
 												</label>
-												<div className="form-text mt-0">
+												<FieldHint label="driver detection">
 													Lattice picks the tool from the files in the directory. Turn it off to
 													declare scripts and engines yourself.
-												</div>
+												</FieldHint>
 											</div>
 										</div>
 									</div>
@@ -347,34 +351,41 @@ const ConfigView = () => {
 								<i className="bi bi-plus-lg me-1" aria-hidden="true" />
 								Add a workspace
 							</button>
-						</section>
+						</Panel>
 
-						<section className="mb-4">
-							<h2 className="h5 fw-bold mb-3">Tasks</h2>
-							<p className="step__hint mb-2">
-								One name, such as build or test, that each workspace runs its own way.
-							</p>
-							{Object.entries(parsed.tasks ?? {}).map(([name, task]) => (
+						<Panel
+							id="tasks"
+							title="Tasks"
+							count={tasks.length}
+							open={open}
+							onOpen={setOpen}
+							summary="One name each workspace runs its own way"
+						>
+							{tasks.map(([name, task]) => (
 								<div className="card mb-2" key={name}>
 									<div className="card-body p-3">
-										<div className="d-flex align-items-start gap-3 mb-3 flex-wrap">
-											<strong className="me-auto">{name}</strong>
-											<TriState
-												label="Persistent"
-												jsonKey="persistent"
-												hint="Runs until stopped. Never cached, and nothing can depend on it."
-												value={task.persistent}
-												onChange={(next) =>
-													edit(setValue(text, ['tasks', name, 'persistent'], next))
-												}
-											/>
-											<TriState
-												label="Cache"
-												jsonKey="cache"
-												hint="A cache hit restores the stored outputs instead of running the command."
-												value={task.cache}
-												onChange={(next) => edit(setValue(text, ['tasks', name, 'cache'], next))}
-											/>
+										<div className="row g-3 align-items-start mb-2">
+											<div className="col-12">
+												<strong>{name}</strong>
+											</div>
+											<div className="col-6 col-md-4">
+												<TriState
+													label="Persistent"
+													jsonKey="persistent"
+													hint="Runs until stopped. Never cached, and nothing can depend on it."
+													value={task.persistent}
+													onChange={(next) => edit(setValue(text, ['tasks', name, 'persistent'], next))}
+												/>
+											</div>
+											<div className="col-6 col-md-4">
+												<TriState
+													label="Cache"
+													jsonKey="cache"
+													hint="A cache hit restores the stored outputs instead of running the command."
+													value={task.cache}
+													onChange={(next) => edit(setValue(text, ['tasks', name, 'cache'], next))}
+												/>
+											</div>
 										</div>
 										<StringList
 											label="Dependencies"
@@ -383,11 +394,7 @@ const ConfigView = () => {
 											values={task.dependsOn ?? []}
 											onChange={(next) =>
 												edit(
-													setValue(
-														text,
-														['tasks', name, 'dependsOn'],
-														next.length > 0 ? next : undefined,
-													),
+													setValue(text, ['tasks', name, 'dependsOn'], next.length > 0 ? next : undefined),
 												)
 											}
 										/>
@@ -397,13 +404,7 @@ const ConfigView = () => {
 											hint="Files the task reads. A change to any of them misses the cache. With none listed, every file in the workspace counts."
 											values={task.inputs ?? []}
 											onChange={(next) =>
-												edit(
-													setValue(
-														text,
-														['tasks', name, 'inputs'],
-														next.length > 0 ? next : undefined,
-													),
-												)
+												edit(setValue(text, ['tasks', name, 'inputs'], next.length > 0 ? next : undefined))
 											}
 										/>
 										<StringList
@@ -412,29 +413,87 @@ const ConfigView = () => {
 											hint="Files a successful run saves into the cache. A cache hit restores them."
 											values={task.outputs ?? []}
 											onChange={(next) =>
-												edit(
-													setValue(
-														text,
-														['tasks', name, 'outputs'],
-														next.length > 0 ? next : undefined,
-													),
-												)
+												edit(setValue(text, ['tasks', name, 'outputs'], next.length > 0 ? next : undefined))
 											}
 										/>
 									</div>
 								</div>
 							))}
-						</section>
-					</>
+						</Panel>
+					</div>
 				)}
 			</div>
 		</div>
 	);
 };
 
-const Label = ({ htmlFor, text, jsonKey }: { htmlFor: string; text: string; jsonKey: string }) => (
-	<label className="form-label small mb-1 d-block" htmlFor={htmlFor}>
-		{text} <span className="form-key">{jsonKey}</span>
+// Bootstrap's accordion markup, opened by React rather than by Bootstrap's collapse
+// plugin — the same trade the theme and project menus already make.
+const Panel = ({
+	id,
+	title,
+	count,
+	summary,
+	open,
+	onOpen,
+	children,
+}: {
+	id: Section;
+	title: string;
+	count?: number;
+	summary: string;
+	open: Section;
+	onOpen: (next: Section) => void;
+	children: ReactNode;
+}) => {
+	const expanded = open === id;
+	return (
+		<div className="accordion-item">
+			<h2 className="accordion-header">
+				<button
+					type="button"
+					className={`accordion-button${expanded ? '' : ' collapsed'}`}
+					onClick={() => onOpen(id)}
+					aria-expanded={expanded}
+					aria-controls={`panel-${id}`}
+				>
+					<span className="fw-bold me-2">{title}</span>
+					{count !== undefined && (
+						<span className="badge border bg-body-tertiary text-body-secondary fw-normal me-2">
+							{count}
+						</span>
+					)}
+					<span className="small text-body-secondary">{summary}</span>
+				</button>
+			</h2>
+			<div id={`panel-${id}`} className={`accordion-collapse collapse${expanded ? ' show' : ''}`}>
+				<div className="accordion-body">{children}</div>
+			</div>
+		</div>
+	);
+};
+
+/** The `lattice.json` key a control writes, shown beside its plain-English label. */
+const JsonKey = ({ children }: { children: string }) => (
+	<span className="font-monospace text-body-secondary tw:text-[0.7rem]">{children}</span>
+);
+
+const Label = ({
+	htmlFor,
+	text,
+	jsonKey,
+	children,
+}: {
+	htmlFor: string;
+	text: string;
+	jsonKey: string;
+	children: string;
+}) => (
+	<label className="form-label small mb-1 d-flex align-items-center gap-2" htmlFor={htmlFor}>
+		<span>
+			{text} <JsonKey>{jsonKey}</JsonKey>
+		</span>
+		<FieldHint label={text}>{children}</FieldHint>
 	</label>
 );
 
@@ -451,18 +510,19 @@ const TriState = ({
 }: {
 	label: string;
 	jsonKey: string;
-	hint?: string;
+	hint: string;
 	value: boolean | undefined;
 	onChange: (next: boolean | undefined) => void;
 }) => (
-	<label className="small" style={{ maxWidth: '13rem' }}>
-		<span className="d-block" style={{ color: 'var(--text-subtle)' }}>
-			{label} <span className="form-key">{jsonKey}</span>
+	<>
+		<span className="form-label small mb-1 d-flex align-items-center gap-2">
+			<span>
+				{label} <JsonKey>{jsonKey}</JsonKey>
+			</span>
+			<FieldHint label={label}>{hint}</FieldHint>
 		</span>
-		{hint && <span className="form-text d-block mt-0">{hint}</span>}
 		<select
-			className="form-select form-select-sm mt-1"
-			style={{ width: '13rem' }}
+			className="form-select form-select-sm"
 			value={value === undefined ? 'unset' : String(value)}
 			onChange={(event) =>
 				onChange(event.target.value === 'unset' ? undefined : event.target.value === 'true')
@@ -473,7 +533,7 @@ const TriState = ({
 			<option value="true">Yes</option>
 			<option value="false">No</option>
 		</select>
-	</label>
+	</>
 );
 
 const StringList = ({
@@ -485,20 +545,22 @@ const StringList = ({
 }: {
 	label: string;
 	jsonKey: string;
-	hint?: string;
+	hint: string;
 	values: string[];
 	onChange: (next: string[]) => void;
 }) => (
 	<div className="mb-3">
-		<div className="form-label small mb-1">
-			{label} <span className="form-key">{jsonKey}</span>
-		</div>
-		{hint && <div className="form-text mt-0 mb-1">{hint}</div>}
+		<span className="form-label small mb-1 d-flex align-items-center gap-2">
+			<span>
+				{label} <JsonKey>{jsonKey}</JsonKey>
+			</span>
+			<FieldHint label={label}>{hint}</FieldHint>
+		</span>
 		<div className="d-flex flex-wrap gap-1 align-items-center">
 			{values.map((value, index) => (
-				<span className="input-group input-group-sm" style={{ width: 'auto' }} key={index}>
+				<span className="input-group input-group-sm w-auto" key={index}>
 					<input
-						className="form-control form-control-sm"
+						className="form-control form-control-sm font-monospace"
 						style={{ width: `${Math.max(6, value.length + 2)}ch` }}
 						value={value}
 						onChange={(event) => {
@@ -518,15 +580,7 @@ const StringList = ({
 					</button>
 				</span>
 			))}
-			<button
-				type="button"
-				className="icon-btn"
-				title={`Add to ${label}`}
-				aria-label={`Add to ${label}`}
-				onClick={() => onChange([...values, ''])}
-			>
-				<i className="bi bi-plus-lg" aria-hidden="true" />
-			</button>
+			<IconButton icon="bi-plus-lg" label={`Add to ${label}`} onClick={() => onChange([...values, ''])} />
 		</div>
 	</div>
 );

@@ -36,8 +36,8 @@ class ErrorBoundary extends Component<Props, State> {
 
 		return (
 			<div className="app-main__scroll">
-				<div className="app-main__inner" style={{ maxWidth: '48rem' }}>
-					<div className="notice notice--bad mb-3">
+				<div className="app-main__inner tw:max-w-[48rem]">
+					<div className="alert alert-danger d-flex align-items-start gap-2 mb-3" role="alert">
 						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 						<div>
 							<strong className="d-block mb-1">Lattice could not draw this view.</strong>

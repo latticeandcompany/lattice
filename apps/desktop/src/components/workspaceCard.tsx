@@ -10,23 +10,25 @@ interface WorkspaceCardProps {
 
 const WorkspaceCard = ({ workspace, onRun, runInFlight }: WorkspaceCardProps) => (
 	<div className="card mb-3">
-		<div className="ws-card__head">
+		<div className="card-header bg-transparent d-flex align-items-center gap-2">
 			<LanguageMark
 				tool={workspace.driver?.tool ?? null}
 				language={workspace.driver?.language ?? null}
 			/>
 			<div className="flex-grow-1 tw:min-w-0">
-				<div className="ws-card__name">{workspace.name}</div>
-				<div className="ws-card__path selectable">{workspace.path}</div>
+				<div className="fw-bold tw:text-[1.05rem] tw:tracking-[-0.01em]">{workspace.name}</div>
+				<div className="font-monospace text-body-secondary selectable tw:text-[0.75rem]">
+					{workspace.path}
+				</div>
 			</div>
 			<div className="d-flex align-items-center gap-1 flex-wrap justify-content-end">
 				{workspace.driver && (
-					<span className="chip" title={evidenceTitle(workspace.driver.via)}>
+					<span className="badge border bg-body-tertiary text-body-secondary fw-normal font-monospace" title={evidenceTitle(workspace.driver.via)}>
 						{workspace.driver.tool}
 					</span>
 				)}
 				{workspace.engines.map((engine) => (
-					<span key={engine.name} className="chip">
+					<span key={engine.name} className="badge border bg-body-tertiary text-body-secondary fw-normal font-monospace">
 						{engine.name} {engine.version ?? ''}
 					</span>
 				))}
@@ -34,7 +36,7 @@ const WorkspaceCard = ({ workspace, onRun, runInFlight }: WorkspaceCardProps) =>
 		</div>
 
 		{workspace.tasks.length === 0 ? (
-			<div className="p-3" style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+			<div className="p-3 small text-body-secondary">
 				No task in this project resolves to a command in this workspace.
 			</div>
 		) : (

@@ -145,6 +145,14 @@ waits five seconds, then sends `SIGKILL` to whatever is left. On Windows there i
 no process group to signal, so the child and its descendants are taken down
 directly and there is nothing a grace period would achieve.
 
+A process the task started in a *different* process group is outside that reach.
+If it also holds the task's output open, Lattice waits half a second for the
+output to close, then warns that a process was left running and exits without
+it. A second `Ctrl-C` skips even that wait and exits immediately. Both exist
+because watching for an interrupt takes over what `SIGINT` and `SIGTERM` mean for
+the whole process: without them, a run stuck at this point could not be ended by
+any signal short of `SIGKILL`.
+
 The grace period is there because a dev server usually holds something an
 abrupt kill would strand: a TCP port, a socket file, a lock. Signalling the group
 rather than the process is there because the command you wrote goes to a shell,

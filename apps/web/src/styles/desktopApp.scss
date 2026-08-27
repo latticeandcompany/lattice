@@ -1,0 +1,13 @@
+// The desktop app's own component styles, borrowed rather than restated.
+//
+// Most of the app is Bootstrap and Tailwind utilities the site already ships, so only
+// two sheets have to travel: the task list, which is still bespoke, and the failure
+// ramp it colours a failed row with. Both read the brand tokens through custom
+// properties and neither has a `@use` of its own, which is what lets them drop in here
+// against the site's Bootstrap instead of the app's.
+//
+// _tokens.scss is byte-identical between the two apps, so it is deliberately not
+// imported twice.
+
+@use '../../../desktop/src/styles/status';
+@use '../../../desktop/src/styles/tasks.scss';

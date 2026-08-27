@@ -111,56 +111,6 @@ samp {
 	}
 }
 
-.command-tabs {
-	display: inline-flex;
-	gap: 0.25rem;
-	padding: 0.15rem;
-	border: 1px solid var(--border-subtle);
-	border-radius: 6px;
-	background: var(--surface-2);
-}
-
-.command-tab {
-	padding: 0.2rem 0.7rem;
-	border: 0;
-	border-radius: 4px;
-	background: transparent;
-	color: var(--text-muted);
-	font-size: 0.75rem;
-	font-weight: 500;
-	transition:
-		color 0.15s ease,
-		background 0.15s ease;
-
-	&:hover {
-		color: var(--text);
-	}
-
-	&--active {
-		background: var(--surface);
-		color: var(--text);
-	}
-
-	&:disabled {
-		opacity: 0.45;
-	}
-}
-
-.command-tab__hint {
-	color: var(--text-muted);
-	font-size: 0.75rem;
-	text-align: center;
-}
-
-// The `lattice.json` key a control writes, shown beside the plain-English label. The
-// form leads with the English so it can be used without the schema, and carries the
-// key so using it teaches the schema.
-.form-key {
-	font-family: 'DM Mono', ui-monospace, monospace;
-	font-size: 0.7rem;
-	color: var(--text-muted);
-}
-
 .dropdown-item.active,
 .dropdown-item:active {
 	background: var(--surface-2);

@@ -1,11 +1,20 @@
 // Bootstrap, customized entirely through variable overrides (per .agents/CODESTYLE.md
 // styling priority: Bootstrap first, customize via variables). Monochrome brand:
 // primary is ink, secondary is the mid gray from the ramp. Type is DM Sans / DM Mono.
+//
+// $danger and the accordion settings are here for the desktop app's benefit, not this
+// one's — the site renders neither an alert nor an accordion today. They are copied
+// because scripts/checkBrandTokens.mjs requires every setting but the accent to match,
+// and because the day the site does grow one it should already look like the app's.
+// $danger is the app's amber failure colour (apps/desktop/src/styles/_status.scss),
+// which is deliberately not a brand colour: crimson is what you press, so it cannot
+// also mean "this broke".
 
 @use '../../node_modules/bootstrap/scss/bootstrap' as bs with (
 	$prefix: 'bs-',
 	$primary: #020d0c,
 	$secondary: #6e7776,
+	$danger: #b45309,
 	$dark: #020d0c,
 	$light: #fbf8ff,
 	$body-bg: #fbf8ff,
@@ -24,5 +33,8 @@
 	$btn-font-weight: 500,
 	$btn-padding-y: 0.6rem,
 	$btn-padding-x: 1.35rem,
-	$link-decoration: none
+	$link-decoration: none,
+	$accordion-button-active-bg: #e7e6e9,
+	$accordion-button-active-color: #020d0c,
+	$accordion-icon-active-color: #020d0c
 );

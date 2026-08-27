@@ -44,19 +44,17 @@ const ThemeControl = () => {
 		<div className="dropdown" ref={ref}>
 			<button
 				type="button"
-				className="btn btn-sm border-0 d-inline-flex align-items-center justify-content-center p-2"
+				className="btn btn-sm border-0 d-inline-flex align-items-center justify-content-center p-2 lh-1 text-body-secondary"
 				onClick={() => setOpen((value) => !value)}
 				aria-haspopup="menu"
 				aria-expanded={open}
 				aria-label={`Theme: ${current.label}`}
 				title={`Theme: ${current.label}`}
-				style={{ color: 'var(--text-muted)', lineHeight: 1 }}
 			>
 				<i className={`bi ${current.icon}`} aria-hidden="true" />
 			</button>
 			<ul
-				className={`dropdown-menu${open ? ' show' : ''}`}
-				style={{ minWidth: '9rem', bottom: '100%', top: 'auto' }}
+				className={`dropdown-menu${open ? ' show' : ''} tw:min-w-[9rem] tw:top-auto tw:bottom-full`}
 			>
 				{MODES.map((option) => (
 					<li key={option.mode}>

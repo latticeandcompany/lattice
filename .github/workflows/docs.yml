@@ -5,10 +5,14 @@ on:
     branches: [mega]
     paths:
       - 'apps/web/**'
+      # /desktop renders the desktop app's own components, so an edit there changes
+      # the site and has to redeploy it.
+      - 'apps/desktop/src/**'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
       - 'apps/web/**'
+      - 'apps/desktop/src/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 

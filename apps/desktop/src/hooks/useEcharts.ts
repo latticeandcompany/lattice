@@ -7,6 +7,14 @@
 // Options are always applied with notMerge: the option is rebuilt whole from (graph,
 // states, tokens, focus), so merging would leave removed nodes and edges on the canvas.
 // We never call setTheme, which also keeps us clear of echarts#21200.
+//
+// The host arrives as a callback ref rather than a RefObject, and that is the whole
+// reason this hook works on a second visit. The graph element is only rendered once a
+// dump has come back, so on the first mount the element does not exist yet — the
+// dynamic import is slow enough that it usually does by the time init runs, which is
+// why this looked fine. On a return visit the module is already cached, init resolves
+// in a microtask, finds no element, and the view stays blank forever. Keying the
+// effect on the element itself means init happens when there is something to init.
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -35,16 +43,17 @@ export const loadEcharts = async (): Promise<EchartsCore> => {
 };
 
 export const useEcharts = (option: Record<string, unknown> | null) => {
-	const hostRef = useRef<HTMLDivElement>(null);
+	const [host, setHost] = useState<HTMLDivElement | null>(null);
 	const chartRef = useRef<EchartsInstance | null>(null);
 	const [ready, setReady] = useState(false);
 
 	useEffect(() => {
+		if (!host) return;
 		let disposed = false;
 		void (async () => {
 			const echarts = await loadEcharts();
-			if (disposed || !hostRef.current) return;
-			chartRef.current = echarts.init(hostRef.current, undefined, {
+			if (disposed) return;
+			chartRef.current = echarts.init(host, undefined, {
 				renderer: 'canvas',
 				useDirtyRect: true,
 			});
@@ -54,20 +63,20 @@ export const useEcharts = (option: Record<string, unknown> | null) => {
 			disposed = true;
 			chartRef.current?.dispose();
 			chartRef.current = null;
+			setReady(false);
 		};
-	}, []);
+	}, [host]);
 
 	useEffect(() => {
 		if (ready && option) chartRef.current?.setOption(option, { notMerge: true });
 	}, [ready, option]);
 
 	useEffect(() => {
-		const host = hostRef.current;
 		if (!host || typeof ResizeObserver !== 'function') return;
 		const observer = new ResizeObserver(() => chartRef.current?.resize());
 		observer.observe(host);
 		return () => observer.disconnect();
-	}, []);
+	}, [host]);
 
-	return { hostRef, chart: chartRef, ready };
+	return { hostRef: setHost, chart: chartRef, ready };
 };

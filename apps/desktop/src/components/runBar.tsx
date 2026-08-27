@@ -41,12 +41,12 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 	return (
 		<div className="run-bar">
 			<div className="run-bar__row">
-				<div className="command-tabs" role="group" aria-label="Tasks to run">
+				<div className="btn-group btn-group-sm" role="group" aria-label="Tasks to run">
 					{tasks.map((task) => (
 						<button
 							key={task}
 							type="button"
-							className={`command-tab${state.selected.includes(task) ? ' command-tab--active' : ''}`}
+							className={`btn btn-outline-secondary${state.selected.includes(task) ? ' active' : ''}`}
 							onClick={(event) => toggleTask(task, event.metaKey || event.ctrlKey)}
 							disabled={inFlight}
 							aria-pressed={state.selected.includes(task)}
@@ -78,7 +78,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 					</button>
 				)}
 
-				<div className="ms-auto run-bar__summary" aria-live="polite">
+				<div className="ms-auto small text-body-secondary" aria-live="polite">
 					{inFlight ? (
 						<Spinner label={run.phase === 'stopping' ? 'stopping…' : 'running…'} />
 					) : (
@@ -89,12 +89,12 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 			</div>
 
 			<div className="run-bar__row">
-				<div className="command-tabs" role="group" aria-label="Cache mode">
+				<div className="btn-group btn-group-sm" role="group" aria-label="Cache mode">
 					{CACHE_MODES.map((option) => (
 						<button
 							key={option.mode}
 							type="button"
-							className={`command-tab${state.mode === option.mode ? ' command-tab--active' : ''}`}
+							className={`btn btn-outline-secondary${state.mode === option.mode ? ' active' : ''}`}
 							onClick={() => onChange({ mode: option.mode })}
 							disabled={inFlight}
 							title={option.hint}
@@ -104,9 +104,9 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						</button>
 					))}
 				</div>
-				<span className="command-tab__hint">{hint}</span>
+				<span className="small text-body-secondary">{hint}</span>
 
-				<div className="input-group input-group-sm" style={{ maxWidth: '15rem' }}>
+				<div className="input-group input-group-sm tw:max-w-[15rem]">
 					<span className="input-group-text">
 						<i className="bi bi-funnel" aria-hidden="true" />
 					</span>
@@ -123,8 +123,7 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 				</div>
 
 				<select
-					className="form-select form-select-sm"
-					style={{ maxWidth: '11rem' }}
+					className="form-select form-select-sm tw:max-w-[11rem]"
 					aria-label="Concurrency"
 					value={state.concurrency}
 					onChange={(event) => onChange({ concurrency: event.target.value })}
