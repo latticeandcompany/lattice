@@ -16,6 +16,22 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Ctrl-C ends a run holding persistent tasks — 2026-08-26
+
+- A run whose persistent task left a process holding the task's output open
+  outside the process group Lattice signalled would never exit. The run waits for
+  that output to end before it prints its summary, and it never ended. `tauri
+  dev` starts its `beforeDevCommand` in a process group of its own, which is
+  enough to trigger it, so `lattice run dev` on a Tauri workspace hung on every
+  interrupt
+- Lattice now waits half a second for that output, warns that a process was left
+  running, and exits. Trailing output from a task can be cut short in that case;
+  previously there was none at all, because the run never reached its summary
+- A second `Ctrl-C` exits immediately with `130`. Watching for an interrupt
+  replaces what `SIGINT` and `SIGTERM` do for the rest of the process's life, so
+  once the first interrupt had been consumed nothing but `kill -9` could end a
+  run that wedged during teardown
+
 ## Lattice installs from npm — 2026-08-26
 
 - New package: `@latticeandcompany/lattice`. `npm install --save-dev

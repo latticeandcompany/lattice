@@ -16,6 +16,24 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Ctrl-C ends a run holding persistent tasks — 2026-08-26
+
+- A run whose persistent task left a process holding the task's output open
+  outside the process group Lattice signalled would never exit. The run's final
+  drain waited for its message channel to close, the channel closes when the
+  last output streamer sees EOF, and that EOF never came. `tauri dev` starting
+  its `beforeDevCommand` in a process group of its own is enough to trigger it,
+  so `lattice run dev` on a Tauri workspace hung on every interrupt
+- The drain now gives up after 500ms and warns that a process was left running,
+  rather than waiting for a pipe no signal can close. Trailing output from a
+  task can be cut short in that case; previously there was no output at all,
+  because the run never reached its summary
+- A second Ctrl-C now exits immediately with 130. Watching for an interrupt
+  replaces the default action for both SIGINT and SIGTERM for the rest of the
+  process's life, so once the first interrupt had been consumed no signal could
+  end the run and `kill -9` was the only way out — which made any hang during
+  teardown look like Ctrl-C being ignored
+
 ### Every version reference updates from one list — 2026-08-26
 
 - `scripts/version-doc-files.txt` is a new list of the files whose version

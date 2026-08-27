@@ -436,7 +436,9 @@ its results are visible above. No flag changes this: it is what a `dev` run is.
 Four things end such a run:
 
 - `Ctrl-C`, on the first press. The run exits `130` with no message about the
-  interrupt.
+  interrupt. A second press exits immediately without finishing the teardown,
+  which matters only when a task left a process holding its output open outside
+  the process group Lattice signals.
 - A `SIGTERM`, which a CI runner sends when someone cancels the job.
 - Every persistent task in the run exiting on its own. A task marked persistent
   by mistake no longer blocks. It gets an `exited (code 0)` line, and the run
@@ -449,6 +451,28 @@ Lattice started listening for a signal only once the graph had drained, so it
 missed one that arrived while a build was still running. For a run that always
 terminates, leave the persistent task out of the names you pass. See
 [Run dev servers](/lattice/docs/dev-servers).
+
+### The run warns that a process was left holding its output
+
+```text
+lattice: warning: a task left a process holding its output open; it is still running.
+```
+
+The task started something in its own process group. Lattice signals the group
+it spawned, so that process is out of reach, and it still holds the pipe Lattice
+reads the task's output through. Rather than wait for output that will never end,
+Lattice gives it half a second, says so, and exits.
+
+`tauri dev` does this with its `beforeDevCommand`, so a Tauri workspace whose
+`dev` script is `tauri dev` will show this on every interrupt. The process it
+leaves keeps its port. Find it by what it is, not by its parent:
+
+```bash
+lsof -ti:1420 | xargs kill
+```
+
+Nothing is wrong with your config. A launcher that manages its own process
+groups is doing so deliberately, and Lattice has no handle on what it started.
 
 ### A task cannot depend on your `dev` task
 

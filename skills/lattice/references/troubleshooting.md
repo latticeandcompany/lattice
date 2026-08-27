@@ -370,8 +370,22 @@ Ctrl-C, or a `SIGTERM`, ends any run. Every running task's process group gets
 Error: interrupted. Lattice stopped the tasks that were still running
 ```
 
-Nothing a task spawned survives it. Distinguish `130` from `1` if a pipeline
-branches on the exit code.
+Nothing a task spawned *into that group* survives it. A process the task started
+in a group of its own is out of reach, and if it holds the task's output open the
+run cannot see that output end. Lattice waits 500ms for it, warns, and exits:
+
+```text
+lattice: warning: a task left a process holding its output open; it is still running.
+```
+
+That process keeps running and keeps its port; kill it by port or by name, not
+through Lattice. `tauri dev` triggers this with its `beforeDevCommand`. A second
+`Ctrl-C` exits immediately with `130` without finishing teardown, which is the
+only way out if teardown itself wedges — watching for an interrupt replaces the
+default action for `SIGINT` and `SIGTERM`, so no further signal would end the
+process on its own.
+
+Distinguish `130` from `1` if a pipeline branches on the exit code.
 
 ## The run stopped at the first failure
 

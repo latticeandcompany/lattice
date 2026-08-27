@@ -221,6 +221,22 @@ pub fn stubborn_background(secs: u64) -> String {
 	format!("(trap '' TERM; sleep {secs}) & sleep {secs}")
 }
 
+/// A command that leaves behind a background process in a process group of its
+/// own, still holding the task's stdout.
+///
+/// `set -m` is what puts the job in its own group — POSIX job control, and the
+/// only spelling of this that needs no interpreter a test cannot assume is
+/// installed. The escape is the whole point: a leftover inside the task's group
+/// is reached by the runner's kill, so it proves nothing about the case where
+/// the pipe outlives every process the runner can name. `tauri dev` starting its
+/// `beforeDevCommand` in a fresh group is the shape this stands in for.
+///
+/// Unix only, for the reason [`stubborn_background`] gives.
+#[cfg(unix)]
+pub fn escaped_background(secs: u64) -> String {
+	format!("set -m; sleep {secs} & sleep {secs}")
+}
+
 /// A command that prints `text`, then a byte that is not valid UTF-8, then
 /// `after` — each on its own line.
 ///

@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +48,17 @@ type Captured = Arc<Mutex<Vec<(bool, String)>>>;
 /// writing and drop its lock; short enough that Ctrl-C still feels immediate.
 #[cfg_attr(not(unix), allow(dead_code, reason = "the graceful step is unix-only"))]
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the run waits for its message channel to close once every child has
+/// been stopped.
+///
+/// The channel closes when the last streamer sees EOF on the pipes it is
+/// draining, which is normally the instant its child dies. A task that leaves a
+/// process holding those pipes outside the group we signalled — `tauri dev`
+/// puts its `beforeDevCommand` in a fresh one — never produces that EOF, and
+/// waiting for it is waiting forever. The messages this drain exists to flush
+/// are already queued, so anything past a moment is the pathological case.
+const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -296,6 +308,23 @@ fn signal_group(pid: u32, stop: Stop) {
 	unsafe {
 		libc::kill(-(pid as i32), signal);
 	}
+}
+
+/// The shell's convention for a run ended by SIGINT (128 + 2), which lets a CI
+/// runner tell a cancelled job from a failed build.
+pub const EXIT_INTERRUPTED: i32 = 130;
+
+/// End the process now, on a second interrupt, without finishing teardown.
+///
+/// Asking twice means the graceful path is not working, so this does not try it
+/// again. The line matters: the run dies mid-sentence and may leave children
+/// behind, and the alternative is a user who thinks Ctrl-C is broken.
+fn force_quit() -> ! {
+	let _ = writeln!(
+		std::io::stderr(),
+		"lattice: interrupted again — exiting now. Some child processes may still be running."
+	);
+	std::process::exit(EXIT_INTERRUPTED);
 }
 
 /// Resolve to the first interrupt the run receives: Ctrl-C, or a `SIGTERM` from
@@ -756,6 +785,15 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 			interrupted.store(true, Ordering::SeqCst);
 			abort.store(true, Ordering::SeqCst);
 			shutting_down.store(true, Ordering::SeqCst);
+			// Armed before the teardown it exists to escape. Watching either signal
+			// replaces the kernel's default action for both, for the rest of the
+			// process's life — so from this point on nothing but this task can end
+			// the run, and teardown is exactly where a wedged child strands it. A
+			// second Ctrl-C has to mean something.
+			tokio::spawn(async {
+				interrupt_signal().await;
+				force_quit();
+			});
 			children.terminate_all().await;
 		})
 	};
@@ -942,10 +980,30 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	}
 
 	// Drop our sender so the channel closes once every task/streamer sender is
-	// gone, then drain any remaining buffered messages.
+	// gone, then drain any remaining buffered messages — but only up to
+	// [`DRAIN_GRACE`], because a streamer stuck on a pipe an escaped process
+	// still holds open would otherwise keep the run here for good. Ending a
+	// little early costs some trailing output; not ending at all is a CLI that
+	// ignores Ctrl-C.
 	drop(tx);
-	while let Some(msg) = rx.recv().await {
-		forward(reporter, msg, &mut live_persistent, &mut failed);
+	let drain_deadline = Instant::now() + DRAIN_GRACE;
+	let stranded = loop {
+		let left = drain_deadline.saturating_duration_since(Instant::now());
+		if left.is_zero() {
+			break true;
+		}
+		match tokio::time::timeout(left, rx.recv()).await {
+			Ok(Some(msg)) => forward(reporter, msg, &mut live_persistent, &mut failed),
+			Ok(None) => break false,
+			Err(_) => break true,
+		}
+	};
+	if stranded {
+		reporter.warn(
+			"a task left a process holding its output open; it is still running. \
+			 A dev-server launcher that starts its children in their own process \
+			 group is the usual cause.",
+		);
 	}
 
 	signal_watch.abort();
@@ -1621,6 +1679,7 @@ mod tests {
 		summaries: Mutex<Vec<(usize, usize, usize, u64)>>,
 		surfaced: Mutex<Vec<(String, String)>>,
 		surfaced_lines: Mutex<Vec<String>>,
+		warnings: Mutex<Vec<String>>,
 	}
 
 	impl RecordingReporter {
@@ -1708,7 +1767,9 @@ mod tests {
 				.push((s.total, s.cached, s.failed, s.elapsed_ms));
 		}
 		fn note(&self, _msg: &str) {}
-		fn warn(&self, _msg: &str) {}
+		fn warn(&self, msg: &str) {
+			self.warnings.lock().unwrap().push(msg.to_string());
+		}
 		fn finish(&self) {}
 	}
 
@@ -3045,6 +3106,43 @@ mod tests {
 
 		assert_eq!(result.total, 1);
 		assert_eq!(result.failed, 0);
+	}
+
+	/// Escalating to a kill only reaches the group the runner knows about. A
+	/// leftover in a group of its own keeps the task's stdout open for as long as
+	/// it runs, its drain task never sees EOF, and the sender that task holds
+	/// never drops — so waiting for the channel to close waited forever, with both
+	/// signals already claimed by the interrupt watcher and Ctrl-C therefore doing
+	/// nothing at all.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn a_leftover_outside_the_group_cannot_hold_the_run_open() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let workspaces = vec![ws("app", root, &[("dev", &sh::escaped_background(120))])];
+		let config = config_with(&[("dev", persistent(&[]))]);
+		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let mut o = opts(&graph, &workspaces, &config, root, &r);
+		o.shutdown = Some(shutdown_after(300));
+
+		let result = tokio::time::timeout(Duration::from_secs(30), execute_tasks(o))
+			.await
+			.expect("a pipe no signal can close must not keep the run from ending")
+			.unwrap();
+
+		assert_eq!(result.total, 1);
+		assert_eq!(result.failed, 0);
+		assert!(
+			r.warnings
+				.lock()
+				.unwrap()
+				.iter()
+				.any(|w| w.contains("holding its output open")),
+			"the run gave up on a pipe and left a process behind; it has to say so: {:?}",
+			r.warnings.lock().unwrap()
+		);
 	}
 
 	/// [`ChildRegistry::terminate_all`] snapshots once and never repeats, so a
