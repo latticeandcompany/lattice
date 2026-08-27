@@ -1,4 +1,5 @@
 import { useApp } from '../context/appContext.tsx';
+import { useFullPower } from '../hooks/useFullPower.ts';
 import { useReconnect } from '../hooks/useReconnect.ts';
 import ConfigView from './configView.tsx';
 import GraphView from './graphView.tsx';
@@ -13,6 +14,7 @@ import ThemeControl from './themeControl.tsx';
 const AppShell = () => {
 	const { project, view, info, error, dismissError, reload, busy } = useApp();
 	useReconnect(project);
+	useFullPower();
 
 	return (
 		<div className="app-shell">
@@ -44,13 +46,7 @@ const AppShell = () => {
 				<SidebarNav />
 
 				<div className="app-rail__foot">
-					<span
-						style={{
-							fontFamily: 'DM Mono, ui-monospace, monospace',
-							fontSize: '0.68rem',
-							color: 'var(--text-muted)',
-						}}
-					>
+					<span className="font-monospace text-body-secondary tw:text-[0.68rem]">
 						{info?.latticeVersion ?? ''}
 					</span>
 					<ThemeControl />
@@ -60,15 +56,13 @@ const AppShell = () => {
 			<main className="app-main">
 				{error && (
 					<div className="run-bar">
-						<div className="notice notice--bad">
+						<div
+							className="alert alert-danger alert-dismissible d-flex align-items-start gap-2 mb-0"
+							role="alert"
+						>
 							<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 							<div className="flex-grow-1 selectable">{error}</div>
-							<button
-								type="button"
-								className="btn-close btn-sm"
-								aria-label="Dismiss"
-								onClick={dismissError}
-							/>
+							<button type="button" className="btn-close" aria-label="Dismiss" onClick={dismissError} />
 						</div>
 					</div>
 				)}

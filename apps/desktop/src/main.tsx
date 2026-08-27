@@ -9,7 +9,6 @@ import './styles/shell.scss';
 import './styles/codeCard.scss';
 import './styles/steps.scss';
 import './styles/tasks.scss';
-import './styles/graph.scss';
 
 import App from './app';
 

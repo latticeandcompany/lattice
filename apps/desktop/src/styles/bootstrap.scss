@@ -4,6 +4,17 @@
 // colour, which carries every primary action, focus ring, and the `desktop` product
 // word. Failure is amber (see _status.scss) so a broken row never looks pressable.
 //
+// $danger is that same amber rather than Bootstrap's red, which is what makes
+// `.alert-danger` and `.text-danger` match the failure colour the rest of the app
+// already uses. Bootstrap derives its subtle/emphasis pairs for both themes from this
+// one value, so light and dark both follow. The literal is repeated from _status.scss
+// because that file emits `:root` rules a second entry point would duplicate.
+//
+// The accordion's open header is the one Bootstrap component that spends $primary on
+// something you are not meant to press. With four sections and one always open that
+// would put a permanent crimson band across the config form, so the open header takes
+// a surface shift instead and the accent stays on actions.
+//
 // $color-contrast-* are overridden so the label Bootstrap picks for a filled accent is
 // the brand's ink or paper rather than pure #000 / #fff. On crimson it resolves to
 // paper, at 4.95:1, over ink's 3.79:1.
@@ -12,6 +23,7 @@
 	$prefix: 'bs-',
 	$primary: #ca2e55,
 	$secondary: #6e7776,
+	$danger: #b45309,
 	$dark: #020d0c,
 	$light: #fbf8ff,
 	$body-bg: #fbf8ff,
@@ -32,5 +44,8 @@
 	$btn-font-weight: 500,
 	$btn-padding-y: 0.6rem,
 	$btn-padding-x: 1.35rem,
-	$link-decoration: none
+	$link-decoration: none,
+	$accordion-button-active-bg: #e7e6e9,
+	$accordion-button-active-color: #020d0c,
+	$accordion-icon-active-color: #020d0c
 );

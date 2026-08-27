@@ -125,14 +125,14 @@ const GraphView = () => {
 
 	return (
 		<div className="app-main__scroll">
-			<div className="app-main__inner graph-shell">
-				<div className="run-bar__row">
-					<div className="command-tabs" role="group" aria-label="Tasks to show">
+			<div className="app-main__inner d-flex flex-column gap-3 tw:min-h-0">
+				<div className="d-flex align-items-center flex-wrap gap-2">
+					<div className="btn-group btn-group-sm" role="group" aria-label="Tasks to show">
 						{taskNames.map((task) => (
 							<button
 								key={task}
 								type="button"
-								className={`command-tab${selected.includes(task) ? ' command-tab--active' : ''}`}
+								className={`btn btn-outline-secondary${selected.includes(task) ? ' active' : ''}`}
 								onClick={(event) =>
 									setPicked(
 										event.metaKey || event.ctrlKey
@@ -149,24 +149,26 @@ const GraphView = () => {
 						))}
 					</div>
 
-					<div className="command-tabs" role="group" aria-label="Display">
+					<div className="btn-group btn-group-sm" role="group" aria-label="Display">
 						<button
 							type="button"
-							className={`command-tab${mode === 'graph' ? ' command-tab--active' : ''}`}
+							className={`btn btn-outline-secondary${mode === 'graph' ? ' active' : ''}`}
 							onClick={() => setMode('graph')}
+							aria-pressed={mode === 'graph'}
 						>
 							Graph
 						</button>
 						<button
 							type="button"
-							className={`command-tab${mode === 'list' ? ' command-tab--active' : ''}`}
+							className={`btn btn-outline-secondary${mode === 'list' ? ' active' : ''}`}
 							onClick={() => setMode('list')}
+							aria-pressed={mode === 'list'}
 						>
 							List
 						</button>
 					</div>
 
-					<div className="input-group input-group-sm" style={{ maxWidth: '15rem' }}>
+					<div className="input-group input-group-sm tw:max-w-[15rem]">
 						<span className="input-group-text">
 							<i className="bi bi-search" aria-hidden="true" />
 						</span>
@@ -190,30 +192,30 @@ const GraphView = () => {
 						</button>
 					)}
 
-					<span className="ms-auto run-bar__summary">
+					<span className="ms-auto small text-body-secondary">
 						{filtered.nodes.length} tasks · {layerCount(filtered)} layers deep
 					</span>
 				</div>
 
 				{error && (
-					<div className="notice notice--bad">
+					<div className="alert alert-danger d-flex align-items-start gap-2 mb-0" role="alert">
 						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 						<div className="selectable">{error}</div>
 					</div>
 				)}
 
 				{filtered.nodes.length === 0 ? (
-					<div className="empty-state">
+					<div className="d-flex flex-column align-items-center justify-content-center gap-3 text-center text-body-secondary py-5">
 						<i className="bi bi-diagram-3 fs-2" aria-hidden="true" />
 						<div>No task matches what you picked.</div>
 					</div>
 				) : mode === 'graph' ? (
 					<>
-						<div className="graph-canvas">
-							<div ref={hostRef} className="graph-canvas__host" />
+						<div className="border rounded-3 bg-body tw:h-[clamp(24rem,62vh,44rem)]">
+							<div ref={hostRef} className="w-100 h-100" />
 						</div>
 						<GraphLegend />
-						<p className="command-tab__hint" style={{ textAlign: 'left' }}>
+						<p className="small text-body-secondary mb-0">
 							Click a task to focus what it depends on and what depends on it. Drag to pan,
 							scroll to zoom.
 						</p>
@@ -221,7 +223,7 @@ const GraphView = () => {
 				) : (
 					// A canvas cannot be read by a screen reader or walked by a keyboard, so
 					// the same data is here as a table rather than as aria on a <canvas>.
-					<table className="graph-table">
+					<table className="table table-sm align-middle">
 						<caption className="visually-hidden">
 							Tasks in dependency order, with what each one runs
 						</caption>
@@ -236,10 +238,10 @@ const GraphView = () => {
 						<tbody>
 							{filtered.nodes.map((node, index) => (
 								<tr key={node.id}>
-									<td className="mono">{index + 1}</td>
-									<td className="mono">{node.id}</td>
-									<td className="mono selectable">{node.command}</td>
-									<td>
+									<td className="font-monospace tw:text-[0.78rem]">{index + 1}</td>
+									<td className="font-monospace tw:text-[0.78rem]">{node.id}</td>
+									<td className="font-monospace tw:text-[0.78rem] selectable">{node.command}</td>
+									<td className="small">
 										{[
 											node.persistent ? 'persistent' : '',
 											node.pulledIn ? 'pulled in as a dependency' : '',

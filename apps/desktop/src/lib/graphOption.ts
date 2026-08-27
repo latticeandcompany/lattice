@@ -137,8 +137,12 @@ export const buildGraphOption = (input: GraphOptionInput): Record<string, unknow
 		animation: !reducedMotion,
 		tooltip: {
 			trigger: 'item',
-			// The whole surface is handed to SCSS so it matches the panel treatment
-			// the rest of the product uses.
+			// The panel is drawn by the formatter's own markup, not by this container.
+			// ECharts positions and shows the container whether or not the formatter
+			// returned anything, so any surface put here appears as an empty rectangle
+			// over whatever is under the pointer the moment you hover an edge or pan
+			// the canvas. Styling the returned markup instead means an empty tooltip
+			// is an empty box, which is nothing at all.
 			className: 'graph-tooltip',
 			backgroundColor: 'transparent',
 			borderWidth: 0,
@@ -200,16 +204,22 @@ export const tooltipHtml = (
 	const body = rows
 		.map(
 			([label, value]) =>
-				`<div class="graph-tooltip__row"><span class="graph-tooltip__key">${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`,
+				`<div class="d-flex justify-content-between gap-4 py-1 border-top"><span class="text-body-secondary">${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`,
 		)
 		.join('');
 
 	// The command is a shell string from the user's own config, and this is HTML
 	// handed to a renderer, so it is escaped rather than trusted.
+	//
+	// The classes are Bootstrap's own: a floating panel is a card with a shadow, and
+	// writing it that way means the tooltip re-themes with everything else instead of
+	// carrying a private copy of the surface colours.
 	return [
-		`<div class="graph-tooltip__label">${escapeHtml(node.id)}</div>`,
-		`<div class="graph-tooltip__command">${escapeHtml(node.command)}</div>`,
+		'<div class="card shadow p-3 small tw:max-w-[26rem]">',
+		`<div class="font-monospace fw-medium">${escapeHtml(node.id)}</div>`,
+		`<div class="font-monospace text-body-secondary mt-1 mb-2 tw:text-[0.75rem] tw:whitespace-pre-wrap tw:break-all">${escapeHtml(node.command)}</div>`,
 		body,
+		'</div>',
 	].join('');
 };
 
@@ -218,13 +228,17 @@ export interface LegendEntry {
 	label: string;
 }
 
-/** Every encoding gets a key: a shape needs one as much as a hue would. */
+/**
+ * The four states worth naming, keyed by the same glyphs the task list uses.
+ *
+ * The encodings left out are the ones the picture already explains: the arrows say
+ * dependency order, "not run" is what a node that is not any of these looks like, and
+ * a dashed border is spelled out in the node's own tooltip. A key long enough to need
+ * reading is one nobody reads.
+ */
 export const LEGEND: LegendEntry[] = [
-	{ icon: 'bi-arrow-right', label: 'left to right: dependency order' },
-	{ icon: 'bi-circle-fill', label: 'filled: ran' },
-	{ icon: 'bi-circle', label: 'outline: not run' },
-	{ icon: 'bi-lightning-charge', label: 'faded: cache hit' },
-	{ icon: 'bi-square', label: 'rounded square: persistent task' },
-	{ icon: 'bi-dash', label: 'dashed outline: pulled in as a dependency' },
-	{ icon: 'bi-x-lg', label: 'amber outline: failed' },
+	{ icon: 'bi-check-lg', label: 'Ran' },
+	{ icon: 'bi-lightning-charge', label: 'Cache hit' },
+	{ icon: 'bi-x-lg', label: 'Failed' },
+	{ icon: 'bi-square', label: 'Persistent' },
 ];

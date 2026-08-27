@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTaskView } from '../hooks/useRunStore.ts';
 import { isBusy, opensOnFailure, statusView } from '../lib/taskStatus.ts';
 import type { WorkspaceTaskView } from '../lib/types.ts';
+import IconButton from './iconButton.tsx';
 import OutputPane from './outputPane.tsx';
 
 interface TaskRowProps {
@@ -11,6 +12,11 @@ interface TaskRowProps {
 	onRun: (mode: 'normal' | 'force') => void;
 	runInFlight: boolean;
 }
+
+// Mono is for values. The cache-miss components are names out of the cache key, so
+// they get it; "persistent" and "never cached" are words about the task, so they do not.
+const VALUE = 'badge border bg-body-tertiary text-body-secondary fw-normal font-monospace';
+const LABEL = 'badge border bg-body-tertiary text-body-secondary fw-normal';
 
 const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 	const taskKey = `${workspace}:${task.task}`;
@@ -39,12 +45,12 @@ const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 					<div className="task-row__name">
 						{task.task}
 						{task.persistent && (
-							<span className="chip ms-2" title="Declared persistent: true">
+							<span className={`${LABEL} ms-2`} title="Declared persistent: true">
 								persistent
 							</span>
 						)}
 						{!task.cacheable && (
-							<span className="chip ms-2" title="Declared cache: false">
+							<span className={`${LABEL} ms-2`} title="Declared cache: false">
 								never cached
 							</span>
 						)}
@@ -57,10 +63,9 @@ const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 				<div className={`task-status task-status--${view.state}`}>
 					{view.state === 'running' ? (
 						<span
-							className="spinner-border spinner-border-sm"
+							className="spinner-border spinner-border-sm tw:h-[0.8rem] tw:w-[0.8rem] tw:border-[0.12em]"
 							role="status"
 							aria-hidden="true"
-							style={{ width: '0.8rem', height: '0.8rem', borderWidth: '0.12em' }}
 						/>
 					) : (
 						status.icon && <i className={`bi ${status.icon}`} aria-hidden="true" />
@@ -70,47 +75,33 @@ const TaskRow = ({ workspace, task, onRun, runInFlight }: TaskRowProps) => {
 
 				<div className="task-row__actions">
 					{view.hasOutput && (
-						<button
-							type="button"
-							className="icon-btn"
+						<IconButton
+							icon={open ? 'bi-chevron-up' : 'bi-chevron-down'}
+							label={open ? `Hide output for ${taskKey}` : `Show output for ${taskKey}`}
 							onClick={() => setOpen((value) => !value)}
-							aria-expanded={open}
-							title={open ? 'Hide output' : 'Show output'}
-							aria-label={open ? `Hide output for ${taskKey}` : `Show output for ${taskKey}`}
-						>
-							<i className={`bi ${open ? 'bi-chevron-up' : 'bi-chevron-down'}`} aria-hidden="true" />
-						</button>
+							expanded={open}
+						/>
 					)}
-					<button
-						type="button"
-						className="icon-btn"
+					<IconButton
+						icon="bi-play-fill"
+						label={`Run ${taskKey}`}
 						onClick={() => onRun('normal')}
 						disabled={runInFlight}
-						title={`Run ${taskKey}`}
-						aria-label={`Run ${taskKey}`}
-					>
-						<i className="bi bi-play-fill" aria-hidden="true" />
-					</button>
-					<button
-						type="button"
-						className="icon-btn"
+					/>
+					<IconButton
+						icon="bi-arrow-clockwise"
+						label={`Run ${taskKey} again, ignoring the cache`}
 						onClick={() => onRun('force')}
 						disabled={runInFlight}
-						title={`Run ${taskKey} again, ignoring the cache`}
-						aria-label={`Run ${taskKey} again, ignoring the cache`}
-					>
-						<i className="bi bi-arrow-clockwise" aria-hidden="true" />
-					</button>
+					/>
 				</div>
 			</div>
 
 			{view.missComponents && view.missComponents.length > 0 && (
 				<div className="miss-chips" aria-label={view.missMessage}>
-					<span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-						cache miss:
-					</span>
+					<span className="text-body-secondary tw:text-[0.72rem]">cache miss:</span>
 					{view.missComponents.map((component) => (
-						<span key={component} className="chip">
+						<span key={component} className={VALUE}>
 							{component}
 						</span>
 					))}

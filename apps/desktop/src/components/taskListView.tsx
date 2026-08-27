@@ -68,12 +68,15 @@ const TaskListView = () => {
 			<div className="app-main__scroll">
 				<div className="app-main__inner">
 					{runner.error && (
-						<div className="notice notice--bad mb-3">
+						<div
+							className="alert alert-danger alert-dismissible d-flex align-items-start gap-2 mb-3"
+							role="alert"
+						>
 							<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 							<div className="flex-grow-1 selectable">{runner.error}</div>
 							<button
 								type="button"
-								className="btn-close btn-sm"
+								className="btn-close"
 								aria-label="Dismiss"
 								onClick={runner.dismissError}
 							/>
@@ -81,14 +84,14 @@ const TaskListView = () => {
 					)}
 
 					{failure && run.outcome?.status === 'interrupted' && (
-						<div className="notice mb-3">
+						<div className="alert alert-secondary d-flex align-items-start gap-2 mb-3" role="alert">
 							<i className="bi bi-slash-circle" aria-hidden="true" />
 							<div>Interrupted. Every running task was stopped.</div>
 						</div>
 					)}
 
 					{run.warnings.length > 0 && (
-						<div className="notice mb-3">
+						<div className="alert alert-secondary d-flex align-items-start gap-2 mb-3" role="alert">
 							<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 							<div className="selectable">
 								{run.warnings.map((warning, index) => (
@@ -99,7 +102,7 @@ const TaskListView = () => {
 					)}
 
 					{project.workspaces.length === 0 ? (
-						<div className="empty-state">
+						<div className="d-flex flex-column align-items-center justify-content-center gap-3 text-center text-body-secondary py-5">
 							<i className="bi bi-inboxes fs-2" aria-hidden="true" />
 							<div>No workspaces declared. Add one in Config.</div>
 						</div>
