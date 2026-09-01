@@ -189,17 +189,28 @@ fi
 # 0.4.0 to show a mismatch; the README says `lattice upgrade 0.2.0`. Anchoring
 # on the key or on a semver shape would rewrite those too. Matching only
 # "$current" cannot touch a version that was never the current one.
+#
+# One shape still has to survive the literal replacement: a version that follows
+# a range operator or an `@`. Several pages quote the engine error's
+# `{ "version": ">=1.0.0" }`, and a sample of npm output says `web@1.0.0`. Those
+# are examples about some other tool that happen to spell the number Lattice is
+# on, and rewriting them would put words in an error message the code does not
+# print. Park them behind a sentinel, replace, put them back.
 if [ "$current" = "$version" ]; then
 	echo "  (docs already at $version — nothing to rewrite)"
 else
 	# Escape the regex metacharacters a semver can hold. Only '.' and '+' occur
 	# in practice, but a pre-release suffix is nearly free-form.
 	current_re="$(printf '%s' "$current" | sed 's/[.[\*^$()+?{|]/\\&/g')"
+	keep='@@LATTICE_KEEP_VERSION@@'
 	while IFS= read -r file; do
 		case "$file" in ''|\#*) continue ;; esac
 		[ -f "$file" ] || { echo "  MISSING  $file (listed but not on disk)" >&2; continue; }
 
-		if sed "s|$current_re|$version|g" "$file" | apply "$file"; then
+		if sed -e "s|\([<>=~^@][[:space:]]*\)$current_re|\1$keep|g" \
+			-e "s|$current_re|$version|g" \
+			-e "s|$keep|$current|g" \
+			"$file" | apply "$file"; then
 			note "$file" "version references = $version"
 		fi
 	done <"$root/scripts/version-doc-files.txt"

@@ -13,7 +13,7 @@ import {
 const CONFIG = [
 	'{',
 	'\t"$schema": ".lattice/schema.json",',
-	'\t"latticeVersion": "1.0.0-beta-2",',
+	'\t"latticeVersion": "1.0.0",',
 	'\t"workspaces": [',
 	'\t\t{ "name": "web", "path": "apps/web" },',
 	'\t\t{ "name": "api", "path": "services/api" }',
@@ -28,7 +28,7 @@ const CONFIG = [
 // The acceptance test for the whole design: the editor holds text, not an object.
 test('loading and saving without an edit changes nothing', () => {
 	// Reading it and writing it back through the edit layer is a no-op.
-	const same = setValue(CONFIG, ['latticeVersion'], '1.0.0-beta-2');
+	const same = setValue(CONFIG, ['latticeVersion'], '1.0.0');
 	assert.equal(same, CONFIG);
 });
 

@@ -16,6 +16,18 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Lattice 1.0 — 2026-08-31
+
+- The first stable release. The `lattice.json` schema and the CLI surface are
+  under semver from here: a breaking change to either takes a major bump
+- The GitHub release is no longer marked a pre-release and the npm packages
+  publish under `latest` rather than `next`, so a bare `install.sh`, a bare
+  `npm install --save-dev @latticeandcompany/lattice`, and `lattice upgrade`
+  with no version all resolve to it
+- Nothing about the CLI, the config schema, or the cache key changed from
+  `1.0.0-beta-3`. The running version is hashed into every task's key, so the
+  first run after upgrading still re-runs everything
+
 ## Ctrl-C ends a run holding persistent tasks — 2026-08-26
 
 - A run whose persistent task left a process holding the task's output open

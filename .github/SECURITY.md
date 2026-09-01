@@ -34,8 +34,8 @@ There is no bug bounty.
 
 ## Supported versions
 
-Lattice is pre-1.0. Only the latest release and the tip of `mega` are supported.
-Fixes are not backported.
+Only the latest release and the tip of `mega` are supported. Fixes are not
+backported.
 
 | Version | Supported |
 |---|---|

@@ -7,7 +7,7 @@ import { githubUrl } from './nav.ts';
  * under the bare name below. The site then needs no redeploy after a release.
  *
  * GitHub's `latest` skips pre-releases, and release.yml marks any version with a `-`
- * in it as one. These links resolve once a stable version ships.
+ * in it as one. These links resolve to the newest stable release.
  */
 export const latestDownloadBase = `${githubUrl}/releases/latest/download`;
 

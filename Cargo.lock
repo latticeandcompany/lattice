@@ -700,7 +700,7 @@ checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "dagger"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "indexmap 2.14.0",
@@ -2088,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "lattice"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-cache"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-config"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "indexmap 2.14.0",
@@ -2148,7 +2148,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-desktop"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dagger",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-events"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-output"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "console",
  "indicatif",
@@ -2185,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-project"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dagger",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "lattice-runner"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2222,14 +2222,14 @@ dependencies = [
 
 [[package]]
 name = "lattice-testkit"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "lattice-workspace"
-version = "1.0.0-beta-3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "ignore",

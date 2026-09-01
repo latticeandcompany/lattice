@@ -25,8 +25,8 @@ lattice upgrade latest
 3. Rewrites `latticeVersion` in `lattice.json`, editing the file as text so key
    order and formatting stay as they were.
 
-`lattice upgrade latest` resolves the newest stable release. If the project has
-not shipped a stable release yet, it pins the newest pre-release and says so.
+`lattice upgrade latest` resolves the newest stable release. If there is no
+stable release to resolve, it pins the newest pre-release and says so.
 
 A version may carry a leading `v` or not, and is otherwise validated as semver.
 Anything else is rejected:

@@ -34,7 +34,7 @@ reads what `frontend` produced.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0-beta-3",
+  "latticeVersion": "1.0.0",
   "workspaces": [
     {
       "name": "frontend",

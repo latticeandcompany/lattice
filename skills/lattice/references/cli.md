@@ -268,7 +268,7 @@ Prints a completion script to stdout. `<SHELL>` is one of `bash`, `elvish`,
 Prints the splash, or a single-line JSON object with `--json`:
 
 ```json
-{"version":"1.0.0-beta-3","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.0.0","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 `upgrade`, `version`, and `completions` run as the binary that was invoked and
@@ -281,7 +281,7 @@ names. Lattice validates the value first, so one that is not a version fails by
 name rather than becoming a download of a release that cannot exist:
 `lattice.json pins \`latticeVersion\` as "X", which is not a version. Write it
 like 0.2.0, or run \`lattice upgrade <version>\` to set it`. Lattice accepts and
-strips a leading `v`, so `"v1.0.0-beta-3"` and `"1.0.0-beta-3"` name the same
+strips a leading `v`, so `"v1.0.0"` and `"1.0.0"` name the same
 release. When that release is the running build, the pin is a no-op instead of a
 failed download.
 
