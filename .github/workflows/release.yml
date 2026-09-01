@@ -214,8 +214,12 @@ jobs:
       # The bundles are unsigned. There is no Developer ID and no Windows publisher
       # certificate, so no step here reads a signing secret, and the download page
       # tells the reader what their OS will say on first launch.
+      #
+      # --verbose because the bundler swallows its tools' output. A WiX failure
+      # reports `failed to run candle.exe` and nothing else, so without this the
+      # only way to learn what candle objected to is to run it by hand on a runner.
       - name: Bundle
-        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --verbose -- --locked
         working-directory: apps/desktop
 
       # Two names for one file. The versioned name is the archive. The bare name is

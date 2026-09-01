@@ -16,6 +16,14 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## The Windows installer builds — 2026-09-01
+
+- The desktop app's Windows `.msi` and `.exe` installers had never been produced.
+  The publisher string in the app's config held a literal `&`, which reached the
+  installer's generated XML unescaped and stopped the Windows build. The
+  publisher spells the ampersand out, and both Windows installers are on the
+  release
+
 ## Lattice 1.0 — 2026-08-31
 
 - The first stable release. The `lattice.json` schema and the CLI surface are
