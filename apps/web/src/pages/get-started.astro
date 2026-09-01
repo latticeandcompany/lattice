@@ -4,7 +4,7 @@ import CopyCommand from '../components/copyCommand';
 import { installCommand, releasesUrl } from '../lib/nav';
 import { withBase } from '../lib/base';
 
-// Every terminal transcript on this page was captured from lattice 1.0.0-beta-2
+// Every terminal transcript on this page was captured from lattice 1.0.0
 // running against a two-package repo. Re-capture them rather than editing by hand.
 const initOutput = `✓ wrote lattice.json
 ✓ wrote .lattice/schema.json
@@ -14,7 +14,7 @@ next: lattice run build`;
 
 const config = `{
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0-beta-2",
+  "latticeVersion": "1.0.0",
   "workspaces": [
     { "name": "ui",  "path": "packages/ui" },
     { "name": "web", "path": "apps/web", "dependsOn": ["ui"] }
@@ -34,22 +34,22 @@ const setupOutput = `❖ lattice  setup
 ❖ setup complete`;
 
 const coldRun = `lattice: running \`build\` across 2 workspaces
-lattice: ui:build: hash 664f4cd394564ff5
+lattice: ui:build: hash 6ab2b4b8a24730ea
 lattice: ui:build: cache miss (nothing cached for this task yet)
 ui:build: running
-ui:build: done (0.21s)
-lattice: web:build: hash d97c6e8a847a1e0f
+ui:build: done (0.25s)
+lattice: web:build: hash e7006757504cd76c
 lattice: web:build: cache miss (nothing cached for this task yet)
 web:build: running
-web:build: done (0.18s)
-lattice: 2 tasks, 0 cached, 0 failed, 0.39s`;
+web:build: done (0.20s)
+lattice: 2 tasks, 0 cached, 0 failed, 0.46s`;
 
 const warmRun = `lattice: running \`build\` across 2 workspaces
-lattice: ui:build: hash 664f4cd394564ff5
-ui:build: cache hit [664f4cd3]
-lattice: web:build: hash d97c6e8a847a1e0f
-web:build: cache hit [d97c6e8a]
-lattice: 2 tasks, 2 cached, 0 failed, 0.00s, 0.39s saved
+lattice: ui:build: hash 6ab2b4b8a24730ea
+ui:build: cache hit [6ab2b4b8]
+lattice: web:build: hash e7006757504cd76c
+web:build: cache hit [e7006757]
+lattice: 2 tasks, 2 cached, 0 failed, 0.00s, 0.45s saved
 lattice: full power, nothing to run`;
 
 const windowsInstallCommand = 'irm https://latticeandcompany.github.io/lattice/install.ps1 | iex';
@@ -130,7 +130,7 @@ const next = [
 				<div class="step__body">
 					<h2 class="step__title">Check that it runs</h2>
 					<pre class="step__code"><code>lattice --version</code></pre>
-					<pre class="step__code step__code--out"><code>lattice 1.0.0-beta-2</code></pre>
+					<pre class="step__code step__code--out"><code>lattice 1.0.0</code></pre>
 					<p class="mb-0">
 						If your shell can't find <code>lattice</code>, open a new terminal so the
 						<code>PATH</code> line takes effect.
@@ -197,12 +197,12 @@ const next = [
 				<span class="step__num" aria-hidden="true">6</span>
 				<div class="step__body">
 					<h2 class="step__title">Run a task</h2>
-					<pre class="step__code"><code>lattice run build -l</code></pre>
+					<pre class="step__code"><code>lattice run build -v</code></pre>
 					<pre class="step__code step__code--out"><code>{coldRun}</code></pre>
 					<p>
 						<code>ui</code> builds before <code>web</code> because <code>web</code> depends on it.
-						Workspaces with no dependency between them run at the same time. <code>-l</code> is short
-						for <code>--loquacious</code>, and it prints this plain log. Without it, on a terminal, you
+						Workspaces with no dependency between them run at the same time. <code>-v</code> is short
+						for <code>--verbose</code>, and it prints this plain log. Without it, on a terminal, you
 						get a live display instead.
 					</p>
 					<p>Run it again without changing a file:</p>

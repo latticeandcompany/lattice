@@ -38,6 +38,16 @@ good() { printf '%s✓%s %s\n' "$GRN" "$RST" "$1"; }
 # leaves an extracted value looking empty.
 text() { tr -d '\r' <"$1"; }
 
+# Whether a file names the release, ignoring the version when it follows a range
+# operator or an `@`. Several pages quote the engine error's
+# `{ "version": ">=1.0.0" }` and a sample of npm output says `web@1.0.0`; those
+# are examples about some other tool that happen to spell the number Lattice is
+# on, not references that have to track it. sync-version.sh leaves the same shape
+# alone, so the two agree on what counts.
+names_version() {
+	text "$1" | sed "s|[<>=~^@][[:space:]]*$VERSION_RE||g" | grep -qF "$CARGO_VERSION"
+}
+
 # Only the [workspace.package] block, so a dependency's `version = ` cannot match.
 # `-F'"'` puts the quoted value in $2; a `gsub` of everything up to a quote is
 # greedy enough to swallow the value along with the key.
@@ -53,6 +63,8 @@ MSRV="$(toml_field rust-version)"
 
 [ -n "$CARGO_VERSION" ] || { printf 'no version in [workspace.package]\n' >&2; exit 2; }
 [ -n "$MSRV" ] || { printf 'no rust-version in [workspace.package]\n' >&2; exit 2; }
+
+VERSION_RE="$(printf '%s' "$CARGO_VERSION" | sed 's/[.[\*^$]/\\&/g')"
 
 printf 'Cargo.toml: version %s, rust-version %s\n\n' "$CARGO_VERSION" "$MSRV"
 
@@ -137,7 +149,7 @@ else
 		case "$file" in ''|\#*) continue ;; esac
 		if [ ! -f "$file" ]; then
 			stale="$stale $file(absent)"
-		elif ! text "$file" | grep -qF "$CARGO_VERSION"; then
+		elif ! names_version "$file"; then
 			stale="$stale $file"
 		fi
 	done <"$list"
@@ -153,10 +165,10 @@ else
 	# the version that shipped it, which is history, not a current reference.
 	unlisted=''
 	for f in .github/README.md apps/web/src/content/docs/*.md \
-		skills/*/*.md skills/*/*/*.md; do
+		apps/web/src/pages/*.astro skills/*/*.md skills/*/*/*.md; do
 		case "$f" in *changelog.md|*CHANGELOG.md) continue ;; esac
 		[ -f "$f" ] || continue
-		text "$f" | grep -qF "$CARGO_VERSION" || continue
+		names_version "$f" || continue
 		grep -qxF "$f" "$list" || unlisted="$unlisted $f"
 	done
 

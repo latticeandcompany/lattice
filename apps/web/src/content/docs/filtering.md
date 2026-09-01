@@ -136,9 +136,10 @@ lattice run lint test build
 ```
 
 By default these merge into a single graph before anything runs, so a dependency
-shared by more than one named task appears once and runs once. See [Stacked
-tasks share one
-graph](/lattice/docs/task-graph#stacked-tasks-share-one-graph). The same
+shared by more than one named task appears once and runs once. See [Naming
+several tasks builds one
+graph](/lattice/docs/task-graph#naming-several-tasks-builds-one-graph-not-several-runs).
+The same
 de-duplication applies to the dependencies a `--filter` pulls in: a workspace
 that two matches both depend on gets one node.
 

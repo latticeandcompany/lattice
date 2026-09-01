@@ -61,13 +61,12 @@ config, and asks first when it has a terminal to ask on. Set
 Or through the package manager the repo already uses:
 
 ```sh
-npm install --save-dev @latticeandcompany/lattice@next
+npm install --save-dev @latticeandcompany/lattice
 ```
 
 npm unpacks one prebuilt binary, the same one the release publishes, and puts
 `lattice` on your package scripts. There is no download step and no `postinstall`
-script. Lattice is pre-1.0, so the `next` tag is the current beta and `latest`
-lags it.
+script.
 
 An npm install is the one that does not follow a `latticeVersion` pin. Your
 lockfile has already chosen the version, so Lattice runs what npm installed and
@@ -153,7 +152,7 @@ it is a real shell command that you can also run by hand.
 
 ```json
 {
-  "latticeVersion": "1.0.0-beta-3",
+  "latticeVersion": "1.0.0",
   "workspaces": [
     { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } },
     { "name": "api", "path": "services/api", "engines": { "go": ">=1.22" } },

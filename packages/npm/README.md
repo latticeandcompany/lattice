@@ -29,13 +29,6 @@ This package is a wrapper around the real binary. It passes everything after the
 command name straight through, so `npx lattice` and an installed `lattice` are
 the same program with the same help.
 
-Lattice is pre-1.0, so npm's `latest` tag lags the newest build. To install the
-current beta, use the `next` tag:
-
-```sh
-npm install --save-dev @latticeandcompany/lattice@next
-```
-
 ## Only one binary is installed
 
 The binary is not in this package. Six sibling packages carry one build each, and

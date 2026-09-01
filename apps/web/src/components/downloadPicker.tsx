@@ -82,9 +82,7 @@ const DownloadPicker = () => {
 	return (
 		<div className="d-flex flex-column align-items-center">
 			<Primary platform={platform} />
-			<p className="download-picker__hint mt-3 mb-1">
-				
-			</p>
+			<p className="download-picker__hint mt-3 mb-1">Showing {platform.label}. Other builds:</p>
 			<p className="download-picker__hint mb-0">
 				{others.map((p, i) => (
 					<span key={key(p)}>

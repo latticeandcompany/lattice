@@ -151,13 +151,6 @@ That package is a wrapper around the real binary. It passes everything after the
 command name straight through, so `npx lattice` and an installed `lattice` are
 the same program with the same help.
 
-Lattice is pre-1.0, so npm's `latest` tag lags the newest build. To install the
-current beta, use the `next` tag:
-
-```sh
-npm install --save-dev @latticeandcompany/lattice@next
-```
-
 npm installs the binary and nothing else, so it does not set up shell
 completions. See [Add shell completions](#add-shell-completions).
 
@@ -279,7 +272,7 @@ lattice --version
 ```
 
 ```text
-lattice 1.0.0-beta-3
+lattice 1.0.0
 ```
 
 `lattice version` prints the same version under the mark. For a
@@ -290,7 +283,7 @@ lattice version --json
 ```
 
 ```json
-{"version":"1.0.0-beta-3","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.0.0","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 Running `lattice` with no arguments prints the mark and points you at `--help`.

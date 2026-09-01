@@ -16,6 +16,39 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### A version reference that is really a range no longer counts — 2026-08-31
+
+- `scripts/sync-version.sh` rewrote the outgoing version literally wherever it
+  appeared in the files `scripts/version-doc-files.txt` lists. At 1.0.0 that
+  reaches text it has no business touching: three pages quote the engine error's
+  `{ "version": ">=1.0.0" }`, and a sample of npm output reads `web@1.0.0`. The
+  next bump would have rewritten all four into error messages the code does not
+  print. A version that follows a range operator or an `@` is now left alone
+- `scripts/check-versions.sh` makes the same exception, so the two still agree on
+  what counts as a reference. Without it, every page holding a `>=1.0.0` example
+  would have failed the check that a page naming the current version is on the
+  list
+- The check now scans `apps/web/src/pages/*.astro` as well as the docs and the
+  skill, and `get-started.astro` joins the list. Its terminal transcripts are
+  captured output, and nothing was watching them: the page said `1.0.0-beta-2`,
+  two releases behind, while the check passed
+- The transcripts on that page are re-captured from 1.0.0, and it teaches `-v`
+  rather than `-l`. `-l` is a hidden alias for `--verbose`, so the site was the
+  one place advertising a flag `--help` does not list
+
+### Lattice 1.0 — 2026-08-31
+
+- The first stable release. The `lattice.json` schema and the CLI surface are
+  under semver from here: a breaking change to either takes a major bump
+- The GitHub release is no longer marked a pre-release and the npm packages
+  publish under `latest` rather than `next`, so a bare `install.sh`, a bare
+  `npm install --save-dev @latticeandcompany/lattice`, and `lattice upgrade`
+  with no version all resolve to it. The `@next` tag is no longer the one to ask
+  for, and the docs no longer tell you to
+- Nothing about the CLI, the config schema, or the cache key changed from
+  `1.0.0-beta-3`. The running version is hashed into every task's key, so the
+  first run after upgrading still re-runs everything
+
 ### Ctrl-C ends a run holding persistent tasks — 2026-08-26
 
 - A run whose persistent task left a process holding the task's output open

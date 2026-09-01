@@ -18,14 +18,23 @@
 # semver-anchored rewrite would corrupt all of them. Matching only the outgoing
 # version cannot.
 #
+# The one exception both scripts make is a version that follows a range operator
+# or an `@`: the engine error's `{ "version": ">=1.0.0" }` and a sample of npm
+# output reading `web@1.0.0` are about some other tool, and only collide with
+# Lattice's own version by coincidence. They are neither rewritten nor counted.
+#
 # Do not add a changelog here. Changelog entries name the version that shipped
 # them and are history, not a current-version reference.
 #
 # Adding a version sample to a new page? Add the page here. check-versions.sh
-# fails on any docs or skills page that names the current version and is absent
-# from this list, so it will tell you.
+# fails on any docs, skills, or site page that names the current version and is
+# absent from this list, so it will tell you. get-started.astro is on the list
+# for exactly that reason: its terminal transcripts are captured output, and it
+# sat on a release from two bumps ago while nothing was looking at it.
 
 .github/README.md
+
+apps/web/src/pages/get-started.astro
 
 apps/web/src/content/docs/cli.md
 apps/web/src/content/docs/configuration.md

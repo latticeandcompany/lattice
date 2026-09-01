@@ -257,7 +257,7 @@ lattice prune --max-size 2GB
 
 With neither the setting nor the flag, `prune` fails rather than guess a limit,
 and the cache grows without bound. See
-[Caching](/lattice/docs/caching#keeping-the-cache-to-a-size).
+[Caching](/lattice/docs/caching#the-cache-directory-is-disposable).
 
 A `prune` here does not reclaim debris the run just left behind. A leftover has
 to sit untouched for an hour first, so `prune` frees only the entries the size

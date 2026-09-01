@@ -30,6 +30,13 @@ import { resolveTarget, SCOPE } from '../src/target.ts';
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
 
+// Read rather than written out: the bundler substitutes __LATTICE_VERSION__ from
+// this same file, so a literal here would only assert that someone remembered to
+// edit two places at once.
+const { version: packageVersion } = createRequire(import.meta.url)('../package.json') as {
+	version: string;
+};
+
 const target = resolveTarget();
 const windows = process.platform === 'win32';
 
@@ -75,14 +82,14 @@ describe('the built package', { skip: target === null ? 'no binary is published 
 		const req = createRequire(join(scratch, 'pkg', 'noop.cjs'));
 		const api = req('./index.cjs') as { binaryPath: () => string; version: string };
 		assert.equal(api.binaryPath(), fakeExe);
-		assert.equal(api.version, '1.0.0-beta-3');
+		assert.equal(api.version, packageVersion);
 	});
 
 	test('import finds the same binary', async () => {
 		const url = pathToFileURL(join(scratch, 'pkg', 'index.mjs')).href;
 		const api = (await import(url)) as { binaryPath: () => string; version: string };
 		assert.equal(api.binaryPath(), fakeExe);
-		assert.equal(api.version, '1.0.0-beta-3');
+		assert.equal(api.version, packageVersion);
 	});
 
 	test('the bin forwards its arguments and returns the exit code', { skip: windows }, () => {
