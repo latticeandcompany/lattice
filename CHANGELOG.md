@@ -16,6 +16,21 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### The Windows installer builds — 2026-09-01
+
+- `"publisher": "Lattice & Company"` in `tauri.conf.json` reached the MSI's
+  generated `main.wxs` as a bare `&`, which is not valid XML, so WiX's
+  `candle.exe` rejected the file and no Windows bundle was ever produced. The
+  publisher spells the ampersand out. Nothing else in the app changes — the
+  string appears in the installer's Manufacturer field
+- The bundler swallows the output of the tools it drives, so the only thing the
+  release log said was `failed to run candle.exe`. The bundle step passes
+  `--verbose` now, which surfaces the real message
+- `scripts/stress-test.sh` fails if `publisher`, `copyright`, `productName`, or
+  either description grows an unescaped `&`. The failure it prevents is invisible
+  at the point it bites: it costs a full release build to reach, and the message
+  it leaves behind names the wrong thing
+
 ### A version reference that is really a range no longer counts — 2026-08-31
 
 - `scripts/sync-version.sh` rewrote the outgoing version literally wherever it

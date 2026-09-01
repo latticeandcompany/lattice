@@ -2205,6 +2205,17 @@ else
   pass "tauri.conf.json declares no version of its own"
 fi
 
+# Tauri writes publisher, copyright and the descriptions into the MSI's main.wxs
+# without escaping them, so a bare `&` in any of them is invalid XML and WiX's
+# candle.exe rejects the file. It reports only `failed to run candle.exe`, with
+# candle's own message swallowed, so the cause is invisible at the point it bites.
+# "Lattice & Company" as the publisher is what broke the first 1.0.0 release build.
+if grep -nE '"(publisher|copyright|shortDescription|longDescription|productName)"[[:space:]]*:[^,]*&' "$CONF" >/dev/null 2>&1; then
+  fail "no bare & reaches the MSI's main.wxs" "a WXS-bound field in tauri.conf.json holds an unescaped &"
+else
+  pass "no bare & reaches the MSI's main.wxs"
+fi
+
 # devUrl and the dev server have to agree on a port, and frontendDist is what
 # generate_context! embeds.
 t_grepfile "$CONF" '"devUrl": "http://localhost:1420"' "tauri.conf.json points at the dev server port vite pins"
