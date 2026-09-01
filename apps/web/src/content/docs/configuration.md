@@ -304,6 +304,10 @@ anything matched here makes every task in the repo miss. Lattice hashes these
 patterns once at the start of a run, so a malformed pattern fails the whole run
 rather than one task. See [Cache internals](/lattice/docs/cache-internals).
 
+`lattice init` writes this key when a workspace's `turbo.json` declares
+`globalDependencies`. Prune what it brought over on the rule above: a pattern
+that does not really cross workspaces costs every task a miss.
+
 ## `globalEnv`
 
 ```json
@@ -322,6 +326,9 @@ key from not listing the name at all. Unlike a task's `env`, these names are not
 set on task processes: they are already in the environment Lattice inherited. A
 task's own `env` list applies on top of this one. See [Environment
 variables](/lattice/docs/environment-variables).
+
+`lattice init` writes this key too, when a workspace's `turbo.json` declares
+`globalEnv`.
 
 ## `tasks`
 

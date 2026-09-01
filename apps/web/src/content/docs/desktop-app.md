@@ -74,7 +74,9 @@ this project** instead of failing. That is a four-step walkthrough:
    tick box each, and names the marker file it found and the driver it resolved.
    A candidate with no driver is offered but left unticked, because declaring it
    would halt the next run. The repo root, when it is one of the candidates,
-   starts unticked too.
+   starts unticked too. Each row also says how many tasks ticking it brings in
+   and which file they came from — `3 tasks from turbo.json` — because the
+   pipeline follows the workspaces you tick rather than being a step of its own.
 3. **Engines** lists every tool version the repo already pins at its root, read
    out of `.tool-versions`, `.nvmrc`, `package.json`, `go.mod`, and the
    `.python-version` family, and says which file each came from. Tick the ones
@@ -84,9 +86,11 @@ this project** instead of failing. That is a four-step walkthrough:
    opens the project.
 
 The preview comes from the same code path `lattice init` uses, so the file the
-window writes is the file the CLI would have written: `lattice.json`, a
-committed `.lattice/schema.json` so your editor can check the config as you
-type, and five lines appended to `.gitignore`.
+window writes is the file the CLI would have written: `lattice.json`, holding
+the workspaces and engines you ticked and the tasks their drivers already
+declare, plus a committed `.lattice/schema.json` so your editor can check the
+config as you type, and five lines appended to `.gitignore`. See [`lattice
+init`](/lattice/docs/cli#the-tasks-it-writes) for what reaches the task map.
 
 The project block at the top of the sidebar is also the control that changes it.
 Click it for every project you have opened, plus **Open another project…** and

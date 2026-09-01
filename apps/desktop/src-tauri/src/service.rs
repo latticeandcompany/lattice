@@ -402,6 +402,7 @@ mod tests {
 				marker: "package.json".into(),
 				driver: Some("npm".into()),
 				default_selected: true,
+				declared: Default::default(),
 			}],
 			pins: Vec::new(),
 		};

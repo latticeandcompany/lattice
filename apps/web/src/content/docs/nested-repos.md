@@ -94,10 +94,14 @@ runner Lattice invokes for `frontend:build` comes from that repo's own
 
 Both workspaces set `"auto": false`, which skips driver detection and runs only
 what `scripts` declares. A wrapped subtree wants that, because the handoff is
-specific: which runner binary, invoked from where, with which flags. The script
-above calls `node_modules/.bin/turbo` rather than whatever `turbo` resolves to
-on `PATH`, and prints an install hint when that binary is missing. Detection has
-no way to produce either detail.
+specific: which runner binary, invoked from where, with which flags. Detection
+has no way to produce that.
+
+The script above names `node_modules/.bin/turbo` by path so it can test for the
+binary and print an install hint when it is missing. Locating it is not the
+reason: Lattice puts `frontend/node_modules/.bin` on the task's `PATH`, so a
+bare `turbo run build` would find the same binary. Write the plain command if
+you do not want the guard.
 
 A manual workspace needs a script for any task you run directly against it.
 `frontend` has no `serve` script, because it has nothing to serve. Running

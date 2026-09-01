@@ -114,6 +114,13 @@ Every item here is something models invent. None of it parses.
   its command line, so `lattice run test` in a `cargo` workspace runs
   `cargo test` whether or not a target exists. To run a task in a workspace whose
   manifest does not declare it, add a `scripts` entry in `lattice.json`.
+- **A `persistent: true` task infers a command only where one can be trusted.**
+  A manifest-driven workspace runs it if the manifest declares it, and a task
+  runner (`just`, `task`, `turbo`, `nx`, `rake`, `mix`) runs it because those
+  run the tasks the repo declared to them — `dev` in a `turbo.json` workspace
+  resolves to `turbo run dev`. Every other driver takes the task name as a
+  subcommand and there is no `cargo dev`, so a persistent task there needs a
+  `scripts` entry.
 - **A skipped task warns when it looks like a typo.** A workspace whose manifest
   declares a script map without the requested task prints
   `<ws> declares scripts but no "<task>", so the task was skipped`, plus either a
@@ -306,7 +313,9 @@ The cache key is a sha256 over ten separately hashed components:
 | `globalDependencies` | The root `globalDependencies` patterns and the contents of what they match |
 
 Nothing else is consulted. `timeout`, `cache`, and `persistent` are not part of
-the key.
+the key, and neither are the project's dependency bin directories Lattice puts
+on a task's `PATH`. What the key tracks about tools is the resolved toolchain
+identity, not where a binary was found.
 
 Two consequences worth knowing before debugging a hit or a miss:
 
@@ -347,6 +356,10 @@ That makes six fields yours to get right:
   matches makes every task miss, so list only what genuinely crosses workspaces.
 - `globalEnv` (root level) is `env` for the whole repo. Same resolution, hashed
   into every key, and not re-exported to the task, which already inherits it.
+
+`lattice init` writes both when a selected workspace's `turbo.json` declares
+them. Prune what it brought over on the same rule: a global dependency that does
+not really cross workspaces costs every task a miss.
 
 Set `cache: false` to opt one task out entirely. `persistent: true` is never
 cached regardless. The cache lives in `.lattice/cache` and is safe to delete at
@@ -418,6 +431,13 @@ Nothing about a provisioned engine touches the shell, a profile, or a global
 install. The `PATH` change lives in the one child process Lattice spawns for that
 task, and `rm -rf .lattice/toolchains` is a complete uninstall.
 
+A task's `PATH` gets one more thing: the project's own dependency bin
+directories (`node_modules/.bin`, `vendor/bin`, `.venv/bin`, and the rest),
+walked from the workspace directory up to the repo root and added after the
+toolchain directories. A `scripts` entry can therefore name a tool the project
+installed — `eslint src`, `pytest -q` — with no `npx` or `poetry run` prefix
+to find it. The full list is in `references/cli.md`.
+
 The well-known engine list, the driver table, and the `installCmd` contract are
 in `references/toolchains.md`.
 
@@ -464,18 +484,28 @@ Order matters. Skipping ahead is what makes an adoption feel like a rewrite.
    the tool versions the repo root already pins in `.tool-versions`, `.nvmrc`,
    `rust-toolchain.toml` or `rust-toolchain`, `.python-version`, `.ruby-version`,
    `.java-version`, `package.json` (`packageManager` and `engines`), and a
-   `toolchain` line in `go.mod`. Then it writes
+   `toolchain` line in `go.mod`. For each workspace it keeps, it reads the task
+   list out of the file that workspace's driver reads — `turbo.json`, `nx.json`,
+   `package.json` scripts, `deno.json`, `composer.json`, a `justfile`, a
+   `Taskfile.yml`, `pyproject.toml`, `Pipfile` — and writes every task it finds.
+   Then it writes
    `lattice.json`, a committed `.lattice/schema.json`, and five `.gitignore`
    lines (`.lattice/cache/`, `.lattice/toolchains/`, `.lattice/bin/`,
    `.lattice/setup/`, and `.lattice-setup-marker`). Without a TTY it behaves as
    `-y`, and writes a bare skeleton if the scan finds nothing.
    It refuses to overwrite an existing `lattice.json` without `--force`.
-2. Check what it proposed. It declares workspaces, not tasks. Confirm with
-   `lattice run build --dry-run` that each resolved command is the one that
-   directory already runs by hand, and delete any workspace that is not one.
-   `init` leaves out directories whose driver stayed ambiguous, and names them;
-   bring one in by declaring its driver in `engines`, then adding the workspace.
-3. Only then add `inputs` and `outputs`.
+2. Check what it proposed. Run `lattice run <task> --dry-run` on a task it wrote
+   and confirm each resolved command is the one that directory already runs by
+   hand; delete any workspace that is not one. A workspace whose driver takes
+   the task name on its command line — `cargo`, `go`, `gradle` and the rest —
+   publishes no list to read, so it contributes only `build`; add its other
+   tasks by hand. `init` leaves out directories whose driver stayed ambiguous,
+   and names them; bring one in by declaring its driver in `engines`, then
+   adding the workspace.
+3. Review the `inputs` and `outputs`. A `turbo.json` brings its own over, along
+   with each task's `dependsOn`, `env`, `persistent`, and `cache`, and the
+   repo's `globalDependencies` and `globalEnv`. Everything else arrives as an
+   empty task, so declare them there.
 4. Keep only the `engines` whose guarantee is actually needed. `init` proposes
    every pin it found, which is usually more than a repo needs enforced.
 5. Leave the install markers alone. `lattice setup` writes them under

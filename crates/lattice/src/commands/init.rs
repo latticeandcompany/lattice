@@ -7,7 +7,9 @@ use dialoguer::{theme::ColorfulTheme, Input, MultiSelect, Select};
 use serde_json::Value;
 
 use lattice_output::{logo_for, teal, Theme};
-use lattice_workspace::scan::{scan_engine_pins, scan_workspaces, EnginePin, WorkspaceCandidate};
+use lattice_workspace::scan::{
+	scan_declared_tasks, scan_engine_pins, scan_workspaces, EnginePin, WorkspaceCandidate,
+};
 
 use crate::cli::BIN_VERSION;
 use lattice_project::scaffold;
@@ -267,15 +269,15 @@ fn prompt_workspace(theme: &ColorfulTheme) -> Result<WorkspaceCandidate> {
 		.interact_text()?;
 
 	let path = path.trim().to_string();
+	let dir = Path::new(&path);
+	let driver = lattice_workspace::detect_drivers(dir, &lattice_config::EngineMap::new())
+		.ok()
+		.map(|d| d.tool);
 	Ok(WorkspaceCandidate {
 		name: name.trim().to_string(),
 		marker: String::new(),
-		driver: lattice_workspace::detect_drivers(
-			Path::new(&path),
-			&lattice_config::EngineMap::new(),
-		)
-		.ok()
-		.map(|d| d.tool),
+		declared: scan_declared_tasks(dir, driver.as_deref()),
+		driver,
 		path,
 		default_selected: true,
 	})

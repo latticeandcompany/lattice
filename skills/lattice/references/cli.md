@@ -113,7 +113,8 @@ package manager to install`. A driver Lattice has no installer for reports
 
 ## `lattice init [OPTIONS]`
 
-Creates `lattice.json`, a committed `.lattice/schema.json`, and the
+Creates `lattice.json` — workspaces, engines, and the pipeline the repo already
+declares — plus a committed `.lattice/schema.json` and the
 `.gitignore` lines that keep `.lattice/cache/`, `.lattice/toolchains/`,
 `.lattice/bin/`, `.lattice/setup/`, and `.lattice-setup-marker` out of version
 control. Existing `.gitignore` content is left alone. Two scanned directories
@@ -139,13 +140,62 @@ else is ignored. The walk goes five levels deep and skips hidden directories,
 gitignored paths, and dependency or output trees (`node_modules`, `target`,
 `dist`, `build`, `out`, `vendor`, and others).
 
+### The tasks `init` writes
+
+For each selected workspace, `init` reads the task list out of the file that
+workspace's *driver* reads, and writes every task it finds. Only the driver's
+own file is read: a workspace driven by `turbo.json` runs `turbo run <task>`, so
+its `package.json` scripts are not tasks Lattice can drive there.
+
+| Driver | File | What is read |
+| --- | --- | --- |
+| `turbo` | `turbo.json`, as JSONC | `tasks`, or `pipeline` on a repo that has not migrated |
+| `nx` | `nx.json` | `targetDefaults` keys |
+| `npm`, `pnpm`, `yarn`, `bun` | `package.json` | `scripts` keys |
+| `deno` | `deno.json` or `deno.jsonc` | `tasks` keys |
+| `composer` | `composer.json` | `scripts` keys |
+| `just` | `justfile` or `.justfile` | recipe names |
+| `task` | `Taskfile.yml` or `Taskfile.yaml` | keys under the top-level `tasks:` |
+| `pdm` | `pyproject.toml` | `[tool.pdm.scripts]` keys |
+| `poetry` | `pyproject.toml` | `[tool.poetry.scripts]` keys |
+| `uv` | `pyproject.toml` | `[project.scripts]` keys |
+| `pipenv` | `Pipfile` | `[scripts]` keys |
+
+Every other driver — `cargo`, `go`, `gradle`, `maven`, `dotnet`, `swift`, `mix`,
+`rake`, `dart`, `stack`, `cabal` — takes the task name straight on its command
+line and publishes no list of what it accepts, so there is nothing to read.
+Those workspaces get the single task `build`, with `dependsOn: ["^build"]`, and
+`outputs: ["dist/**"]` when a selected workspace's marker is `package.json`.
+That is also the fallback when no selected workspace declares anything.
+
+From a `turbo.json`, each task's `dependsOn`, `inputs`, `outputs`, `env`,
+`persistent`, and `cache` carry over, and the file's `globalDependencies` and
+`globalEnv` become the config's. A `!`-negated `inputs` glob becomes an `ignore`
+entry, since Lattice spells an exclusion as its own list; a negated `outputs`
+glob is dropped.
+
+Four more rules decide what the written pipeline looks like:
+
+- A task a source only names, as a `package.json` script does, is written as
+  `{}`. `build` is the exception and keeps `dependsOn: ["^build"]`.
+- Where two selected workspaces name the same task, the one that describes it
+  wins over the one that only names it.
+- An entry Lattice has no word for is left out rather than guessed at: a
+  package-scoped `web#build` task or `dependsOn` entry, a `$LEGACY_ENV` in
+  `dependsOn`, and `$TURBO_DEFAULT$` in `inputs`.
+- A `dependsOn` entry naming a task that did not reach the written config is
+  pruned. Lattice refuses to load a config that depends on a task it does not
+  define, so what `init` writes always loads.
+
 Prompting is gated on stdout being a terminal, not stdin. With `--yes`, or with
 stdout redirected or piped, `init` writes what the scan found and never blocks a
 pipeline on a prompt. In that mode a scan that finds nothing writes a bare
 skeleton, because there is no one to ask.
 
 With stdout on a terminal and no `--yes`, `init` shows both lists pre-checked so
-you can uncheck what's wrong. A repo root holding only a workspace declaration
+you can uncheck what's wrong. Tasks are not a third list: they follow the
+workspaces you keep, so unchecking a workspace also drops the tasks only that
+workspace declared. A repo root holding only a workspace declaration
 is offered alongside its members but starts unchecked. If the scan finds
 nothing, or you uncheck everything, `init` keeps prompting until it has at least
 one workspace or one engine. It never writes a config that does nothing.
@@ -385,12 +435,40 @@ top of that:
 
 | Variable | Shape | When |
 | --- | --- | --- |
-| `PATH` | Resolved toolchain bin directories prepended, in order | Every task with a provisioned engine, and every `setup` install command |
+| `PATH` | Resolved toolchain bin directories prepended, in order, then the project's dependency bin directories | Toolchain directories on every task with a provisioned engine and on every `setup` install command; dependency directories on every task command |
 | Each name in a task's `env` | The value read when the cache key was computed | Every task declaring `env` |
 | `LATTICE_TOOLCHAIN_DIR` | Absolute path to the toolchain install directory, also literal-substituted into `installCmd` | Only while running an `installCmd` |
 
 The `PATH` change is scoped to that one child process. It never touches the
 shell Lattice runs in.
+
+### Tools the project installed
+
+A package manager puts a project's executables in a directory nobody types the
+path to, and adds it to `PATH` itself when it runs one of your scripts. Lattice
+hands the command to the shell directly, so before running a task it walks from
+the workspace directory up to the repo root and prepends each of these that
+exists, nearest directory first:
+
+| Directory | Installed by |
+| --- | --- |
+| `node_modules/.bin` | npm, pnpm, yarn, bun |
+| `vendor/bin` | composer |
+| `.venv/bin`, `.venv/Scripts` | uv, poetry, pdm, pipenv, `python -m venv` |
+| `venv/bin`, `venv/Scripts` | the same, under the other conventional name |
+
+So a `scripts` entry can name a project-installed tool directly — `eslint src`,
+`pytest -q`, `turbo run build` — without an `npx`, `pnpm exec`, or `poetry run`
+prefix to locate the binary. Nearest first matches how a package manager
+resolves, so a workspace's own copy of a tool beats the root's. The walk stops
+at the repo root.
+
+These directories go on *after* the toolchain directories, never before: a
+version pinned in `engines` decides which copy of a tool runs, and a dependency
+directory that shadowed it would undo that. Only directories that exist are
+added, and none of these paths is part of a task's cache key. They have to exist
+first, which is what `lattice setup` is for — run it before the first
+`lattice run` on a fresh clone.
 
 ## Option precedence
 

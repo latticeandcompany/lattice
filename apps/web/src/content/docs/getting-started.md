@@ -35,6 +35,14 @@ found 1 pinned tool version
 > [x] node         22.11.0        .nvmrc
 ```
 
+Tasks are not a third checklist. For each workspace you keep, `init` reads the
+task list out of the file that workspace's driver already reads — a
+`turbo.json`, an `nx.json`, `package.json` scripts, a `justfile`, a
+`pyproject.toml` — and writes every task it finds. A repo that runs twelve tasks
+gets twelve. A workspace whose driver takes the task name on its command line,
+such as `cargo` or `go`, publishes no list to read and contributes `build`. See
+[`lattice init`](/lattice/docs/cli#the-tasks-it-writes).
+
 To take the scan's proposal without confirming, pass `-y`. A pipe or a
 non-interactive shell does the same on its own:
 
@@ -65,7 +73,9 @@ it, `init` refuses.
 
 ## Read what it wrote
 
-Open `lattice.json`:
+Open `lattice.json`. This is the skeleton `init` writes when the scan finds
+nothing — in a repo with manifests, `workspaces` and `tasks` come back filled
+in:
 
 ```json
 {

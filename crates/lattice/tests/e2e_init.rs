@@ -120,7 +120,22 @@ fn a_run_names_a_task_the_manifest_meant_to_declare_and_did_not() {
 	fx.write("packages/types/package.json", r#"{ "name": "types" }"#);
 	fx.write("packages/types/package-lock.json", "{}");
 
-	fx.lattice().args(["init", "-y"]).assert().success();
+	// Declared rather than scanned: init imports the script names a manifest
+	// actually has, so a repo whose only script is the typo gets a `biuld` task
+	// and never reaches this. The case here is the other one — a pipeline that
+	// declares `build` because the rest of the repo runs it, and one workspace
+	// that spelled it wrong.
+	fx.config(
+		r#"{
+  "latticeVersion": "0.1.0",
+  "workspaces": [
+    { "name": "web", "path": "apps/web" },
+    { "name": "types", "path": "packages/types" }
+  ],
+  "tasks": { "build": { "dependsOn": ["^build"] } }
+}
+"#,
+	);
 
 	for args in [
 		vec!["run", "build"],
@@ -151,6 +166,65 @@ fn a_run_names_a_task_the_manifest_meant_to_declare_and_did_not() {
 			"a manifest with no scripts is a complete config:\n{stderr}"
 		);
 	}
+}
+
+/// The whole of a repo's task runner config, not the one task Lattice used to
+/// assume. A repo that declares `lint`, `test` and `typecheck` and gets a config
+/// with only `build` has ten commands that no longer run, and nothing said so.
+///
+/// The stand-in runner lives in `node_modules/.bin`, where a package manager
+/// puts a dependency it installed, and the fixture's own `bin/` is deliberately
+/// left off `PATH`: finding it is the second half of what this covers.
+#[test]
+fn init_imports_the_pipeline_the_repo_already_runs() {
+	let fx = Fixture::new();
+	fx.install_stub_bin_in("node_modules/.bin", "turbo-stub", "turbo");
+	fx.write(
+		"package.json",
+		r#"{ "name": "demo", "private": true, "workspaces": ["packages/*"] }"#,
+	);
+	fx.write("package-lock.json", "{}");
+	fx.write("tsconfig.base.json", "{}");
+	fx.write(
+		"turbo.json",
+		r#"{
+			"globalDependencies": ["tsconfig.base.json"],
+			"tasks": {
+				// turbo.json is read as JSONC, because turbo reads it that way.
+				"build": { "dependsOn": ["^build"], "outputs": ["packages/*/dist/**"] },
+				"lint": {},
+				"test": { "dependsOn": ["build"] },
+				"dev": { "persistent": true, "cache": false }
+			}
+		}"#,
+	);
+	// Packages for the stand-in runner to fan out over. No manifests, so the
+	// root stays the only workspace the scan proposes.
+	fx.write("packages/ui/src/index.js", "export const ui = 1;\n");
+
+	fx.lattice().args(["init", "-y"]).assert().success();
+
+	let config: Value =
+		serde_json::from_str(&fx.read("lattice.json")).expect("lattice.json parses");
+	let tasks = config["tasks"].as_object().expect("tasks is an object");
+	let mut names: Vec<&str> = tasks.keys().map(String::as_str).collect();
+	names.sort_unstable();
+	assert_eq!(names, vec!["build", "dev", "lint", "test"]);
+	assert_eq!(tasks["dev"]["persistent"], serde_json::json!(true));
+	assert_eq!(tasks["test"]["dependsOn"], serde_json::json!(["build"]));
+	assert_eq!(
+		config["globalDependencies"],
+		serde_json::json!(["tsconfig.base.json"])
+	);
+
+	// Every imported task runs, through a runner only the project installed.
+	for task in ["build", "lint", "test"] {
+		fx.lattice().args(["run", task, "-l"]).assert().success();
+	}
+	assert!(
+		fx.exists("packages/ui/dist/bundle.js"),
+		"the project's own runner produced the build"
+	);
 }
 
 #[test]

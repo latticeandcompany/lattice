@@ -54,6 +54,12 @@ dependencies. Toolchains land under `.lattice/toolchains`, a separate directory
 from the task cache. See [Pinning tool
 versions](/lattice/docs/pinning-tool-versions).
 
+Skipping it costs more than a missing library. A task that names a tool the
+project installed, such as `eslint` or `pytest`, finds it because Lattice puts
+directories like `node_modules/.bin` on that task's `PATH` — and only the ones
+that exist. On a checkout where nothing has been installed, none do, and the
+task fails with `command not found`.
+
 ## What output a job gets
 
 `lattice run` and `lattice setup` pick their output mode the same way

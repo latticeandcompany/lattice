@@ -322,6 +322,30 @@ pub fn fake_tool_file(name: &str) -> String {
 	}
 }
 
+/// Put a stand-in tool that prints `<name> <version>` in `dir`, creating it.
+///
+/// The same tool as [`install_fake_tool`], written by a test directly rather
+/// than by an `installCmd`, for the cases where the point is which directory it
+/// sits in — a dependency tree a package manager owns, say, rather than a
+/// provisioned toolchain.
+pub fn write_fake_tool(dir: impl AsRef<Path>, name: &str, version: &str) {
+	let dir = dir.as_ref();
+	std::fs::create_dir_all(dir).expect("create the tool's directory");
+	let file = dir.join(fake_tool_file(name));
+	if CMD {
+		std::fs::write(&file, format!("@echo {name} {version}\r\n")).expect("write the tool");
+	} else {
+		std::fs::write(&file, format!("#!/bin/sh\necho {name} {version}\n"))
+			.expect("write the tool");
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))
+				.expect("make the tool executable");
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

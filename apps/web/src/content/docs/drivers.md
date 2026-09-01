@@ -177,6 +177,14 @@ command. `lattice run test` in a `cargo` workspace runs `cargo test` whether or
 not such a target exists, and `cargo` reports the missing target rather than
 Lattice.
 
+Within that group, a task runner is treated differently for one thing:
+`persistent: true`. `just`, `task`, `turbo`, `nx`, `rake`, and `mix` run the
+tasks the repo declared to them, and `dev` is normally one of those, so a
+persistent task infers a command there — `dev` in a `turbo.json` workspace
+resolves to `turbo run dev`. The rest of the group cannot, because there is no
+`cargo dev`, so a persistent task in a `cargo`, `go`, or `gradle` workspace
+needs a `scripts` entry naming the command.
+
 The other group reads its tasks out of a manifest. `npm`, `pnpm`, `yarn`, and
 `bun` read `scripts` in `package.json`, and `deno` reads `tasks` in `deno.json`
 or `deno.jsonc`. Such a driver can run only a script that manifest declares. A

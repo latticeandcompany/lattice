@@ -208,6 +208,12 @@ provisioned `bin` directories prepended to a `PATH` cloned from the current one.
 No shell is sourced and no profile is written, so the change lives and dies with
 that one process.
 
+The project's own dependency bin directories go on that same `PATH`, after the
+provisioned ones and never before them: a pin exists to decide which copy of a
+tool runs, and a `node_modules/.bin` that shadowed it would undo that. See
+[Environment
+variables](/lattice/docs/environment-variables#tools-the-project-installed).
+
 Every provisioned tool lives under `.lattice/toolchains`, which makes
 `rm -rf .lattice` a complete uninstall. The next run provisions again from
 `installCmd`.

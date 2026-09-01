@@ -65,7 +65,7 @@ was invoked with. Nothing is cleared. On top of that inheritance, Lattice sets:
 
 | Variable | Value | When |
 | --- | --- | --- |
-| `PATH` | The resolved toolchain bin directories for that task, in order, prepended ahead of the inherited `PATH`. | Every task with a provisioned engine, and every `lattice setup` install command |
+| `PATH` | The task's resolved toolchain bin directories, then the project's dependency bin directories, prepended in that order ahead of the inherited `PATH`. | Toolchain directories on every task with a provisioned engine and on every `lattice setup` install command; dependency directories on every task command |
 | Each name listed in a task's `env` | The value read from Lattice's own environment at the moment the cache key was computed. | Every task that declares `env` |
 | `LATTICE_TOOLCHAIN_DIR` | Absolute path to the toolchain's install directory, both as a variable and literal-substituted into the `installCmd` string. | Only while an engine's `installCmd` runs, never for the task command that follows |
 
@@ -73,6 +73,40 @@ was invoked with. Nothing is cleared. On top of that inheritance, Lattice sets:
 itself is running in. See [Engines and provisioning](/lattice/docs/engines) for
 what gets installed into `LATTICE_TOOLCHAIN_DIR` and how the resulting bin
 directory reaches `PATH`.
+
+## Tools the project installed
+
+A package manager installs a project's executables somewhere you never type the
+path to, and puts that directory on `PATH` itself whenever it runs one of your
+scripts. Lattice hands a task's command to the shell directly, so it adds those
+directories too. Without them a task reading `eslint src` would fail with
+`eslint: command not found` in a repo where `eslint` is an ordinary dev
+dependency.
+
+Before running a task, Lattice walks from the workspace directory up to the repo
+root and prepends every one of these that exists, nearest directory first:
+
+| Directory | Installed by |
+| --- | --- |
+| `node_modules/.bin` | npm, pnpm, yarn, bun |
+| `vendor/bin` | composer |
+| `.venv/bin`, `.venv/Scripts` | uv, poetry, pdm, pipenv, `python -m venv` |
+| `venv/bin`, `venv/Scripts` | the same, under the other conventional name |
+
+Nearest first is the order a package manager itself resolves in, so a workspace
+that installs its own copy of a tool gets that copy rather than the root's. The
+walk stops at the repo root and never reaches a directory above it.
+
+These go on *after* the toolchain directories, never before. A version pinned in
+`engines` exists to decide which copy of a tool runs, and a dependency directory
+that shadowed the pin would undo that. Only directories that exist are added, so
+a repo pays nothing for the ecosystems it does not use, and none of these paths
+is hashed into a task's cache key — what matters to the key is the toolchain
+identity and the files the task reads.
+
+The directories have to exist before they can be added, which is what
+`lattice setup` is for. On a fresh clone, run it before the first
+`lattice run`.
 
 ## How a task's `env` list resolves
 

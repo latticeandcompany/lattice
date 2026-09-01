@@ -16,6 +16,40 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## `lattice init` imports the pipeline the repo already declares — 2026-09-01
+
+- Init wrote exactly one task, `build`. A repo whose task runner declared twelve
+  tasks got a config naming one, and running any of the other eleven failed with
+  a task that is not defined in the `tasks` map. Init now reads the task list out
+  of the file each selected workspace's driver reads — `turbo.json`, `nx.json`,
+  `package.json` scripts, `deno.json`, `composer.json`, a `justfile`, a
+  `Taskfile.yml`, `pyproject.toml`, `Pipfile` — and writes every task it finds
+- From a `turbo.json`, each task's `dependsOn`, `inputs`, `outputs`, `env`,
+  `persistent` and `cache` carry over, and `globalDependencies` and `globalEnv`
+  become the config's. A `!`-negated `inputs` glob becomes an `ignore` entry
+- A workspace whose driver takes the task name straight on the command line —
+  `cargo`, `go`, `gradle`, `maven`, `dotnet` and the rest — publishes no list of
+  what it accepts, so it still gets the single `build` task
+- A `persistent: true` task in a workspace driven by a task runner now infers a
+  command. Previously nothing was inferred for a persistent task unless the
+  workspace declared `scripts`, which left an imported `dev` task with no command
+- See [Adopting Lattice](/lattice/docs/adopting-lattice) and
+  [`lattice init`](/lattice/docs/cli#lattice-init)
+
+## A task finds the tools the project installed — 2026-09-01
+
+- Lattice hands a task's command to the shell, and put nothing on its `PATH`
+  beyond the toolchains `engines` provisions. A repo whose `turbo`, `eslint`,
+  `pytest` or `phpstan` is an ordinary dev dependency failed on the first run
+  with `command not found`
+- Every project-local dependency binary directory that exists is now on the
+  task's `PATH`, nearest first, from the workspace directory up to the repo
+  root: `node_modules/.bin`, `vendor/bin`, `.venv/bin`, `.venv/Scripts`,
+  `venv/bin`, `venv/Scripts`
+- They go on after the pinned toolchain from `engines`, so a pin still decides
+  which copy of a tool runs. None of these paths is part of a task's cache key
+- See [Environment variables](/lattice/docs/environment-variables)
+
 ## The Windows installer builds — 2026-09-01
 
 - The desktop app's Windows `.msi` and `.exe` installers had never been produced.

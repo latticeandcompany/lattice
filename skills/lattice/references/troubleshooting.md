@@ -56,7 +56,30 @@ command. If it is wrong, add or edit that workspace's `scripts` entry.
 
 `--dry-run` resolves commands before any toolchain is provisioned and before
 `PATH` is adjusted, so it shows the command as written, not as it would resolve
-once a provisioned tool is first on `PATH`.
+at run time — neither against a provisioned tool nor against a binary the
+project installed under `node_modules/.bin` or `.venv/bin`.
+
+## `sh: <tool>: command not found`
+
+The task's command names a binary the shell could not resolve. Three causes, in
+the order worth checking:
+
+The dependency is not installed yet. Lattice puts the project's dependency bin
+directories on a task's `PATH`, but only the ones that exist. On a fresh clone
+there are none. Run `lattice setup`, then the task.
+
+The tool is not a dependency of the project at all, and not on the host `PATH`
+either. Either install it as a dependency, or declare an `engine` with an
+`installCmd` so Lattice provisions it. See `references/toolchains.md`.
+
+The dependency directory is above the repo root. The walk goes from the
+workspace directory up to the repo root and stops there, so a dependency
+directory outside the repo is never added, and only the inherited `PATH` can
+reach it. Move the install inside the repo, or name the tool through its package
+manager in a `scripts` entry.
+
+`lattice run <task> --dry-run` shows the command but not the `PATH` it will run
+under, so it cannot confirm or rule any of these out.
 
 ## `x declares scripts but no "y", so the task was skipped`
 

@@ -311,6 +311,71 @@ t_nogrepfile "$UNDRIVEN/lattice.json" "crates/core" "undriveable candidate is no
 t_grepfile   "$UNDRIVEN/lattice.json" "apps/web"    "driveable candidate is declared"
 lat "$UNDRIVEN" run build --dry-run ; t_ok "a scanned config never halts on ambiguity"
 
+# A repo whose task runner already declares a pipeline gets that pipeline, not a
+# lone `build`: every other task it runs would otherwise be undeclared, and an
+# undeclared task is one `lattice run` refuses.
+IMPORTED="$ENVROOT/imported"
+mkdir -p "$IMPORTED/packages/ui/src"
+w "$IMPORTED/package.json" '{ "name": "demo", "private": true }'
+w "$IMPORTED/package-lock.json" '{}'
+w "$IMPORTED/tsconfig.base.json" '{}'
+w "$IMPORTED/turbo.json" '{
+  "globalDependencies": ["tsconfig.base.json"],
+  "globalEnv": ["CI"],
+  "tasks": {
+    // turbo.json is read as JSONC, because that is how turbo reads it.
+    "build": { "dependsOn": ["^build"], "outputs": ["packages/*/dist/**"] },
+    "lint": {},
+    "test": { "dependsOn": ["build"] },
+    "typecheck": { "dependsOn": ["^build"] },
+    "dev": { "persistent": true, "cache": false },
+    "ui#deploy": { "dependsOn": ["build"] }
+  }
+}'
+# The tool the tasks run is a dependency of the project, where a package manager
+# installs one — not something on the host.
+mkdir -p "$IMPORTED/node_modules/.bin"
+cat > "$IMPORTED/node_modules/.bin/turbo" <<'SH'
+#!/bin/sh
+set -e
+[ "$1" = "run" ] || { echo "turbo-stub: expected 'run', got '$*'" >&2; exit 2; }
+for pkg in packages/*; do
+  mkdir -p "$pkg/dist"
+  cat "$pkg/src/index.js" > "$pkg/dist/bundle.js"
+done
+echo "turbo-stub: $2 complete"
+SH
+chmod +x "$IMPORTED/node_modules/.bin/turbo"
+w "$IMPORTED/packages/ui/src/index.js" "ui v1
+"
+lat "$IMPORTED" init --yes ; t_ok "init --yes exits 0 on a task-runner repo"
+t_grepfile "$IMPORTED/lattice.json" '"lint"'      "init imports lint from turbo.json"
+t_grepfile "$IMPORTED/lattice.json" '"typecheck"' "init imports typecheck from turbo.json"
+t_grepfile "$IMPORTED/lattice.json" '"persistent": true'  "init carries persistent over"
+t_grepfile "$IMPORTED/lattice.json" '"cache": false'      "init carries cache over"
+t_grepfile "$IMPORTED/lattice.json" 'globalDependencies'  "init imports globalDependencies"
+t_grepfile "$IMPORTED/lattice.json" '"CI"'                "init imports globalEnv"
+t_nogrepfile "$IMPORTED/lattice.json" "ui#deploy" "a package-scoped entry is not a repo task"
+
+# The reported bug: the runner is installed under node_modules/.bin and nowhere
+# else, so a task that names it fails outright unless Lattice puts the project's
+# own dependency directory on the task's PATH.
+lat "$IMPORTED" run lint ; t_ok "a task finds a tool the project installed"
+lat "$IMPORTED" run build ; t_ok "an imported build task runs"
+t_file "$IMPORTED/packages/ui/dist/bundle.js" "the project's own runner produced the build"
+lat "$IMPORTED" run typecheck ; t_ok "every imported task is runnable, not just build"
+
+# A workspace whose driver takes the task name on its command line publishes no
+# list to import, so `build` stays the one proposal.
+NOLIST="$ENVROOT/nolist"
+mkdir -p "$NOLIST/crates/core"
+w "$NOLIST/Cargo.toml" "[workspace]
+"
+w "$NOLIST/Cargo.lock" ""
+lat "$NOLIST" init --yes ; t_ok "init --yes exits 0 without a task list to read"
+t_grepfile   "$NOLIST/lattice.json" '"build"' "a driver with no task list still gets build"
+t_nogrepfile "$NOLIST/lattice.json" '"lint"'  "and nothing is invented alongside it"
+
 # Self-heal: a missing schema (wiped cache dir, uncommitted clone) is rewritten
 # by any command that loads the config, so editors always resolve `$schema`.
 rm -f "$INITDIR/.lattice/schema.json"

@@ -16,6 +16,62 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### `lattice init` imports the pipeline the repo already declares — 2026-09-01
+
+- Init wrote exactly one task, `build`. A repo whose task runner declared twelve
+  tasks got a config naming one, and the other eleven were undeclared from the
+  moment init finished — `lattice run lint` answered that `lint` is not defined
+  in the `tasks` map. Init now reads the task list out of the file each selected
+  workspace's driver reads, and writes every task it finds
+- The file per driver: `turbo.json` (read as JSONC, from `tasks` or from
+  `pipeline` on a repo that has not migrated), `nx.json` `targetDefaults`,
+  `package.json` `scripts` for npm, pnpm, yarn and bun, `deno.json` or
+  `deno.jsonc` `tasks`, `composer.json` `scripts`, `justfile` recipes,
+  `Taskfile.yml` tasks, `pyproject.toml` `[tool.pdm.scripts]`,
+  `[tool.poetry.scripts]` and `[project.scripts]`, and `Pipfile` `[scripts]`
+- A `turbo.json` task's `dependsOn`, `inputs`, `outputs`, `env`, `persistent`
+  and `cache` all carry over, and its `globalDependencies` and `globalEnv`
+  become the config's
+- A `!`-negated `inputs` glob becomes an `ignore` entry, because Lattice spells
+  an exclusion as its own list rather than as a prefix. A negated `outputs` glob
+  is dropped
+- An entry Lattice has no word for is left out rather than guessed at: a
+  package-scoped `web#build` task or `dependsOn` entry, a `$LEGACY_ENV` in
+  `dependsOn`, and `$TURBO_DEFAULT$` in `inputs`
+- A `dependsOn` entry naming a task that did not reach the written config is
+  pruned, so what init writes always loads
+- A task a source only names, as a `package.json` script does, is written as
+  `{}`. `build` is the exception and keeps its `dependsOn: ["^build"]` default.
+  Where two selected workspaces name the same task, the one that describes it
+  wins over the one that only names it
+- `cargo`, `go`, `gradle`, `maven`, `dotnet`, `swift`, `mix`, `rake`, `dart`,
+  `stack` and `cabal` take the task name straight on the command line and
+  publish no list of what they accept, so a workspace driven by one still gets
+  the single `build` task
+- Lattice would not infer a command for a `persistent: true` task when the
+  driver takes the task name as a subcommand, because there is no `cargo dev`.
+  That rule now applies only to drivers that are not task runners: `turbo`,
+  `nx`, `just`, `task`, `rake` and `mix` run the tasks the repo declared to
+  them, and `dev` is usually one, so an imported `dev` task previously had no
+  command anywhere
+
+### A task finds the tools the project installed — 2026-09-01
+
+- Lattice hands a task's command to the platform shell, and put nothing on its
+  `PATH` beyond the toolchains `engines` provisions. A package manager adds its
+  own dependency directory when it runs a script; Lattice runs the command
+  itself, so a repo whose `turbo`, `eslint`, `pytest` or `phpstan` is an
+  ordinary dev dependency failed on the first run with `command not found`
+- Every project-local dependency binary directory that exists is now on the
+  task's `PATH`, nearest first, walking from the workspace directory up to the
+  repo root: `node_modules/.bin`, `vendor/bin`, `.venv/bin`, `.venv/Scripts`,
+  `venv/bin`, `venv/Scripts`
+- They go on after the pinned toolchain from `engines`, never before. A pin
+  exists to decide which copy of a tool runs, and a dependency directory that
+  shadowed it would undo that
+- Only directories that exist are added, so a repo pays nothing for the
+  ecosystems it does not use. None of these paths is part of a task's cache key
+
 ### The Windows installer builds — 2026-09-01
 
 - `"publisher": "Lattice & Company"` in `tauri.conf.json` reached the MSI's

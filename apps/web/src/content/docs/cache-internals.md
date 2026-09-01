@@ -427,7 +427,7 @@ it.
 
 ## Not part of the key
 
-The key is computed from the ten components above and nothing else. Five
+The key is computed from the ten components above and nothing else. Six
 exclusions are worth stating.
 
 **A task's own output files.** They are excluded even when `inputs` matches them.
@@ -450,6 +450,13 @@ make a key depend on whose machine computed it.
 **A task's `timeout`.** It bounds how long the task may run. It does not change
 what the task produces, so an entry stored under one limit is valid under
 another.
+
+**The project's dependency bin directories on the task's `PATH`.** Which
+directories exist, and therefore which get prepended, is not hashed. What the
+key tracks about tools is the resolved toolchain identity, not where a binary
+was found. Installing a different version of a linter into `node_modules/.bin`
+moves the key only if the change reaches a hashed lockfile, which it normally
+does.
 
 **Wall-clock time, hostname, and absolute paths.** Input paths are hashed
 relative to the workspace, so the same commit produces the same keys in a

@@ -174,9 +174,13 @@ template. Two limits on inference:
   `package.json`'s `scripts` object. For `deno`, it must be a key under `tasks`
   in `deno.json` or `deno.jsonc`. Lattice never invents a script the manifest
   does not have.
-- For every other driver, a `persistent: true` task is never inferred. There is
-  no `cargo dev`. A persistent task on a direct-invoke driver needs an explicit
-  `scripts` entry.
+- For every other driver, a `persistent: true` task is inferred only when the
+  driver is a task runner. `just`, `task`, `turbo`, `nx`, `rake`, and `mix` run
+  the tasks the repo declared to them, and `dev` is usually one of them, so
+  `dev` in a `turbo.json` workspace resolves to `turbo run dev`. Every remaining
+  driver takes the task name as a subcommand, and there is no `cargo dev`: a
+  persistent task in a `cargo`, `go`, `gradle`, `poetry`, or `composer`
+  workspace needs an explicit `scripts` entry.
 
 A task with no command in a workspace is skipped when `auto` is true, and fatal
 when `auto` is false. The skipped task drops out of the graph and the run carries
@@ -491,6 +495,11 @@ Activating a toolchain means prepending its `bin` directories to the `PATH` of
 the single child process Lattice spawns for one task. No shell is sourced, no
 profile is written, and nothing outside `.lattice/` changes. `rm -rf
 .lattice/toolchains` is a complete uninstall.
+
+The project's own dependency bin directories go on that same `PATH`, after the
+toolchain's and never before it — a pin exists to decide which copy of a tool
+runs, and a directory that shadowed it would undo that. See
+`references/cli.md` for the directories and the order they are walked in.
 
 The resolved toolchain identity is part of every affected task's cache key. It
 is built from one entry per engine: `<name>=host` for host mode,

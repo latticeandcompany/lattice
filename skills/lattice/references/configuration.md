@@ -236,7 +236,7 @@ object `{}` is valid.
 | `outputs` | array of `string` | no | none | Workspace-relative globs captured as the cached artifact. |
 | `ignore` | array of `string` | no | none | Globs subtracted from what `inputs` matched. |
 | `env` | array of `string` | no | none | Variable *names* whose resolved values feed the cache key. |
-| `persistent` | `boolean` | no | `false` | Never cached, forces raw output for the whole run, must be a graph leaf. Its exit is reported, and a non-zero one fails the run. |
+| `persistent` | `boolean` | no | `false` | Never cached, forces raw output for the whole run, must be a graph leaf. Its exit is reported, and a non-zero one fails the run. A command is inferred for it only in a workspace whose driver reads a script map or is a task runner; anywhere else it needs a `scripts` entry. |
 | `cache` | `boolean` | no | `true` | `false` opts a non-persistent task out of caching. |
 | `timeout` | `string` or integer | no | none | `"90s"`, `"10m"`, `"1h"`, or a whole number of seconds, up to 365 days. On overrun the task's process group gets `SIGTERM`, five seconds, then `SIGKILL`, and the task counts as failed. Ignored on a `persistent` task. Not part of the cache key. |
 

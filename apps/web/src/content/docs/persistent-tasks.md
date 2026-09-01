@@ -31,6 +31,37 @@ category, and four separate assumptions have to be dropped for it.
 override. A task either is the kind of thing that keeps running or it is not, and
 that is a property of the task rather than of where it runs.
 
+## Where its command comes from
+
+Declaring the task is half of it. Each workspace still has to produce a command
+for `dev`, and a persistent task is the one case where Lattice is careful about
+inferring one:
+
+| The workspace's driver | What happens |
+| --- | --- |
+| Reads a script map — `npm`, `pnpm`, `yarn`, `bun`, `deno` | Runs the script if the manifest declares one by that name. No script, no `dev` node in that workspace |
+| Is a task runner — `just`, `task`, `turbo`, `nx`, `rake`, `mix` | Infers the command. `dev` in a `turbo.json` workspace resolves to `turbo run dev` |
+| Anything else — `cargo`, `go`, `gradle`, `poetry`, `composer` | Infers nothing. There is no `cargo dev`, so guessing would produce a command that fails |
+
+The last row is why a Rust or Go workspace needs the command spelled out:
+
+```json
+{
+  "workspaces": [
+    {
+      "name": "api",
+      "path": "services/api",
+      "scripts": { "dev": "cargo watch -x run" }
+    }
+  ]
+}
+```
+
+A `scripts` entry always beats inference, so it works in any of the three rows.
+A workspace that produces no command is skipped and the run carries on with the
+ones that did — a `dev` task can cover the two workspaces that have a dev server
+and leave the rest alone.
+
 ## It cannot be cached, and not because caching was hard
 
 A persistent task produces a running process. There is no artifact to store and

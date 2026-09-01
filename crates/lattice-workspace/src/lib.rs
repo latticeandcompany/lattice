@@ -26,6 +26,10 @@
 //! than one role — deno and bun are runtimes as well as a task runner and a
 //! package manager — in which case the highest-ranked role is the one it drives
 //! with.
+//!
+//! Once a driver is resolved, [`dependency_bin_dirs`] says where the tools the
+//! project installed for itself live, so a task can find them the way a package
+//! manager's own script runner would.
 
 use std::path::{Path, PathBuf};
 
@@ -721,7 +725,7 @@ fn manifest_scripts(path: &Path, tool: &str) -> ManifestScripts {
 
 /// Drop `//` line and `/* */` block comments from JSONC text, leaving string
 /// literals — and anything comment-shaped inside one — exactly as they were.
-fn strip_json_comments(raw: &str) -> String {
+pub(crate) fn strip_json_comments(raw: &str) -> String {
 	let mut out = String::with_capacity(raw.len());
 	let mut chars = raw.chars().peekable();
 	let mut in_string = false;
@@ -1073,9 +1077,71 @@ fn command_from_scripts(
 			.any(|name| name == task)
 			.then(|| spec.invoke(task)),
 		ManifestScripts::NoSection | ManifestScripts::Unreadable(_) => None,
-		ManifestScripts::DirectInvoke if persistent => None,
+		// A task runner runs the tasks the repo declared to it, `dev` included,
+		// so asking one for a task name is not inventing anything. Every other
+		// driver takes the name as a subcommand, and there is no `cargo dev`.
+		ManifestScripts::DirectInvoke if persistent && spec.drive_role() != Role::TaskRunner => {
+			None
+		}
 		ManifestScripts::DirectInvoke => Some(spec.invoke(task)),
 	}
+}
+
+/// Where a package manager puts the executables it installed for a project,
+/// relative to the directory it installed them for.
+///
+/// The list is short because most ecosystems do not need one: bundler, poetry,
+/// gradle, maven and dotnet all reach their local tools through the driver's own
+/// invoke form (`bundle exec`, `./gradlew`, `dotnet tool run`), and cargo and go
+/// install to a toolchain `engines` already pins. What is left is the ecosystems
+/// where a task names a bare executable that lives in a directory nobody types.
+/// A repo pays nothing for the ones it does not have: only existing directories
+/// go on `PATH`.
+const DEPENDENCY_BIN_DIRS: &[&str] = &[
+	// npm, pnpm, yarn, bun
+	"node_modules/.bin",
+	// composer
+	"vendor/bin",
+	// virtualenvs: uv, poetry, pdm, pipenv, and `python -m venv`
+	".venv/bin",
+	".venv/Scripts",
+	"venv/bin",
+	"venv/Scripts",
+];
+
+/// The directories holding executables installed for the workspace, nearest
+/// first, from `ws_path` up to `root`.
+///
+/// A package manager puts its project-local executables somewhere the developer
+/// never types the path to, and adds that directory to `PATH` itself whenever it
+/// runs a script for them. Lattice hands a task's command straight to the shell,
+/// so a task that names a tool the project installed — the ordinary case, from
+/// `turbo` to `pytest` to `phpstan` — finds nothing on `PATH` and the very first
+/// run fails with `command not found`.
+///
+/// Nearest first, because that is the order the package manager resolves in when
+/// a workspace and the repo root both install a tool.
+pub fn dependency_bin_dirs(root: &Path, ws_path: &Path) -> Vec<PathBuf> {
+	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+	let start = ws_path
+		.canonicalize()
+		.unwrap_or_else(|_| ws_path.to_path_buf());
+
+	let mut dirs = Vec::new();
+	for dir in start.ancestors() {
+		if !dir.starts_with(&root) {
+			break;
+		}
+		for rel in DEPENDENCY_BIN_DIRS {
+			let bin = rel
+				.split('/')
+				.fold(dir.to_path_buf(), |p, part| p.join(part));
+			if bin.is_dir() {
+				dirs.push(bin);
+			}
+		}
+	}
+	dirs
 }
 
 /// Discover + validate + resolve commands for every configured workspace.
@@ -1622,6 +1688,56 @@ mod tests {
 		);
 		// ...but a persistent task is never fabricated (there is no `cargo dev`).
 		assert_eq!(infer_task_command("dev", &d, tmp.path(), true), None);
+	}
+
+	/// The rule above is about drivers that take the task name as a subcommand.
+	/// A task runner runs the tasks the repo declared to it, and `dev` is one of
+	/// them in most repos that have a task runner at all — refusing to run it
+	/// leaves a task the config names with no command anywhere.
+	#[test]
+	fn a_task_runner_still_runs_the_persistent_task_the_repo_declared() {
+		let tmp = TempDir::new().unwrap();
+		write(tmp.path(), "turbo.json", r#"{ "tasks": { "dev": {} } }"#);
+		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
+		assert_eq!(
+			infer_task_command("dev", &d, tmp.path(), true).as_deref(),
+			Some("turbo run dev")
+		);
+	}
+
+	#[test]
+	fn dependency_bin_dirs_walks_from_the_workspace_up_to_the_root() {
+		let tmp = TempDir::new().unwrap();
+		// The walk canonicalizes, and a temp dir is behind a symlink on macOS.
+		let outside = tmp.path().canonicalize().unwrap();
+		let root = outside.join("repo");
+		let ws = root.join("apps").join("web");
+		// One per ecosystem, to prove none of them is the special case.
+		fs::create_dir_all(ws.join("node_modules").join(".bin")).unwrap();
+		fs::create_dir_all(root.join("node_modules").join(".bin")).unwrap();
+		fs::create_dir_all(root.join("vendor").join("bin")).unwrap();
+		fs::create_dir_all(root.join(".venv").join("bin")).unwrap();
+		// Above the repo, and so none of Lattice's business.
+		fs::create_dir_all(outside.join("node_modules").join(".bin")).unwrap();
+
+		let dirs = dependency_bin_dirs(&root, &ws);
+
+		assert_eq!(
+			dirs,
+			vec![
+				ws.join("node_modules").join(".bin"),
+				root.join("node_modules").join(".bin"),
+				root.join("vendor").join("bin"),
+				root.join(".venv").join("bin"),
+			],
+			"nearest first, and never above the repo root"
+		);
+	}
+
+	#[test]
+	fn a_repo_that_installs_nothing_locally_gets_no_extra_path() {
+		let tmp = TempDir::new().unwrap();
+		assert!(dependency_bin_dirs(tmp.path(), tmp.path()).is_empty());
 	}
 
 	#[test]

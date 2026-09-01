@@ -102,6 +102,11 @@ and it writes `lattice.json`, a committed `.lattice/schema.json`, and the
 `.gitignore` lines for what Lattice keeps locally. `lattice init --yes` skips the
 prompts and writes what the scan found.
 
+The tasks come with the workspaces. For each one you keep, `init` reads the task
+list out of the file that workspace's tool already reads — a `turbo.json`, an
+`nx.json`, `package.json` scripts, a `justfile`, a `pyproject.toml` — so a repo
+that runs twelve tasks today gets twelve, not a starter `build`.
+
 Then run a task. Below is Lattice building six of its own crates. `--filter`
 picks the workspaces the run is for, and the graph still holds everything they
 depend on:
@@ -210,6 +215,11 @@ already on `PATH` and fails the run if the version does not satisfy the
 constraint. A constraint with an `installCmd` installs the tool under
 `./.lattice/toolchains/`, records the version it resolved, and prepends that
 install's `bin` directory to the `PATH` of each task that needs it.
+
+A task's `PATH` also gets the project's own dependency binaries —
+`node_modules/.bin`, `vendor/bin`, `.venv/bin` and the rest, walked from the
+workspace up to the repo root — after any pinned toolchain. A task can name
+`eslint` or `pytest` directly, the way your package manager's own scripts do.
 
 Persistent tasks, such as dev servers, stream their output line by line and are
 never cached.

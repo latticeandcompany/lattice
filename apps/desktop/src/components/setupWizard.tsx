@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useApp } from '../context/appContext.tsx';
 import * as api from '../lib/api.ts';
-import type { EnginePin, ScanResult, WorkspaceCandidate } from '../lib/types.ts';
+import type { DeclaredTasks, EnginePin, ScanResult, WorkspaceCandidate } from '../lib/types.ts';
 import LanguageMark from './languageMark.tsx';
 import Spinner from './spinner.tsx';
 
@@ -246,6 +246,10 @@ const toggle = (current: Set<string>, value: string): Set<string> => {
 	return next;
 };
 
+/** `3 tasks from turbo.json` — which tasks selecting this row brings in. */
+const describeDeclared = (declared: DeclaredTasks) =>
+	`${declared.tasks.length} ${declared.tasks.length === 1 ? 'task' : 'tasks'} from ${declared.source}`;
+
 const CandidateRow = ({
 	candidate,
 	language,
@@ -274,6 +278,7 @@ const CandidateRow = ({
 			<span className="font-monospace text-body-secondary d-block tw:text-[0.72rem]">
 				{candidate.path} · {candidate.marker}
 				{candidate.driver ? ` · driver: ${candidate.driver}` : ' · no driver found'}
+				{candidate.declared?.source ? ` · ${describeDeclared(candidate.declared)}` : ''}
 			</span>
 		</label>
 	</div>

@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde_json::{json, Map, Value};
 
 use lattice_config::schema::SCHEMA_JSON;
-use lattice_workspace::scan::{EnginePin, WorkspaceCandidate};
+use lattice_workspace::scan::{DeclaredTasks, EnginePin, TaskDetail, WorkspaceCandidate};
 
 /// The directory `lattice setup` writes its per-workspace install markers into,
 /// one file per workspace. Named here because the line that ignores it has to
@@ -98,20 +98,137 @@ pub fn build_config(
 		root.insert("engines".into(), Value::Object(engines));
 	}
 
-	let mut tasks = Map::new();
-	if !workspaces.is_empty() {
-		let mut build = Map::new();
-		build.insert("dependsOn".into(), json!(["^build"]));
-		// Only claim an output directory the evidence supports; a repo with no
-		// `package.json` workspace has no reason to cache `dist/`.
-		if workspaces.iter().any(|c| c.marker == "package.json") {
-			build.insert("outputs".into(), json!(["dist/**"]));
-		}
-		tasks.insert("build".into(), Value::Object(build));
+	let globals = union_globals(workspaces, |d| &d.global_dependencies);
+	if !globals.is_empty() {
+		root.insert("globalDependencies".into(), json!(globals));
 	}
-	root.insert("tasks".into(), Value::Object(tasks));
+	let global_env = union_globals(workspaces, |d| &d.global_env);
+	if !global_env.is_empty() {
+		root.insert("globalEnv".into(), json!(global_env));
+	}
+
+	root.insert("tasks".into(), Value::Object(build_tasks(workspaces)));
 
 	Value::Object(root)
+}
+
+/// The pipeline, taken from what the chosen workspaces' own task configuration
+/// already declares.
+///
+/// A repo that runs eleven tasks through its task runner gets eleven tasks here,
+/// not one: writing only `build` leaves every other task undeclared, and an
+/// undeclared task is one `lattice run` refuses. Falling back to a lone `build`
+/// is for the workspaces that declare no list to read — a Cargo or Go workspace
+/// takes the task name on the command line and could name anything.
+fn build_tasks(workspaces: &[&WorkspaceCandidate]) -> Map<String, Value> {
+	let mut tasks: Map<String, Value> = Map::new();
+	let mut named_only: HashSet<String> = HashSet::new();
+
+	for c in workspaces {
+		for task in &c.declared.tasks {
+			match &task.detail {
+				// Two workspaces declaring the same task is ordinary; the one that
+				// says something about it is the one worth keeping.
+				Some(detail) => {
+					if !tasks.contains_key(&task.name) || named_only.remove(&task.name) {
+						tasks.insert(task.name.clone(), detail_value(detail));
+					}
+				}
+				None => {
+					if !tasks.contains_key(&task.name) {
+						named_only.insert(task.name.clone());
+						tasks.insert(task.name.clone(), inferred_value(&task.name, workspaces));
+					}
+				}
+			}
+		}
+	}
+
+	if tasks.is_empty() && !workspaces.is_empty() {
+		tasks.insert("build".into(), inferred_value("build", workspaces));
+	}
+
+	prune_depends_on(&mut tasks);
+	tasks
+}
+
+/// What to write for a task the repo names but says nothing else about, as a
+/// `package.json` script does. Only `build` gets a default, because only `build`
+/// has one every ecosystem agrees on: a package is built after the packages it
+/// depends on are.
+fn inferred_value(name: &str, workspaces: &[&WorkspaceCandidate]) -> Value {
+	if name != "build" {
+		return Value::Object(Map::new());
+	}
+	let mut build = Map::new();
+	build.insert("dependsOn".into(), json!(["^build"]));
+	// Only claim an output directory the evidence supports; a repo with no
+	// `package.json` workspace has no reason to cache `dist/`.
+	if workspaces.iter().any(|c| c.marker == "package.json") {
+		build.insert("outputs".into(), json!(["dist/**"]));
+	}
+	Value::Object(build)
+}
+
+fn detail_value(detail: &TaskDetail) -> Value {
+	let mut task = Map::new();
+	let mut list = |key: &str, value: &Option<Vec<String>>| {
+		if let Some(value) = value {
+			task.insert(key.into(), json!(value));
+		}
+	};
+	list("dependsOn", &detail.depends_on);
+	list("inputs", &detail.inputs);
+	list("ignore", &detail.ignore);
+	list("outputs", &detail.outputs);
+	list("env", &detail.env);
+	if let Some(persistent) = detail.persistent {
+		task.insert("persistent".into(), json!(persistent));
+	}
+	if let Some(cache) = detail.cache {
+		task.insert("cache".into(), json!(cache));
+	}
+	Value::Object(task)
+}
+
+/// Drop every `dependsOn` entry that names no task in the written pipeline.
+/// Lattice refuses to load a config that depends on a task it does not define,
+/// and a prerequisite the user never chose to import is not one to halt over.
+fn prune_depends_on(tasks: &mut Map<String, Value>) {
+	let names: HashSet<String> = tasks.keys().cloned().collect();
+	for (name, task) in tasks.iter_mut() {
+		let Some(deps) = task.get_mut("dependsOn").and_then(Value::as_array_mut) else {
+			continue;
+		};
+		deps.retain(|dep| {
+			let Some(dep) = dep.as_str() else {
+				return false;
+			};
+			match dep.strip_prefix('^') {
+				Some(bare) => names.contains(bare),
+				None => dep != name && names.contains(dep),
+			}
+		});
+		if deps.is_empty() {
+			task.as_object_mut()
+				.expect("a task is an object")
+				.remove("dependsOn");
+		}
+	}
+}
+
+fn union_globals(
+	workspaces: &[&WorkspaceCandidate],
+	pick: impl Fn(&DeclaredTasks) -> &Vec<String>,
+) -> Vec<String> {
+	let mut seen = HashSet::new();
+	let mut out = Vec::new();
+	for value in workspaces.iter().flat_map(|c| pick(&c.declared)) {
+		if seen.insert(value.clone()) {
+			out.push(value.clone());
+		}
+	}
+	out
 }
 
 /// The text [`write_artifacts`] would write for `config`, so a caller can show it
@@ -147,6 +264,7 @@ pub fn write_artifacts(dir: &Path, config: &Value) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use lattice_workspace::scan::TaskCandidate;
 
 	fn candidate(name: &str, path: &str, marker: &str) -> WorkspaceCandidate {
 		WorkspaceCandidate {
@@ -155,6 +273,7 @@ mod tests {
 			marker: marker.to_string(),
 			driver: None,
 			default_selected: true,
+			declared: DeclaredTasks::default(),
 		}
 	}
 
@@ -332,5 +451,122 @@ mod tests {
 		let out = ensure_gitignore_lines(".lattice/cache/\n", GITIGNORE_LINES);
 		assert_eq!(out.matches(".lattice/cache/").count(), 1);
 		assert!(out.contains(".lattice/toolchains/"));
+	}
+	fn task(name: &str, detail: Option<TaskDetail>) -> TaskCandidate {
+		TaskCandidate {
+			name: name.to_string(),
+			detail,
+		}
+	}
+
+	fn list(items: &[&str]) -> Option<Vec<String>> {
+		Some(items.iter().map(|s| s.to_string()).collect())
+	}
+
+	/// The bug this exists for: a repo whose task runner declares a dozen tasks
+	/// used to get a config with one, and every other task it already ran was
+	/// undeclared from the moment init finished.
+	#[test]
+	fn every_declared_task_reaches_the_config() {
+		let mut root = candidate("app", ".", "package.json");
+		root.declared = DeclaredTasks {
+			tasks: vec![
+				task(
+					"build",
+					Some(TaskDetail {
+						depends_on: list(&["^build"]),
+						outputs: list(&["dist/**"]),
+						..Default::default()
+					}),
+				),
+				task(
+					"dev",
+					Some(TaskDetail {
+						persistent: Some(true),
+						cache: Some(false),
+						..Default::default()
+					}),
+				),
+				task("lint", Some(TaskDetail::default())),
+			],
+			global_dependencies: vec!["tsconfig.base.json".into()],
+			global_env: vec!["CI".into()],
+			source: "turbo.json".into(),
+		};
+
+		let config = build_config(&[&root], &[], "1.0.0");
+
+		assert_eq!(
+			config["tasks"],
+			json!({
+				"build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
+				"dev": { "persistent": true, "cache": false },
+				"lint": {}
+			})
+		);
+		assert_eq!(config["globalDependencies"], json!(["tsconfig.base.json"]));
+		assert_eq!(config["globalEnv"], json!(["CI"]));
+	}
+
+	/// Lattice refuses to load a config whose task depends on a task it does not
+	/// define, so importing half a task graph has to leave a config that runs.
+	#[test]
+	fn a_dependency_on_a_task_that_was_not_imported_is_dropped() {
+		let mut ws = candidate("app", ".", "package.json");
+		ws.declared = DeclaredTasks {
+			tasks: vec![task(
+				"zip",
+				Some(TaskDetail {
+					depends_on: list(&["^build", "build", "zip"]),
+					..Default::default()
+				}),
+			)],
+			source: "turbo.json".into(),
+			..Default::default()
+		};
+
+		let config = build_config(&[&ws], &[], "1.0.0");
+		assert_eq!(config["tasks"], json!({ "zip": {} }));
+	}
+
+	/// Two workspaces naming the same task is ordinary in a monorepo. The one
+	/// that says something about it is the one worth keeping, whichever came
+	/// first.
+	#[test]
+	fn the_workspace_that_describes_a_shared_task_wins() {
+		let mut scripts = candidate("web", "apps/web", "package.json");
+		scripts.declared = DeclaredTasks {
+			tasks: vec![task("build", None), task("test", None)],
+			source: "package.json".into(),
+			..Default::default()
+		};
+		let mut runner = candidate("root", ".", "package.json");
+		runner.declared = DeclaredTasks {
+			tasks: vec![task(
+				"build",
+				Some(TaskDetail {
+					outputs: list(&["build/**"]),
+					..Default::default()
+				}),
+			)],
+			source: "turbo.json".into(),
+			..Default::default()
+		};
+
+		let config = build_config(&[&scripts, &runner], &[], "1.0.0");
+		assert_eq!(config["tasks"]["build"], json!({ "outputs": ["build/**"] }));
+		assert_eq!(config["tasks"]["test"], json!({}));
+	}
+
+	/// A `cargo` or `go` workspace publishes no list of the tasks it accepts, so
+	/// there is nothing to import and `build` remains the one safe proposal.
+	#[test]
+	fn a_workspace_that_declares_no_task_list_still_gets_a_build() {
+		let rust = candidate("core", "crates/core", "Cargo.toml");
+		let config = build_config(&[&rust], &[], "1.0.0");
+		assert_eq!(
+			config["tasks"],
+			json!({ "build": { "dependsOn": ["^build"] } })
+		);
 	}
 }

@@ -62,6 +62,11 @@ command.
 a watch mode, so `api` declares its `dev` command explicitly. A `scripts` entry
 always beats what a driver would have inferred.
 
+A workspace driven by a task runner needs neither: `just`, `task`, `turbo`,
+`nx`, `rake`, and `mix` run the tasks the repo declared to them, so `dev` in a
+`turbo.json` workspace resolves to `turbo run dev` on its own. See [Persistent
+tasks](/lattice/docs/persistent-tasks#where-its-command-comes-from).
+
 Check what resolves before you start anything:
 
 ```text

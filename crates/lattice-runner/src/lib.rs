@@ -32,7 +32,7 @@ use lattice_cache::{
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
 use lattice_events::{CacheMiss, Reporter, RunSummary, TaskEvent};
 use lattice_workspace::toolchain;
-use lattice_workspace::Workspace;
+use lattice_workspace::{dependency_bin_dirs, Workspace};
 use serde::Serialize;
 
 /// Cap on how many child-output lines a single failing task retains for the
@@ -684,7 +684,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	{
 		let merged = resolve_engines(&config.engines, &ws.engines);
 		let memo_key = format!("{merged:?}");
-		let (pp, id) = if let Some(hit) = tc_cache.get(&memo_key) {
+		let (mut pp, id) = if let Some(hit) = tc_cache.get(&memo_key) {
 			hit.clone()
 		} else {
 			let resolved =
@@ -693,6 +693,10 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 			tc_cache.insert(memo_key, v.clone());
 			v
 		};
+		// After the pinned toolchain, never before it: a pin exists to decide
+		// which copy of a tool runs, and a dependency directory that shadowed it
+		// would undo that.
+		pp.extend(dependency_bin_dirs(root, &ws.path));
 		ws_prepend.insert(ws.name.clone(), pp);
 		ws_identity.insert(ws.name.clone(), id);
 	}
@@ -1580,8 +1584,8 @@ fn apply_path_prepend(
 			Ok(())
 		}
 		Err(_) => Err(format!(
-			"the pinned toolchain cannot be put on PATH, because a directory in it \
-			 contains a character PATH cannot hold: {}",
+			"the task's PATH cannot be built, because one of the directories that goes \
+			 in front of it contains a character PATH cannot hold: {}",
 			prepend
 				.iter()
 				.map(|p| p.display().to_string())
@@ -2481,6 +2485,31 @@ mod tests {
 		assert_eq!(result.failed, 0, "bare `faketool` should resolve via PATH");
 		assert_eq!(result.total, 1);
 		assert!(r.has("finished:app:build"));
+	}
+
+	/// The other half of the same problem, and the one that bites first: the tool
+	/// a task names is usually not pinned at all, it is a dependency the project
+	/// installed. A package manager puts its own dependency directory on `PATH`
+	/// when it runs a script; Lattice runs the command itself, so it has to.
+	#[tokio::test]
+	async fn a_tool_the_project_installed_is_on_the_task_path() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		// Only the repo root installed it, which is where a monorepo's task
+		// runner lives; the workspace has to find it by walking up.
+		sh::write_fake_tool(root.join("node_modules").join(".bin"), "faketool", "1.2.3");
+
+		let workspaces = vec![ws("web", &root.join("apps"), &[("build", "faketool")])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let result = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
+			.await
+			.unwrap();
+
+		assert_eq!(result.failed, 0, "bare `faketool` should resolve via PATH");
+		assert!(r.has("finished:web:build"));
 	}
 
 	fn root_ws_name() -> &'static str {

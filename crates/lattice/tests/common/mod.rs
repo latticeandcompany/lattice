@@ -110,6 +110,13 @@ impl Fixture {
 	/// Used to put a stand-in tool on a test's `PATH`. A copied program works
 	/// wherever it was built, which a shell script dropped on disk does not.
 	pub fn install_stub_bin(&self, built: &str, as_name: &str) {
+		self.install_stub_bin_in("bin", built, as_name);
+	}
+
+	/// [`Fixture::install_stub_bin`], into a repo-relative directory of the
+	/// test's choosing — a dependency tree a package manager would own, for
+	/// instance, rather than a directory the test puts on `PATH` itself.
+	pub fn install_stub_bin_in(&self, dir_rel: &str, built: &str, as_name: &str) {
 		let source = assert_cmd::cargo::cargo_bin(built);
 		assert!(
 			source.exists(),
@@ -118,8 +125,8 @@ impl Fixture {
              than this test target alone",
 			source.display()
 		);
-		let bin_dir = self.join("bin");
-		std::fs::create_dir_all(&bin_dir).expect("mkdir bin");
+		let bin_dir = self.join(dir_rel);
+		std::fs::create_dir_all(&bin_dir).expect("mkdir the stub's directory");
 		let dest = bin_dir.join(format!("{as_name}{}", std::env::consts::EXE_SUFFIX));
 		std::fs::remove_file(&dest).ok();
 		std::fs::copy(&source, &dest).expect("copy the stub binary");

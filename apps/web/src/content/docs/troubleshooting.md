@@ -82,8 +82,10 @@ did not select. To see which workspaces the task resolved in, run
 An entry in a workspace's `scripts` map always wins. Only a task with no entry
 there falls back to what the driver would infer, and inference is not universal:
 a JavaScript-family driver needs the task name to exist in the manifest's own
-scripts map, and a direct-invoke driver such as `cargo` or `go` never infers a
-command for a `persistent` task, because there is no `cargo dev`.
+scripts map, and a driver that takes the task name on its command line without
+being a task runner — `cargo`, `go`, `gradle` — never infers a command for a
+`persistent` task, because there is no `cargo dev`. A task runner does infer
+one, since it runs the tasks the repo declared to it.
 
 Print what would run:
 
@@ -98,8 +100,33 @@ Each line is `workspace:task` and the exact command the runner would hand to
 `sh -c`, or to `cmd /C` on Windows. If it is not the command you meant, add or
 edit that workspace's `scripts` entry.
 
-`--dry-run` returns before any toolchain is provisioned, so it shows the command
-as written, not as it will resolve once a provisioned tool is first on `PATH`.
+`--dry-run` returns before any toolchain is provisioned and before `PATH` is
+assembled, so it shows the command as written, not as it will resolve at run
+time — neither against a provisioned tool nor against a binary the project
+installed under `node_modules/.bin` or `.venv/bin`.
+
+### `command not found` for a tool the project installed
+
+Lattice puts the project's dependency bin directories on a task's `PATH`, so a
+task can name `eslint`, `pytest`, or `turbo` directly. It adds only the
+directories that exist. Three things break that, in the order worth checking:
+
+The dependencies are not installed. On a fresh clone there is no
+`node_modules/.bin` to add. Run `lattice setup`, then the task.
+
+The tool is not a dependency of the project and is not on the host `PATH`
+either. Install it as a dependency, or declare it as an
+[engine](/lattice/docs/engines) with an `installCmd` and let Lattice provision
+it.
+
+The install lives above the repo root. The walk goes from the workspace
+directory up to the repo root and stops there, so a dependency directory outside
+the repo is never added — only the inherited `PATH` can reach it.
+
+`--dry-run` prints the command but not the `PATH` it will run under, so it
+cannot tell these apart. See [Environment
+variables](/lattice/docs/environment-variables#tools-the-project-installed) for
+the directories and their order.
 
 ### `unknown field` on a key you believe is valid
 

@@ -228,7 +228,9 @@ failures](/lattice/docs/errors#lattice-setup-failures).
 lattice init [OPTIONS]
 ```
 
-Creates a `lattice.json` and a `.lattice/schema.json` in the current directory.
+Creates a `lattice.json` — the workspaces, the pinned tool versions, and the
+pipeline the repo already declares — and a `.lattice/schema.json`, both in the
+current directory.
 Commit the schema file. `init` also adds five lines to `.gitignore`, which keep
 Lattice's per-machine artifacts out of version control:
 
@@ -275,6 +277,53 @@ The walk skips hidden directories, anything `.gitignore` covers, and these
 directory names: `node_modules`, `target`, `dist`, `build`, `out`, `vendor`,
 `venv`, `__pycache__`, `coverage`, `testdata`, `fixtures`.
 
+### The tasks it writes
+
+For each workspace it keeps, `init` reads the task list out of the file that
+workspace's driver reads, and writes every task it finds. Only the driver's own
+file is read: a workspace driven by `turbo.json` runs `turbo run <task>`, so its
+`package.json` scripts are not tasks Lattice could drive there.
+
+| Driver | File | What it reads |
+| --- | --- | --- |
+| `turbo` | `turbo.json`, as JSONC | `tasks`, or `pipeline` on a repo that has not migrated |
+| `nx` | `nx.json` | `targetDefaults` keys |
+| `npm`, `pnpm`, `yarn`, `bun` | `package.json` | `scripts` keys |
+| `deno` | `deno.json`, `deno.jsonc` | `tasks` keys |
+| `composer` | `composer.json` | `scripts` keys |
+| `just` | `justfile`, `.justfile` | recipe names |
+| `task` | `Taskfile.yml`, `Taskfile.yaml` | keys under the top-level `tasks:` |
+| `pdm` | `pyproject.toml` | `[tool.pdm.scripts]` keys |
+| `poetry` | `pyproject.toml` | `[tool.poetry.scripts]` keys |
+| `uv` | `pyproject.toml` | `[project.scripts]` keys |
+| `pipenv` | `Pipfile` | `[scripts]` keys |
+
+A driver not in that table — `cargo`, `go`, `gradle`, `maven`, `dotnet`,
+`swift`, `mix`, `rake`, `dart`, `stack`, `cabal` — takes the task name straight
+on its command line and publishes no list of what it accepts. There is nothing
+to read, so a workspace driven by one contributes the single task `build`, with
+`dependsOn: ["^build"]`. That is also what you get when no kept workspace
+declares anything. Add the rest of that workspace's tasks by hand.
+
+A `turbo.json` carries the most across: each task's `dependsOn`, `inputs`,
+`outputs`, `env`, `persistent`, and `cache`, plus the file's
+`globalDependencies` and `globalEnv`, which become the config's. A `!`-negated
+`inputs` glob becomes an `ignore` entry, because Lattice spells an exclusion as
+its own list; a negated `outputs` glob is dropped.
+
+Four rules decide the rest:
+
+- A task a file only names, as a `package.json` script does, is written as `{}`.
+  `build` is the exception and keeps `dependsOn: ["^build"]`.
+- Where two kept workspaces name the same task, the one that describes it wins
+  over the one that only names it.
+- An entry Lattice has no word for is left out rather than guessed at: a
+  package-scoped `web#build` task or `dependsOn` entry, a `$LEGACY_ENV` in
+  `dependsOn`, and `$TURBO_DEFAULT$` in `inputs`.
+- A `dependsOn` entry naming a task that did not make it into the file is
+  pruned. Lattice refuses to load a config that depends on a task it does not
+  define, so what `init` writes always loads.
+
 **Flags**
 
 | Flag | Short | Argument | Default | Description |
@@ -290,8 +339,11 @@ lattice init --yes
 lattice init --force
 ```
 
-On a terminal, `init` shows the two lists with everything pre-checked and lets
-you uncheck what is wrong. A repo root that holds only a workspace declaration,
+On a terminal, `init` shows the two lists — workspaces and engines — with
+everything pre-checked and lets you uncheck what is wrong. Tasks are not a third
+list; they follow the workspaces you keep, so unchecking a workspace also drops
+the tasks only that workspace declared. A repo root that holds only a workspace
+declaration,
 such as a `Cargo.toml` with `[workspace]` or a `package.json` with
 `workspaces`, is offered alongside its members but starts unchecked. So is a
 directory whose driver stays ambiguous, because declaring it would halt the next

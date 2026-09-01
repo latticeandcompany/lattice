@@ -120,6 +120,13 @@ An auto workspace that resolves a driver is allowed to have no command for a
 given task. Lattice skips it rather than failing, so a `test` task can exist in
 the repo and cover only the workspaces that have tests.
 
+A `persistent: true` task is the one case where a driver that would otherwise
+infer a command declines to. `cargo`, `go`, `gradle` and the rest take the task
+name as a subcommand, and there is no `cargo dev`, so the task is skipped there
+unless the workspace declares a `scripts` entry for it. Task runners are
+exempt, since they run the tasks the repo declared to them. See [Persistent
+tasks](/lattice/docs/persistent-tasks#where-its-command-comes-from).
+
 ## `auto: false` is the way out
 
 Set `auto: false` and nothing is detected and nothing is inferred. You declare

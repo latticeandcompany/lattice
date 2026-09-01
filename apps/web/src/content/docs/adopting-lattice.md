@@ -153,6 +153,9 @@ schema directory, no `inputs` glob can name it. Put it in the root-level
 }
 ```
 
+If a workspace's `turbo.json` declared either key, `init` already wrote it and
+the job here is to prune rather than to add.
+
 See [Caching](/lattice/docs/caching) for the rest of what the key is built from.
 
 ## Pin toolchains last

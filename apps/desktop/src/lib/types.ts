@@ -168,6 +168,32 @@ export interface WorkspaceCandidate {
 	marker: string;
 	driver: string | null;
 	defaultSelected: boolean;
+	declared: DeclaredTasks;
+}
+
+/** What a candidate's own task configuration already declares. */
+export interface DeclaredTasks {
+	tasks: TaskCandidate[];
+	globalDependencies: string[];
+	globalEnv: string[];
+	/** The file the declarations came from. Empty when none were found. */
+	source: string;
+}
+
+export interface TaskCandidate {
+	name: string;
+	/** Null where the source lists names and nothing else, as scripts do. */
+	detail: TaskDetail | null;
+}
+
+export interface TaskDetail {
+	dependsOn: string[] | null;
+	inputs: string[] | null;
+	ignore: string[] | null;
+	outputs: string[] | null;
+	env: string[] | null;
+	persistent: boolean | null;
+	cache: boolean | null;
 }
 
 export interface EnginePin {

@@ -166,7 +166,10 @@ One invocation, end to end:
 9. **Scheduler execution.** `lattice_runner::execute_tasks` resolves each
    workspace's merged engines into a `PATH` prefix and an identity string through
    `lattice_workspace::toolchain::provision_and_resolve`, memoized so an
-   identical engine spec provisions once. Then it drives the in-degree scheduler:
+   identical engine spec provisions once, then appends the project's dependency
+   bin directories from `lattice_workspace::dependency_bin_dirs`. Those go after
+   the toolchain's, so a pin still decides which copy of a tool runs. Then it
+   drives the in-degree scheduler:
    a node at indegree zero is spawned as a Tokio task under a `Semaphore`-capped
    concurrency. Each spawned task computes its cache key with
    `lattice_cache::compute_key_detailed`, looks it up through the `CacheStore`,
