@@ -16,6 +16,15 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Lattice 1.1 — 2026-09-01
+
+- `lattice init` now writes the pipeline a repo already declares rather than a
+  single `build` task, and a task can find the tools the project installed for
+  itself. Both are in the entries below
+- Nothing in the `lattice.json` schema or the CLI surface changed, so a 1.0.0
+  config loads unaltered. The running version is hashed into every task's cache
+  key, so the first run after upgrading re-runs everything
+
 ### `lattice init` imports the pipeline the repo already declares — 2026-09-01
 
 - Init wrote exactly one task, `build`. A repo whose task runner declared twelve

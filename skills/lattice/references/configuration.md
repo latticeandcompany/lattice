@@ -87,8 +87,8 @@ when you run. It is the one thing under `.lattice/` meant to be committed;
 writes it. The value has to parse as a version, with an optional leading `v`.
 Anything else fails by name rather than as a failed download:
 `lattice.json pins \`latticeVersion\` as "<value>", which is not a version. Write
-it like 0.2.0, or run \`lattice upgrade <version>\` to set it`. `"v1.0.0"` and
-`"1.0.0"` name the same release. When either one names the running build, the pin
+it like 0.2.0, or run \`lattice upgrade <version>\` to set it`. `"v1.1.0"` and
+`"1.1.0"` name the same release. When either one names the running build, the pin
 is a no-op. A binary that Lattice itself installed under `.lattice/bin` reads the
 pin on every invocation, installs the pinned version if needed, and hands the
 invocation over to it. A binary from anywhere else is never replaced: it prints
@@ -368,7 +368,7 @@ is spawned.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0",
+  "latticeVersion": "1.1.0",
   "workspaces": [
     { "name": "web", "path": "apps/web", "engines": { "node": ">=20.0.0" } },
     { "name": "api", "path": "services/api", "dependsOn": ["shared"] },

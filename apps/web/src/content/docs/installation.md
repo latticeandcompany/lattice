@@ -199,8 +199,8 @@ When the two disagree, Lattice runs the installed version and prints the
 mismatch on stderr:
 
 ```text
-lattice: lattice.json pins latticeVersion 1.0.0, but the installed package is 1.1.0.
-Running 1.1.0. Reconcile them by updating one to match the other, or set
+lattice: lattice.json pins latticeVersion 0.2.0, but the installed package is 0.3.0.
+Running 0.3.0. Reconcile them by updating one to match the other, or set
 "settings": { "versionCheck": false } in lattice.json to silence this.
 ```
 
@@ -272,7 +272,7 @@ lattice --version
 ```
 
 ```text
-lattice 1.0.0
+lattice 1.1.0
 ```
 
 `lattice version` prints the same version under the mark. For a
@@ -283,7 +283,7 @@ lattice version --json
 ```
 
 ```json
-{"version":"1.0.0","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"1.1.0","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 Running `lattice` with no arguments prints the mark and points you at `--help`.

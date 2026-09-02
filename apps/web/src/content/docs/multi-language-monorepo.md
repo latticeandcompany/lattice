@@ -32,7 +32,7 @@ The config as shipped:
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0",
+  "latticeVersion": "1.1.0",
   "workspaces": [
     { "name": "web", "path": "apps/web" },
     { "name": "api", "path": "apps/api" },

@@ -80,7 +80,7 @@ in:
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0",
+  "latticeVersion": "1.1.0",
   "tasks": {
     "build": {
       "dependsOn": [
@@ -131,7 +131,7 @@ Now declare it. Replace `lattice.json` with this:
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0",
+  "latticeVersion": "1.1.0",
   "workspaces": [
     {
       "name": "app",

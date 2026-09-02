@@ -11,10 +11,10 @@ description: >
   (5) a task is missing the cache or hitting it when it should not,
   (6) wiring `lattice` into CI.
 license: ISC
-compatibility: lattice 1.0.0+
+compatibility: lattice 1.1.0+
 metadata:
   author: latticeandcompany
-  version: "1.0.0"
+  version: "1.1.0"
 allowed-tools: Bash(lattice:*), Read, Write, Edit, Glob, Grep
 ---
 
@@ -247,7 +247,7 @@ Eight top-level keys, all optional. `{}` is a valid config.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.0.0",
+  "latticeVersion": "1.1.0",
   "workspaces": [
     { "name": "core", "path": "libs/core" },
     { "name": "api", "path": "services/api", "dependsOn": ["core"] },

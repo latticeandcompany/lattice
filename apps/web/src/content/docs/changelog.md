@@ -16,6 +16,16 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Lattice 1.1 — 2026-09-01
+
+- `lattice init` now writes the pipeline a repo already declares rather than a
+  single `build` task, and a task can find the tools the project installed for
+  itself. Both are below
+- Nothing in the `lattice.json` schema or the CLI surface changed, so a 1.0.0
+  config loads unaltered. The running version is hashed into every task's cache
+  key, so the first run after upgrading re-runs everything
+- See [Upgrading](/lattice/docs/upgrading)
+
 ## `lattice init` imports the pipeline the repo already declares — 2026-09-01
 
 - Init wrote exactly one task, `build`. A repo whose task runner declared twelve
