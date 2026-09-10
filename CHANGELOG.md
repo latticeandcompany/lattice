@@ -16,6 +16,38 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Lattice 1.1.1 — 2026-09-10
+
+- A task that leaves a process running behind it no longer holds the run open
+  after the task itself has finished. The entry below has it
+- Nothing in the `lattice.json` schema or the CLI surface changed, so a 1.1.0
+  config loads unaltered. The running version is hashed into every task's cache
+  key, so the first run after upgrading re-runs everything
+
+### A task that leaves a process running no longer hangs the run — 2026-09-10
+
+- A task's command runs in a shell whose output Lattice reads through a pipe.
+  Everything that shell starts inherits the same pipe, so a task leaving a
+  process behind — a Gradle daemon, an MSBuild node, an `esbuild` service, a
+  watcher it backgrounded — left that process holding the pipe open. Lattice
+  waited for the pipe to end before reporting the task, and the pipe ends only
+  when the last thing holding it exits. A build that succeeded in a second
+  against a daemon that never exits left the run waiting for good, with `-v`
+  showing the build's own output and then nothing
+- Lattice now reads for half a second after the task's own process exits and
+  then stops, the same grace a run already gave its final flush. The task's
+  result, its exit code and its caching are unchanged, and output written
+  before the task exited is still reported. `-v` notes
+  `finished leaving a process that still holds its output open` when the grace
+  runs out
+- The daemon is left running. Stopping it is not Lattice's call
+- A task's reported duration is now measured when its process exits rather than
+  when its output is finished being read. A task that left a daemon behind used
+  to report the daemon's lifetime as its own, and that figure is what the cache
+  stores and `lattice stats` later adds up as time saved
+- `lattice setup` read an installer's output the same way and could hang for the
+  same reason
+
 ### Lattice 1.1 — 2026-09-01
 
 - `lattice init` now writes the pipeline a repo already declares rather than a

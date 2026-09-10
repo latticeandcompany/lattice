@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use lattice_config::{find_root, resolve_engines, LOCKFILES};
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, ROSETTE};
 use lattice_project::scaffold::{LEGACY_SETUP_MARKER, SETUP_MARKER_DIR};
+use lattice_runner::DRAIN_GRACE;
 use lattice_workspace::toolchain;
 use lattice_workspace::{discover_workspaces, Workspace};
 
@@ -400,8 +401,21 @@ async fn run_install(command: &str, cwd: &Path, path_prepend: &[PathBuf]) -> Res
 	});
 
 	let status = child.wait().await?;
-	let _ = stdout_task.await;
-	let _ = stderr_task.await;
+	// An installer that leaves something running behind it — a package manager's
+	// store daemon, a language server it warmed up — left that process holding
+	// these pipes, and they reach EOF only once it exits. The install's own
+	// output is already buffered, so the readers get a moment and no more.
+	let out_abort = stdout_task.abort_handle();
+	let err_abort = stderr_task.abort_handle();
+	if tokio::time::timeout(DRAIN_GRACE, async {
+		let _ = tokio::join!(stdout_task, stderr_task);
+	})
+	.await
+	.is_err()
+	{
+		out_abort.abort();
+		err_abort.abort();
+	}
 	Ok(status.success())
 }
 

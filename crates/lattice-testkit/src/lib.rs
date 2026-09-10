@@ -244,6 +244,26 @@ pub fn escaped_background(secs: u64) -> String {
 	format!("bash -c 'set -m; sleep {secs} & sleep {secs}'")
 }
 
+/// A command that starts a background process holding the task's stdout and
+/// then exits immediately, leaving it running.
+///
+/// The distinction from [`stubborn_background`] and [`escaped_background`] is
+/// that the shell does not wait: the task is over in milliseconds and the
+/// leftover outlives it, which is the shape of a build that leaves a daemon
+/// behind — Gradle, MSBuild node reuse, an `esbuild` service. The runner sees
+/// its child exit and there is still no EOF on the pipe.
+///
+/// Braced so that `&` terminates only the sleep. Unbraced, `&` ends the whole
+/// and-or list it sits in, so composing this with [`all`] would background the
+/// commands before it too — a test asserting on their output would then be
+/// racing whoever reads the pipe rather than testing anything.
+///
+/// Unix only, for the reason [`stubborn_background`] gives.
+#[cfg(unix)]
+pub fn lingering_background(secs: u64) -> String {
+	format!("{{ sleep {secs} & }}")
+}
+
 /// A command that prints `text`, then a byte that is not valid UTF-8, then
 /// `after` — each on its own line.
 ///
