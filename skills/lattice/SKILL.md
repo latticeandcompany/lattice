@@ -102,6 +102,14 @@ Every item here is something models invent. None of it parses.
   `SIGTERM`, the exit of every persistent task, or the failure of any task in the
   run. If the process exits anyway, the run reports `EXITED (code <n>)` and ends,
   counting a non-zero exit as a failed task.
+- **A task can outlive its own output.** A task that leaves a process running —
+  a Gradle daemon, an MSBuild node, a watcher it backgrounded — hands that
+  process the pipe Lattice reads the task's output through, and the pipe does
+  not close while the process lives. Lattice reads for half a second past the
+  task's exit and then stops, so trailing output from the leftover is dropped
+  and `-v` notes `finished leaving a process that still holds its output open`.
+  The task still succeeds and still caches, its reported duration is its own and
+  not the leftover's, and Lattice does not stop the leftover.
 - **An interrupted run reports no failures.** `Ctrl-C` and `SIGTERM` stop the
   scheduler and terminate each task's process group. A task stopped that way
   prints no `FAILED` line and is not counted, so read the exit code. `130` is an

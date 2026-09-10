@@ -49,16 +49,17 @@ type Captured = Arc<Mutex<Vec<(bool, String)>>>;
 #[cfg_attr(not(unix), allow(dead_code, reason = "the graceful step is unix-only"))]
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// How long the run waits for its message channel to close once every child has
-/// been stopped.
+/// How long anything here waits for a pipe to reach EOF once the process that
+/// owned it is gone.
 ///
-/// The channel closes when the last streamer sees EOF on the pipes it is
-/// draining, which is normally the instant its child dies. A task that leaves a
-/// process holding those pipes outside the group we signalled — `tauri dev`
-/// puts its `beforeDevCommand` in a fresh one — never produces that EOF, and
-/// waiting for it is waiting forever. The messages this drain exists to flush
-/// are already queued, so anything past a moment is the pathological case.
-const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+/// EOF arrives when the last writer closes, which is normally the instant the
+/// child dies. But everything that child started inherited the same write end —
+/// a build daemon it left running, a `tauri dev` `beforeDevCommand` in a fresh
+/// process group — and while any of them lives there is no EOF coming. What is
+/// worth reading was already written and takes a moment to drain, so past this
+/// the reader is cut loose. Bounds both the per-task drain and the run's final
+/// flush of its message channel.
+pub const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1339,16 +1340,37 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		None => child.wait().await,
 	};
 
-	// The child is gone, so the pipes are closed and these finish.
-	let _ = out_task.await;
-	let _ = err_task.await;
+	// Measured before the pipes are drained rather than after. What some process
+	// the task left behind does with its stdout is not the task's runtime, and
+	// this is the number the cache stores and later reports back as time saved.
+	let duration_ms = start.elapsed().as_millis() as u64;
+
+	// The child is gone, but its pipes close only once everything that inherited
+	// them has gone too, and a task that leaves a daemon behind holds the write
+	// end open with nothing left to write. Waiting for that EOF is waiting for
+	// the daemon, so the readers get [`DRAIN_GRACE`] to take what is buffered and
+	// are then cut loose.
+	let out_abort = out_task.abort_handle();
+	let err_abort = err_task.abort_handle();
+	let drained = tokio::time::timeout(DRAIN_GRACE, async {
+		let _ = tokio::join!(out_task, err_task);
+	})
+	.await;
+	if drained.is_err() {
+		out_abort.abort();
+		err_abort.abort();
+		let _ = ctx.tx.send(RunnerMsg::TaskNote {
+			workspace: ws.clone(),
+			task: task.clone(),
+			msg: "finished leaving a process that still holds its output open".to_string(),
+		});
+	}
 
 	if let Some(pid) = child_pid {
 		ctx.children.remove(pid);
 	}
 
 	let mut captured = std::mem::take(&mut *capture.lock().unwrap());
-	let duration_ms = start.elapsed().as_millis() as u64;
 	let mut exit_code = status.as_ref().ok().and_then(|s| s.code());
 
 	let success = if timed_out {
@@ -1684,6 +1706,7 @@ mod tests {
 		surfaced: Mutex<Vec<(String, String)>>,
 		surfaced_lines: Mutex<Vec<String>>,
 		warnings: Mutex<Vec<String>>,
+		notes: Mutex<Vec<String>>,
 	}
 
 	impl RecordingReporter {
@@ -1770,7 +1793,9 @@ mod tests {
 				.unwrap()
 				.push((s.total, s.cached, s.failed, s.elapsed_ms));
 		}
-		fn note(&self, _msg: &str) {}
+		fn note(&self, msg: &str) {
+			self.notes.lock().unwrap().push(msg.to_string());
+		}
 		fn warn(&self, msg: &str) {
 			self.warnings.lock().unwrap().push(msg.to_string());
 		}
@@ -3077,6 +3102,72 @@ mod tests {
 		assert!(
 			failed.1.is_some_and(|ms| ms > 0),
 			"a task that slept two seconds took some time: {failed:?}"
+		);
+	}
+
+	/// An ordinary task's own exit is the only thing that says it is over. A
+	/// build that leaves a daemon running hands that daemon the task's stdout, so
+	/// the pipe never reaches EOF — and waiting for the readers to finish meant
+	/// waiting for the daemon, which for a real one is forever. The task had
+	/// already succeeded; the run just never noticed.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn a_task_that_leaves_a_daemon_running_still_finishes() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path();
+		let command = sh::all([sh::echo("built"), sh::lingering_background(120)]);
+		let workspaces = vec![ws("app", root, &[("build", &command)])];
+		let config = config_with(&[("build", PipelineTask::default())]);
+		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let r = RecordingReporter::new();
+
+		let started = Instant::now();
+		let result = tokio::time::timeout(
+			Duration::from_secs(30),
+			execute_tasks(opts(&graph, &workspaces, &config, root, &r)),
+		)
+		.await
+		.expect("a leftover holding the pipe must not hold the task open")
+		.unwrap();
+
+		assert_eq!(result.failed, 0);
+		assert!(r.has("finished:app:build"));
+		assert!(
+			started.elapsed() < Duration::from_secs(20),
+			"the run waited on the leftover rather than on the task: {:?}",
+			started.elapsed()
+		);
+
+		let reported = r
+			.events
+			.lock()
+			.unwrap()
+			.iter()
+			.find_map(|ev| match ev {
+				TaskEvent::Finished { duration_ms, .. } => Some(*duration_ms),
+				_ => None,
+			})
+			.expect("the run has to report the task finishing");
+		assert!(
+			reported < 5_000,
+			"the reported duration is the task's, not the leftover's: {reported}ms"
+		);
+
+		assert!(
+			r.events.lock().unwrap().iter().any(|ev| matches!(
+				ev,
+				TaskEvent::Output { line, .. } if line == "built"
+			)),
+			"giving up on the pipe must not cost the output already written"
+		);
+		assert!(
+			r.notes
+				.lock()
+				.unwrap()
+				.iter()
+				.any(|n| n.contains("holds its output open")),
+			"the run stopped reading early; it has to say so: {:?}",
+			r.notes.lock().unwrap()
 		);
 	}
 

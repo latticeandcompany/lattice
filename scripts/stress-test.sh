@@ -1639,6 +1639,25 @@ else
 fi
 pkill -f "sleep 3117" 2>/dev/null
 
+# --- a task that leaves a daemon behind does not hold the run --------------
+# The task's own shell exits immediately, but what it backgrounded inherited
+# the task's stdout and holds the write end open, so the pipe never reaches
+# EOF. Waiting for that EOF is waiting for the daemon, and a build server never
+# exits: the build succeeded and the run then waited for good.
+DMN="$ENVROOT/daemon"; mkdir -p "$DMN/app"
+cat > "$DMN/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
+                    "scripts": { "build": "echo built; sleep 5171 &" } } ],
+  "tasks": { "build": { "cache": false } } }
+JSON
+lat_timeout "$DMN" 20 run build --loquacious
+t_ran  "a task that leaves a daemon running still ends the run"
+t_ok   "a task that leaves a daemon running is still a success"
+t_has  "the output written before the daemon is not lost" "built"
+t_has  "the run says it gave up reading the task's output" "holds its output open"
+t_hasE "the duration reported is the task's, not the daemon's" 'done \(0\.[0-9]+s\)'
+pkill -f "sleep 5171" 2>/dev/null
+
 # --- an interrupt takes the whole child tree -------------------------------
 # Each task runs in its own process group, which is what lets a task that shells
 # out be cleaned up as a unit — and the same call detaches it from the terminal's

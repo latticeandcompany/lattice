@@ -501,6 +501,28 @@ lsof -ti:1420 | xargs kill
 Nothing is wrong with your config. A launcher that manages its own process
 groups is doing so deliberately, and Lattice has no handle on what it started.
 
+### A task exits but says it stopped reading its output
+
+```text
+lattice: app:build: finished leaving a process that still holds its output open
+```
+
+Shown by `-v`. The task's own process exited, but something it started did not:
+a Gradle daemon, an MSBuild node, an `esbuild` service, a watcher it
+backgrounded. That process inherited the pipe Lattice reads the task's output
+through, and the pipe stays open until the last thing holding it exits. Lattice
+reads for half a second after the task exits, then stops and moves on.
+
+The task is a success, its exit code is its own, and its outputs are cached as
+usual. Everything it wrote before exiting is reported. Only what the leftover
+process writes afterwards is dropped, and that is the daemon's output rather
+than the task's.
+
+The daemon keeps running. That is what a build daemon is for, and the next run
+is faster because of it, so Lattice does not stop it. Stop it yourself with
+whatever the tool provides — `./gradlew --stop`, `dotnet build-server shutdown`
+— if you need it gone.
+
 ### A task cannot depend on your `dev` task
 
 ```text
