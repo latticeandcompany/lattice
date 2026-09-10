@@ -16,6 +16,14 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Lattice 1.1.1 — 2026-09-10
+
+- A task that leaves a process running behind it no longer holds the run open
+  after the task itself has finished. The entry below has it
+- Nothing in the `lattice.json` schema or the CLI surface changed, so a 1.1.0
+  config loads unaltered. The running version is hashed into every task's cache
+  key, so the first run after upgrading re-runs everything
+
 ### A task that leaves a process running no longer hangs the run — 2026-09-10
 
 - A task's command runs in a shell whose output Lattice reads through a pipe.
