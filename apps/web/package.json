@@ -25,12 +25,12 @@
 		"echarts": "^6.1.0",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
-		"sass": "^1.103.1",
+		"sass": "^1.104.0",
 		"tailwindcss": "^4.3.3"
 	},
 	"devDependencies": {
 		"@types/react": "^19.2.18",
-		"@types/react-dom": "^19.2.5",
+		"@types/react-dom": "^19.2.7",
 		"pagefind": "^1.5.2"
 	}
 }
