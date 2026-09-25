@@ -548,9 +548,8 @@ impl Reporter for CiReporter {
 				task,
 				line,
 				stderr,
-				persistent,
+				..
 			} => {
-				let _ = persistent;
 				let label = self.label(&workspace, &task);
 				if stderr {
 					eprintln!("{}: {}", label, line);

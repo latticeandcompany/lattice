@@ -16,6 +16,109 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Lattice 2.0 — 2026-09-25
+
+- `lattice.json` changed shape: workspaces, the dependencies between them and
+  their tasks now come from the repo's own manifests, and the file says only
+  what those cannot. A 1.x config no longer loads; `lattice migrate` rewrites
+  it and keeps every workspace's name. The entries below have the details
+- A Gradle build no longer hangs a run started from a terminal
+- The running version is hashed into every task's cache key, so the first run
+  after upgrading re-runs everything
+
+### Tasks no longer share Lattice's terminal — 2026-09-25
+
+- Every task ran in a background process group that still shared the
+  terminal Lattice was started from, with that terminal as its stdin. The
+  first read from it stopped the whole task: the Gradle client forwards stdin
+  to its daemon, and `sudo` and `ssh` prompt through `/dev/tty`. A stopped
+  task never exits, so the run waited for good, spinner turning. Nothing run
+  without a terminal ever saw it, which is why CI did not
+- Tasks now get an empty stdin and a session of their own. A tool that wants
+  to prompt fails with its own error instead of waiting forever
+- A persistent task can no longer read the keyboard. Under 1.x it was stopped
+  the moment it tried
+
+### Workspaces, dependencies and tasks come from the manifests — 2026-09-25
+
+- `workspaces` is a list of directories or globs, added to the members the
+  root's workspace files already name: `package.json` `workspaces`,
+  `pnpm-workspace.yaml`, Cargo's `[workspace]`, `go.work`, uv's
+  `[tool.uv.workspace]` and deno's `workspace`. `exclude` removes any. 1.x
+  took only objects with a literal `name` and `path`
+- A workspace is named by its manifest (`package.json` `name`, the crate name,
+  the `pyproject.toml` project name), falling back to its directory. Two that
+  would share a name are named by their paths
+- A repo whose root names no workspaces and holds a project is one workspace
+- A Gradle, Maven or .NET build is one workspace however many subprojects it
+  has, and the build tool orders them. Two builds of one Gradle project at
+  once contend for its locks and its output directories
+- Dependency order is read from `workspace:*` and `file:` dependencies in
+  `package.json`, `path` dependencies in `Cargo.toml`, `require`s in `go.mod`,
+  and uv and `pyproject.toml` dependencies. 1.x needed every edge written in
+  `dependsOn`
+- `overrides`, keyed by a workspace name or a glob over workspace paths, holds
+  what the manifests cannot say: an edge between languages in `dependsOn`, a
+  `name`, a `driver` (or `"none"`), `engines`, and `tasks`. It replaces the
+  per-workspace `auto`, `scripts`, `engines` and `dependsOn` of 1.x
+- A key in `overrides` that matches no workspace is an error that names the
+  nearest match
+- Choosing a driver no longer means listing it in `engines` with
+  `">=0.0.0"`; `engines` only pins versions. A workspace inside a JS or Python
+  monorepo finds the lockfile at the root, and a manifest only one tool reads —
+  `Cargo.toml`, `go.mod`, `pom.xml`, a `build.gradle` — is enough on its own
+- A Gradle or Maven wrapper is found in any directory above the workspace
+
+### A task runs wherever it really exists — 2026-09-25
+
+- A task runs in every workspace that defines it: a `package.json` script, a
+  deno task, a composer script, a justfile recipe, a Taskfile task, a Rakefile
+  task, a `turbo.json` task. It no longer has to be declared in `tasks` first
+- A build tool gets the verbs it has: `lint` is `cargo clippy`, `check` is
+  `go vet ./...`, `build` is `mvn package -DskipTests`, `format` is
+  `dotnet format`. Verbs that depend on a plugin or a dev dependency (spotless,
+  pytest, ruff, rubocop, credo) are offered only when the manifest shows it.
+  1.x appended the task name to the tool, so `lattice run lint` ran
+  `cargo lint`, which does not exist
+- A workspace without the task sits the run out, and the run says which ones
+  did. A name one typo away from a task the workspace has is a warning
+- A task nobody has is refused with a "Did you mean"
+- `build` depends on the builds of the workspaces it depends on, and caches
+  the tool's build directory (`dist/`, `target/`, `build/`, `bin/`) unless told
+  otherwise. `dev`, `start`, `serve` and `watch` are persistent. `clean`,
+  `deploy`, `publish` and `release` are never cached. Each is a default the
+  root `tasks` map and an override can replace field by field
+- `cargo clean` in a crate is now `cargo clean -p <crate>`, so it no longer
+  wipes the shared target directory for every other crate
+- Running from inside a workspace runs that workspace and what it depends on.
+  `--filter` still selects across the whole repo
+- `lattice run test -- --nocapture` passes the arguments to the tasks named,
+  not to the prerequisites pulled in
+
+### A run shows what it is doing — 2026-09-25
+
+- On a terminal, finished tasks settle into a line each while a live region
+  shows every running task with its elapsed time and the last lines it
+  printed, the next tasks waiting and what they wait on, and progress. A
+  failure prints its whole output under its line
+- `-v` adds cache keys, why a task missed and per-task notes to either display.
+  It used to switch to the plain stream as well; `--stream` does that now
+- The plain stream, which CI and pipes get, prints every line a task writes as
+  it arrives, under the task's label. It used to hold output back until a task
+  failed
+- Errors print as one `error:` line with their causes indented below
+
+### A pinned tool that fails says why — 2026-09-25
+
+- An engine that fails its check prints what was wanted, what was found and
+  where it lives, the command that ran, what it printed, and what to do about
+  it. A tool missing from `PATH` is reported as missing rather than as a failed
+  version command, and a failed `installCmd` shows its exit status and output
+- A run reports which version of each pinned tool it is using
+- A Gradle or Maven version is checked through the wrapper the build runs
+- `lattice env` prints the `PATH` a task sees, for `eval` in a shell, so
+  `node` or `java` in a terminal is the version the repo pins
+
 ### Lattice 1.1.1 — 2026-09-10
 
 - A task that leaves a process running behind it no longer holds the run open

@@ -1214,7 +1214,7 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 
 	disambiguate(&mut workspaces, config)?;
 	infer_dependencies(&mut workspaces, &keys, &dep_refs);
-	check_declared_dependencies(&workspaces, config)?;
+	check_declared_dependencies(&workspaces)?;
 	Ok(workspaces)
 }
 
@@ -1338,7 +1338,7 @@ fn infer_dependencies(
 
 /// A `dependsOn` in an override that names no workspace would build no edge,
 /// and the run would lose its ordering without a word.
-fn check_declared_dependencies(workspaces: &[Workspace], config: &LatticeConfig) -> Result<()> {
+fn check_declared_dependencies(workspaces: &[Workspace]) -> Result<()> {
 	let names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
 	for ws in workspaces {
 		for dep in &ws.depends_on {
@@ -1359,7 +1359,6 @@ fn check_declared_dependencies(workspaces: &[Workspace], config: &LatticeConfig)
 			bail!(message);
 		}
 	}
-	let _ = config;
 	Ok(())
 }
 
