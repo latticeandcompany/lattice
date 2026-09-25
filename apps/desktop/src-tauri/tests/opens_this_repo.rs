@@ -41,8 +41,8 @@ fn this_repo_opens_and_resolves_every_workspace() {
 		"lattice-events",
 		"lattice-project",
 		"lattice-runner",
-		"web",
-		"desktop",
+		"@lattice/web",
+		"@lattice/desktop",
 	] {
 		assert!(
 			names.contains(&expected),
@@ -69,7 +69,7 @@ fn a_rust_crate_resolves_cargo_and_a_node_app_resolves_npm() {
 	let desktop = view
 		.workspaces
 		.iter()
-		.find(|ws| ws.name == "desktop")
+		.find(|ws| ws.name == "@lattice/desktop")
 		.expect("the desktop app is declared");
 	let driver = desktop
 		.driver
@@ -132,16 +132,22 @@ fn a_dev_task_is_reported_as_persistent() {
 	let project = Project::open_root(&repo_root()).unwrap();
 	let view = project.view();
 
-	let dev = view
+	let web = view
+		.workspaces
+		.iter()
+		.find(|ws| ws.name == "@lattice/web")
+		.expect("the site is a workspace");
+	let dev = web
 		.tasks
 		.iter()
-		.find(|task| task.name == "dev")
-		.expect("the pipeline declares dev");
-	assert!(dev.persistent);
+		.find(|task| task.task == "dev")
+		.expect("the site's package.json declares dev");
+	assert!(dev.persistent, "dev is persistent without saying so");
 	assert!(
-		!dev.cache,
+		!dev.cacheable,
 		"a dev server's output is not a cacheable artifact"
 	);
+	assert_eq!(dev.source, "package.json");
 }
 
 #[test]
@@ -151,6 +157,7 @@ fn a_build_graph_over_this_repo_is_ordered_and_connected() {
 		tasks: vec!["build".to_string()],
 		filter: None,
 		sequentially: false,
+		..Default::default()
 	};
 
 	let plan = project.plan(&request).expect("build must plan");
@@ -193,6 +200,7 @@ fn a_filter_narrows_the_graph_but_keeps_what_it_needs() {
 		tasks: vec!["build".to_string()],
 		filter: Some("lattice-runner".to_string()),
 		sequentially: false,
+		..Default::default()
 	};
 
 	let phases = match project.plan(&request).unwrap() {
@@ -229,6 +237,7 @@ fn a_filter_that_matches_nothing_is_reported_rather_than_failing() {
 		tasks: vec!["build".to_string()],
 		filter: Some("no-such-workspace".to_string()),
 		sequentially: false,
+		..Default::default()
 	};
 
 	match project.plan(&request).unwrap() {

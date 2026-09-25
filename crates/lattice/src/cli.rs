@@ -28,9 +28,14 @@ To start, run `lattice init`. Then run `lattice run <task>`.",
 {usage-heading} {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
-	/// Print raw `workspace:task:` lines instead of the live display.
+	/// Show more: why each task missed the cache, its key, and per-task notes.
 	#[arg(short, long, global = true)]
 	pub verbose: bool,
+
+	/// Print a plain `workspace:task` line per event instead of the live display,
+	/// the way a CI log gets it.
+	#[arg(long, global = true)]
+	pub stream: bool,
 
 	/// Hidden alias for --verbose.
 	#[arg(short, long, global = true, hide = true)]
@@ -130,7 +135,10 @@ impl Cli {
 	}
 
 	pub async fn execute(self) -> Result<()> {
-		let flag_loq = self.flag_loquacious();
+		let flags = OutputFlags {
+			verbose: self.flag_loquacious(),
+			stream: self.stream,
+		};
 		let no_version_check = self.no_version_check;
 		let theme = self.effective_theme();
 		let base_url = self.release_base_url.clone();
@@ -146,8 +154,8 @@ impl Cli {
 		}
 
 		match self.command {
-			Some(Commands::Run(args)) => args.execute(flag_loq, no_version_check).await,
-			Some(Commands::Setup(args)) => args.execute(flag_loq, no_version_check).await,
+			Some(Commands::Run(args)) => args.execute(flags, no_version_check).await,
+			Some(Commands::Setup(args)) => args.execute(flags, no_version_check).await,
 			Some(Commands::Init(args)) => args.execute(theme).await,
 			Some(Commands::Migrate(args)) => args.execute().await,
 			Some(Commands::Env(args)) => args.execute().await,
@@ -171,19 +179,24 @@ impl Cli {
 	}
 }
 
-/// Effective loquacious: a CLI flag or the `settings.loquacious` config setting.
-/// Precedence does not matter for a boolean disjunction, but the CLI honors
-/// flag > env > setting > default overall.
+/// The global flags that decide how a run is displayed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OutputFlags {
+	pub verbose: bool,
+	pub stream: bool,
+}
+
+/// Verbose when the flag or `settings.loquacious` asks for it.
 pub fn effective_loquacious(flag_loq: bool, setting_loq: bool) -> bool {
 	flag_loq || setting_loq
 }
 
 /// Detect the output mode for this invocation, consulting the real terminal and
-/// `CI` env. `effective_loq` forces [`OutputMode::Raw`].
-pub fn detect_output_mode(effective_loq: bool) -> OutputMode {
+/// `CI` env. `stream` forces [`OutputMode::Raw`].
+pub fn detect_output_mode(stream: bool) -> OutputMode {
 	let tty = console::user_attended() && console::Term::stdout().is_term();
 	let ci = std::env::var("CI").is_ok();
-	lattice_output::detect_mode(tty, effective_loq, ci)
+	lattice_output::detect_mode(tty, stream, ci)
 }
 
 /// Gating logic for the one-line version-drift nag.

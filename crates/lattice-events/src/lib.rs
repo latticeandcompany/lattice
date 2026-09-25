@@ -136,6 +136,17 @@ pub struct RunSummary {
 	pub saved_ms: u64,
 }
 
+/// A task the run is going to reach, and the tasks it waits on, given to a
+/// reporter before anything starts so it can show what is still to come.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedTask {
+	pub workspace: String,
+	pub task: String,
+	/// `workspace:task` labels of its prerequisites.
+	pub waits_on: Vec<String>,
+}
+
 /// One output abstraction, consumed via events. Must be `Send + Sync`: the
 /// runner shares it across concurrently spawned tasks behind an `Arc`, so all
 /// state lives behind interior mutability.
@@ -157,6 +168,10 @@ pub trait Reporter: Send + Sync {
 	fn task_warn(&self, workspace: &str, task: &str, msg: &str) {
 		self.warn(&format!("{workspace}:{task}: {msg}"));
 	}
+	/// Every task the run will reach, in the order it may start them.
+	fn plan(&self, _tasks: &[PlannedTask]) {}
+	/// The run was narrowed to `workspace` because it was started inside it.
+	fn scope(&self, _workspace: &str) {}
 	/// Called once at the end so the interactive impl can clear its progress surface.
 	fn finish(&self);
 }

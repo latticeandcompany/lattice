@@ -18,7 +18,10 @@ use tauri_plugin_dialog::DialogExt;
 use lattice_project::{PlanRequest, RunOutcome, RunRequest};
 
 use crate::reporter::{EventSink, RunMessage};
-use crate::service::{self, AppInfo, ConfigDiagnostic, InitSelection, ProjectSnapshot, ScanResult};
+use crate::service::{
+	self, AppInfo, CacheReport, ConfigDiagnostic, InitSelection, MigrationPreview, ProjectSnapshot,
+	PruneResult, ScanResult, ToolchainGroup,
+};
 use crate::state::{AppState, RecentProject};
 
 /// The managed handle every command takes.
@@ -194,4 +197,48 @@ pub fn run_log(
 	task: String,
 ) -> Vec<lattice_events::OutputLine> {
 	service::run_log(state.inner(), &workspace, &task)
+}
+
+#[tauri::command]
+pub async fn migrate_preview(path: String) -> Result<MigrationPreview, String> {
+	tauri::async_runtime::spawn_blocking(move || service::preview_migration(&PathBuf::from(path)))
+		.await
+		.map_err(|e| format!("migrating panicked: {e}"))?
+		.map_err(fail)
+}
+
+#[tauri::command]
+pub async fn migrate_apply(state: Shared<'_>, path: String) -> Result<ProjectSnapshot, String> {
+	let shared = Arc::clone(state.inner());
+	tauri::async_runtime::spawn_blocking(move || {
+		service::apply_migration(&shared, &PathBuf::from(path))
+	})
+	.await
+	.map_err(|e| format!("migrating panicked: {e}"))?
+	.map_err(fail)
+}
+
+#[tauri::command]
+pub async fn toolchains_check(state: Shared<'_>) -> Result<Vec<ToolchainGroup>, String> {
+	// Checking runs version commands and may run an installCmd, which can take
+	// minutes; off the IPC thread for the same reason a run is.
+	let shared = Arc::clone(state.inner());
+	tauri::async_runtime::spawn_blocking(move || service::check_toolchains(&shared))
+		.await
+		.map_err(|e| format!("checking toolchains panicked: {e}"))?
+		.map_err(fail)
+}
+
+#[tauri::command]
+pub fn cache_report(state: Shared<'_>) -> Result<CacheReport, String> {
+	service::cache_report(state.inner()).map_err(fail)
+}
+
+#[tauri::command]
+pub async fn cache_prune(state: Shared<'_>, max_bytes: u64) -> Result<PruneResult, String> {
+	let shared = Arc::clone(state.inner());
+	tauri::async_runtime::spawn_blocking(move || service::prune_cache(&shared, max_bytes))
+		.await
+		.map_err(|e| format!("pruning panicked: {e}"))?
+		.map_err(fail)
 }

@@ -6,7 +6,9 @@ use dagger::{dry_run_order, includes_persistent_task, ExecutionGraph};
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, OutputMode};
 use lattice_project::{Plan, Project, RunOptions, RunRequest};
 
-use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag, BIN_VERSION};
+use crate::cli::{
+	detect_output_mode, effective_loquacious, maybe_emit_version_nag, OutputFlags, BIN_VERSION,
+};
 
 #[derive(Args, Debug)]
 #[command(long_about = "Run one or more tasks across your workspaces.\n\n\
@@ -62,13 +64,13 @@ pub struct RunArgs {
 }
 
 impl RunArgs {
-	pub async fn execute(&self, flag_loq: bool, no_version_check: bool) -> Result<()> {
+	pub async fn execute(&self, flags: OutputFlags, no_version_check: bool) -> Result<()> {
 		let cwd = std::env::current_dir()?;
 		let project = Project::open(&cwd)?;
 		project.require_known_tasks(&self.tasks)?;
 
-		let effective_loq = effective_loquacious(flag_loq, project.config.settings.loquacious);
-		let mut mode = detect_output_mode(effective_loq);
+		let effective_loq = effective_loquacious(flags.verbose, project.config.settings.loquacious);
+		let mut mode = detect_output_mode(flags.stream);
 
 		// Persistent tasks (dev servers, watchers) stream output indefinitely,
 		// which the live TUI can't render. Default such runs to raw, CI-style
@@ -113,6 +115,9 @@ impl RunArgs {
 		maybe_emit_version_nag(mode, &project.config, no_version_check);
 
 		let reporter = make_reporter(mode, effective_loq);
+		if let Some(scoped) = request.plan.workspaces.as_ref().and_then(|w| w.first()) {
+			reporter.scope(scoped);
+		}
 
 		let outcome = lattice_project::run(RunOptions {
 			project: &project,

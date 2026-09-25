@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Semaphore;
@@ -30,7 +30,7 @@ use lattice_cache::{
 	KeyBreakdown, LocalStore, RunRecord,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
-use lattice_events::{CacheMiss, Reporter, RunSummary, TaskEvent};
+use lattice_events::{CacheMiss, PlannedTask, Reporter, RunSummary, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::{dependency_bin_dirs, Workspace};
 use serde::Serialize;
@@ -679,17 +679,33 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let mut tc_cache: HashMap<String, (Vec<PathBuf>, String)> = HashMap::new();
 	let mut ws_prepend: HashMap<String, Vec<PathBuf>> = HashMap::new();
 	let mut ws_identity: HashMap<String, String> = HashMap::new();
+	let mut tools_in_use: Vec<String> = Vec::new();
 	for ws in workspaces
 		.iter()
 		.filter(|ws| in_run.contains(ws.name.as_str()))
 	{
 		let merged = resolve_engines(&config.engines, &ws.engines);
-		let memo_key = format!("{merged:?}");
+		// A build tool's wrapper makes the version depend on where it runs.
+		let wrapped = merged.contains_key("gradle") || merged.contains_key("maven");
+		let memo_key = if wrapped {
+			format!("{merged:?}@{}", ws.path.display())
+		} else {
+			format!("{merged:?}")
+		};
 		let (mut pp, id) = if let Some(hit) = tc_cache.get(&memo_key) {
 			hit.clone()
 		} else {
 			let resolved =
-				toolchain::provision_and_resolve(root, &merged, &mut |m| reporter.note(m))?;
+				toolchain::provision_and_resolve_in(root, &merged, Some(&ws.path), &mut |m| {
+					reporter.note(m)
+				})
+				.with_context(|| format!("workspace '{}' cannot run", ws.name))?;
+			for engine in &resolved.engines {
+				let described = engine.describe();
+				if !tools_in_use.contains(&described) {
+					tools_in_use.push(described);
+				}
+			}
 			let v = (resolved.path_prepend, resolved.identity);
 			tc_cache.insert(memo_key, v.clone());
 			v
@@ -734,6 +750,30 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
 	let run_label = task_names.iter().cloned().collect::<Vec<_>>().join("+");
 	reporter.run_start(&run_label, in_run.len());
+	if !tools_in_use.is_empty() {
+		reporter.note(&format!("using {}", tools_in_use.join(" · ")));
+	}
+	let planned: Vec<PlannedTask> = node_indices
+		.iter()
+		.enumerate()
+		.map(|(pos, &ni)| {
+			let node = &graph.graph[ni];
+			let mut waits_on: Vec<String> = schedule.prerequisites[pos]
+				.iter()
+				.map(|&dep| {
+					let d = &graph.graph[node_indices[dep]];
+					format!("{}:{}", d.workspace_name, d.task_name)
+				})
+				.collect();
+			waits_on.sort();
+			PlannedTask {
+				workspace: node.workspace_name.clone(),
+				task: node.task_name.clone(),
+				waits_on,
+			}
+		})
+		.collect();
+	reporter.plan(&planned);
 
 	// Cap parallelism at the requested override, else the machine default.
 	// Guard `Some(0)` so the semaphore always has permits.

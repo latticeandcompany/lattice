@@ -55,8 +55,12 @@ impl EnvArgs {
 			None => (project.config.engines.clone(), None),
 		};
 
-		let resolved =
-			toolchain::provision_and_resolve(&project.root, &engines, &mut |m| eprintln!("{m}"))?;
+		let resolved = toolchain::provision_and_resolve_in(
+			&project.root,
+			&engines,
+			ws_path.as_deref(),
+			&mut |m| eprintln!("{m}"),
+		)?;
 		let mut dirs: Vec<PathBuf> = resolved.path_prepend;
 		if let Some(path) = &ws_path {
 			dirs.extend(dependency_bin_dirs(&project.root, path));

@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use console::{style, Style, Term};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+mod live;
+pub use live::InteractiveReporter;
 
 /// The two output modes Lattice supports.
 ///
-/// `Interactive` is the default for humans attached to a terminal: it is the
-/// mode under which a live TUI is rendered. `Raw` is the line-by-line,
-/// ANSI-free stream used for CI, pipes, redirects, or when the user asks for it
-/// via `--verbose`/`-v`.
+/// `Interactive` is the default for humans attached to a terminal: the live
+/// display. `Raw` is the line-by-line stream used for CI, pipes, redirects, or
+/// when the user asks for it with `--stream`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
 	/// Full interactive terminal experience (TUI). The only mode that renders it.
@@ -19,15 +19,10 @@ pub enum OutputMode {
 	Raw,
 }
 
-/// Returns [`OutputMode::Raw`] whenever the output is not attached to an
-/// interactive terminal (`!stdout_is_tty`), a CI environment is detected
-/// (`ci_env`), or the user explicitly requested raw output (`loquacious`).
-/// Otherwise returns [`OutputMode::Interactive`].
-///
-/// The two non-interactive triggers produce the same stream; `loquacious`
-/// forces `Raw` on a machine that would otherwise render the TUI.
-pub fn detect_mode(stdout_is_tty: bool, loquacious: bool, ci_env: bool) -> OutputMode {
-	if !stdout_is_tty || ci_env || loquacious {
+/// [`OutputMode::Raw`] whenever the output is not attached to an interactive
+/// terminal, a CI environment is detected, or `--stream` asked for it.
+pub fn detect_mode(stdout_is_tty: bool, stream: bool, ci_env: bool) -> OutputMode {
+	if !stdout_is_tty || ci_env || stream {
 		OutputMode::Raw
 	} else {
 		OutputMode::Interactive
@@ -376,14 +371,14 @@ pub fn switching_notice(binary_version: &str, pinned_version: &str) -> String {
 // `serde`, so a front end can consume a run without linking `console` and
 // `indicatif`. Re-exported here because this crate's two reporters are the
 // terminal implementations of that trait.
-pub use lattice_events::{CacheMiss, OutputLine, Reporter, RunSummary, TaskEvent};
+pub use lattice_events::{CacheMiss, OutputLine, PlannedTask, Reporter, RunSummary, TaskEvent};
 
-/// Pick the reporter from detected mode. `Interactive` → [`InteractiveReporter`],
-/// else [`CiReporter`] (carrying `loquacious` so its trace lines turn on).
-pub fn make_reporter(mode: OutputMode, loquacious: bool) -> Box<dyn Reporter> {
+/// Pick the reporter from detected mode. `verbose` adds the trace: cache keys,
+/// why a task missed, per-task notes.
+pub fn make_reporter(mode: OutputMode, verbose: bool) -> Box<dyn Reporter> {
 	match mode {
-		OutputMode::Interactive => Box::new(InteractiveReporter::new()),
-		OutputMode::Raw => Box::new(CiReporter::new(loquacious)),
+		OutputMode::Interactive => Box::new(InteractiveReporter::new(verbose)),
+		OutputMode::Raw => Box::new(CiReporter::new(verbose)),
 	}
 }
 
@@ -482,9 +477,10 @@ pub fn fmt_count(n: usize) -> String {
 	out
 }
 
-/// Line stream: `workspace:task: <message>`, one line per event. In loquacious
-/// mode it also prints `note()` trace lines and per-task output. This is the
-/// reporter used when there is no TTY, or `-v` or `settings.loquacious` is set.
+/// Line stream: `workspace:task: <message>`, one line per event, with every
+/// line a task prints streamed under the same prefix as it arrives. Verbose
+/// adds the trace: notes, cache keys, why a task missed. This is the reporter
+/// used when there is no TTY, in CI, and with `--stream`.
 ///
 /// The `workspace:task` label carries a per-task color from [`LabelColors`] so
 /// interleaved lines can be told apart at a glance; nothing else in the line is
@@ -492,6 +488,9 @@ pub fn fmt_count(n: usize) -> String {
 pub struct CiReporter {
 	pub loquacious: bool,
 	labels: LabelColors,
+	/// Tasks that have streamed at least one line, whose failure output is
+	/// therefore already in the log.
+	streamed: Mutex<std::collections::HashSet<(String, String)>>,
 }
 
 impl CiReporter {
@@ -499,6 +498,7 @@ impl CiReporter {
 		Self {
 			loquacious,
 			labels: LabelColors::new(),
+			streamed: Mutex::new(std::collections::HashSet::new()),
 		}
 	}
 
@@ -550,16 +550,14 @@ impl Reporter for CiReporter {
 				stderr,
 				persistent,
 			} => {
-				// Persistent output (dev servers) always streams; other per-task
-				// output only in loquacious mode (else it's surfaced on failure).
-				if self.loquacious || persistent {
-					let label = self.label(&workspace, &task);
-					if stderr {
-						eprintln!("{}: {}", label, line);
-					} else {
-						println!("{}: {}", label, line);
-					}
+				let _ = persistent;
+				let label = self.label(&workspace, &task);
+				if stderr {
+					eprintln!("{}: {}", label, line);
+				} else {
+					println!("{}: {}", label, line);
 				}
+				self.streamed.lock().unwrap().insert((workspace, task));
 			}
 			TaskEvent::Finished {
 				workspace,
@@ -616,6 +614,10 @@ impl Reporter for CiReporter {
 	}
 
 	fn surface_failure(&self, workspace: &str, task: &str, captured: &[(bool, String)]) {
+		let key = (workspace.to_string(), task.to_string());
+		if self.streamed.lock().unwrap().contains(&key) {
+			return;
+		}
 		let label = self.label(workspace, task);
 		for (stderr, line) in captured {
 			if *stderr {
@@ -667,292 +669,16 @@ impl Reporter for CiReporter {
 		eprintln!("lattice: warning: {}: {}", self.label(workspace, task), msg);
 	}
 
+	fn scope(&self, workspace: &str) {
+		println!("lattice: running in {workspace}, the workspace you are in");
+	}
+
 	fn finish(&self) {}
-}
-
-/// Branded interactive reporter: an [`indicatif::MultiProgress`] with one teal
-/// spinner per running task. Child output is collapsed (buffered by the runner)
-/// and surfaced only on failure. Finished bars settle into a static line with
-/// a `✓`/`✗`/`●`/`○` glyph and a dim duration.
-pub struct InteractiveReporter {
-	mp: MultiProgress,
-	bars: Mutex<HashMap<(String, String), ProgressBar>>,
-}
-
-impl Default for InteractiveReporter {
-	fn default() -> Self {
-		Self::new()
-	}
-}
-
-impl InteractiveReporter {
-	pub fn new() -> Self {
-		Self::with_multi(MultiProgress::new())
-	}
-
-	/// Draw into a caller-supplied [`MultiProgress`], so a test can hand it a
-	/// terminal it can read back.
-	fn with_multi(mp: MultiProgress) -> Self {
-		Self {
-			mp,
-			bars: Mutex::new(HashMap::new()),
-		}
-	}
-
-	fn term_width(&self) -> usize {
-		let (_rows, cols) = Term::stdout().size();
-		(cols as usize).max(20)
-	}
-
-	/// The `workspace:task` label, truncated and right-padded to a fixed column
-	/// so status glyphs and durations align down the run.
-	fn label(&self, workspace: &str, task: &str) -> String {
-		const LABEL_W: usize = 28;
-		let raw = format!("{}:{}", workspace, task);
-		let width = LABEL_W.min(self.term_width().saturating_sub(16).max(10));
-		let shown = if raw.chars().count() > width {
-			let mut s: String = raw.chars().take(width.saturating_sub(1)).collect();
-			s.push('…');
-			s
-		} else {
-			raw
-		};
-		format!("{:<width$}", shown, width = width)
-	}
-
-	/// Retire a running bar with a final static line (glyph + label + detail).
-	///
-	/// The line is printed above the live region rather than left behind as a
-	/// finished bar. [`MultiProgress::clear`] at the end of the run erases every
-	/// line the multi-progress still owns, so a bar that settles in place is
-	/// wiped when the run ends — and only the tasks that ran ever have a bar,
-	/// since a cache hit returns before `Started`. Leaving them as bars left the
-	/// finished screen listing the cache hits and nothing else.
-	fn settle(&self, workspace: &str, task: &str, line: String) {
-		let key = (workspace.to_string(), task.to_string());
-		let bar = self.bars.lock().unwrap().remove(&key);
-		if let Some(bar) = bar {
-			// Finish before removing: the steady tick is a thread that runs until
-			// the bar is finished.
-			bar.finish_and_clear();
-			self.mp.remove(&bar);
-		}
-		self.mp.println(line).ok();
-	}
-}
-
-impl Reporter for InteractiveReporter {
-	fn run_start(&self, task: &str, workspaces: usize) {
-		let head = format!(
-			"{} {}  {}  {}",
-			paint_teal(ROSETTE),
-			wordmark(),
-			paint_teal(task),
-			style(format!(
-				"· {} workspace{}",
-				workspaces,
-				if workspaces == 1 { "" } else { "s" }
-			))
-			.dim()
-		);
-		let rule = style("─".repeat(self.term_width().min(52)))
-			.dim()
-			.to_string();
-		self.mp.println(format!("\n{head}\n{rule}")).ok();
-	}
-
-	fn event(&self, ev: TaskEvent) {
-		match ev {
-			TaskEvent::Started { workspace, task } => {
-				let idx = rgb_to_ansi256(TEAL.0, TEAL.1, TEAL.2);
-				let label = self.label(&workspace, &task);
-				let tmpl = format!("{{spinner:.{}}} {} {{wide_msg}}", idx, label);
-				let bar = self.mp.add(ProgressBar::new_spinner());
-				bar.set_style(
-					ProgressStyle::with_template(&tmpl)
-						.unwrap()
-						.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ "),
-				);
-				bar.set_message(style("running…").dim().to_string());
-				bar.enable_steady_tick(Duration::from_millis(80));
-				self.bars.lock().unwrap().insert((workspace, task), bar);
-			}
-			TaskEvent::CacheHit {
-				workspace,
-				task,
-				key,
-				..
-			} => {
-				let line = format!(
-					"{} {} {} {}",
-					paint_teal("●"),
-					self.label(&workspace, &task),
-					paint_teal("cache hit"),
-					style(format!("[{}]", short_key(&key))).dim()
-				);
-				self.settle(&workspace, &task, line);
-			}
-			TaskEvent::CacheMiss { .. } => {
-				// Why a task missed is a trace line, and the TUI does not carry
-				// them: the miss is already visible as the task running.
-			}
-			TaskEvent::Output { .. } => {
-				// Child output is buffered by the runner and surfaced only on
-				// failure via `surface_failure`.
-			}
-			TaskEvent::Finished {
-				workspace,
-				task,
-				duration_ms,
-			} => {
-				let line = format!(
-					"{} {} {}",
-					style("✓").green().bold(),
-					self.label(&workspace, &task),
-					style(fmt_secs(duration_ms)).dim()
-				);
-				self.settle(&workspace, &task, line);
-			}
-			TaskEvent::Failed {
-				workspace,
-				task,
-				code,
-				duration_ms,
-			} => {
-				let (desc, secs) = fail_detail(code, duration_ms);
-				let marker = match desc {
-					Some(desc) => format!("FAILED ({desc})"),
-					None => "FAILED".to_string(),
-				};
-				let mut line = format!(
-					"{} {} {}",
-					style("✗").red().bold(),
-					self.label(&workspace, &task),
-					style(marker).red()
-				);
-				if let Some(secs) = secs {
-					line.push_str(&format!(" {}", style(secs).dim()));
-				}
-				self.settle(&workspace, &task, line);
-			}
-			TaskEvent::PersistentExited {
-				workspace,
-				task,
-				code,
-				duration_ms,
-			} => {
-				let detail = format!("exited ({})", exit_desc(code));
-				let line = if code == Some(0) {
-					format!(
-						"{} {} {} {}",
-						style("○").dim(),
-						self.label(&workspace, &task),
-						style(detail).dim(),
-						style(fmt_secs(duration_ms)).dim()
-					)
-				} else {
-					format!(
-						"{} {} {} {}",
-						style("✗").red().bold(),
-						self.label(&workspace, &task),
-						style(detail.to_uppercase()).red(),
-						style(fmt_secs(duration_ms)).dim()
-					)
-				};
-				self.settle(&workspace, &task, line);
-			}
-			TaskEvent::Skipped {
-				workspace,
-				task,
-				reason,
-			} => {
-				let line = format!(
-					"{} {} {}",
-					style("○").dim(),
-					self.label(&workspace, &task),
-					style(format!("skipped ({})", reason)).dim()
-				);
-				self.settle(&workspace, &task, line);
-			}
-		}
-	}
-
-	fn surface_failure(&self, workspace: &str, task: &str, captured: &[(bool, String)]) {
-		let header = format!(
-			"{} {}",
-			style("✗").red().bold(),
-			style(format!("{}:{} output", workspace, task)).bold()
-		);
-		self.mp.suspend(|| {
-			eprintln!("\n{}", header);
-			for (_stderr, line) in captured {
-				eprintln!("    {}", line);
-			}
-		})
-	}
-
-	fn run_summary(&self, s: RunSummary) {
-		let failed_str = if s.failed > 0 {
-			style(s.failed.to_string()).red().to_string()
-		} else {
-			style(s.failed.to_string()).dim().to_string()
-		};
-		let rule = style("─".repeat(self.term_width().min(52)))
-			.dim()
-			.to_string();
-		// Teal, where the elapsed time is dim: a partly-cached run is the common
-		// case, and the time it did not spend is the part worth the eye.
-		let saved = if s.saved_ms > 0 {
-			format!(
-				" {} {}",
-				style("·").dim(),
-				paint_teal(&format!("{} saved", fmt_span(s.saved_ms)))
-			)
-		} else {
-			String::new()
-		};
-		let line = format!(
-			"{}\n{}  {} tasks · {} cached · {} failed  {}{}",
-			rule,
-			paint_teal(ROSETTE),
-			style(s.total).bold(),
-			style(s.cached).green(),
-			failed_str,
-			style(fmt_secs(s.elapsed_ms)).dim(),
-			saved
-		);
-		self.mp.println(line).ok();
-		if is_full_cache(s.total, s.cached, s.failed) {
-			self.mp.println(format!("\n{}", full_cache_banner())).ok();
-		}
-	}
-
-	fn note(&self, msg: &str) {
-		self.mp.println(style(msg).dim().to_string()).ok();
-	}
-
-	/// Dropped. A per-task note is a trace line — the cache key, why a task
-	/// missed — and the TUI's own line for that task already says everything it
-	/// needs to: a hit prints its abbreviated key, and a miss prints as the task
-	/// running. Repeating the full hash above it says the same thing twice. `-v`
-	/// is where the trace lives.
-	fn task_note(&self, _workspace: &str, _task: &str, _msg: &str) {}
-
-	fn warn(&self, msg: &str) {
-		self.mp
-			.println(format!("{} {}", style("warn").yellow().bold(), msg))
-			.ok();
-	}
-
-	fn finish(&self) {
-		self.mp.clear().ok();
-	}
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use indicatif::{InMemoryTerm, ProgressDrawTarget};
 
 	#[test]
 	fn not_a_tty_is_raw() {
@@ -1062,121 +788,6 @@ mod tests {
 
 	/// Drive a run through the interactive reporter and return the screen it
 	/// leaves behind, rendered by a real vt100 emulator.
-	fn interactive_screen(drive: impl FnOnce(&InteractiveReporter)) -> String {
-		let term = InMemoryTerm::new(24, 100);
-		let mp =
-			MultiProgress::with_draw_target(ProgressDrawTarget::term_like(Box::new(term.clone())));
-		let reporter = InteractiveReporter::with_multi(mp);
-		drive(&reporter);
-		reporter.finish();
-		term.contents()
-	}
-
-	/// The bug this guards: a task that ran settled into its progress bar, and
-	/// the `MultiProgress::clear` at the end of the run erased every bar it still
-	/// owned. A cache hit never has a bar — it returns before `Started` — so it
-	/// survived, and the finished screen listed the hits and nothing else.
-	#[test]
-	fn the_finished_screen_keeps_the_tasks_that_ran_not_only_the_cache_hits() {
-		let screen = interactive_screen(|r| {
-			r.run_start("build", 2);
-			r.event(TaskEvent::CacheHit {
-				workspace: "alpha".into(),
-				task: "build".into(),
-				key: "41b4a85a9c".into(),
-				saved_ms: 20,
-			});
-			r.event(TaskEvent::Started {
-				workspace: "bravo".into(),
-				task: "build".into(),
-			});
-			r.event(TaskEvent::Finished {
-				workspace: "bravo".into(),
-				task: "build".into(),
-				duration_ms: 20,
-			});
-			r.run_summary(RunSummary {
-				total: 2,
-				cached: 1,
-				failed: 0,
-				elapsed_ms: 30,
-				saved_ms: 20,
-			});
-		});
-
-		assert!(
-			screen.contains("alpha:build"),
-			"cache hit missing:\n{screen}"
-		);
-		assert!(
-			screen.contains("bravo:build"),
-			"the task that ran was erased when the run ended:\n{screen}"
-		);
-		assert!(screen.contains("2 tasks"), "summary missing:\n{screen}");
-	}
-
-	/// Every terminal state a task can settle into goes through the same path, so
-	/// a failure and a skip have to survive the end of the run as well.
-	#[test]
-	fn the_finished_screen_keeps_failed_and_skipped_tasks() {
-		let screen = interactive_screen(|r| {
-			r.run_start("build", 2);
-			r.event(TaskEvent::Started {
-				workspace: "lib".into(),
-				task: "build".into(),
-			});
-			r.event(TaskEvent::Failed {
-				workspace: "lib".into(),
-				task: "build".into(),
-				code: Some(3),
-				duration_ms: Some(10),
-			});
-			r.event(TaskEvent::Skipped {
-				workspace: "app".into(),
-				task: "build".into(),
-				reason: "dependency failed".into(),
-			});
-		});
-
-		assert!(screen.contains("lib:build"), "failure missing:\n{screen}");
-		assert!(screen.contains("app:build"), "skip missing:\n{screen}");
-	}
-
-	/// The live region is only ever the tasks still running: a settled line moves
-	/// above it, so five finished tasks do not each leave a bar behind.
-	#[test]
-	fn settled_tasks_leave_the_live_region() {
-		let screen = interactive_screen(|r| {
-			r.run_start("build", 3);
-			for name in ["one", "two", "three"] {
-				r.event(TaskEvent::Started {
-					workspace: name.into(),
-					task: "build".into(),
-				});
-			}
-			for name in ["one", "two"] {
-				r.event(TaskEvent::Finished {
-					workspace: name.into(),
-					task: "build".into(),
-					duration_ms: 5,
-				});
-			}
-			// `three` is still running, so its bar is cleared with the live region
-			// and the two settled lines are all that remain.
-			r.run_summary(RunSummary {
-				total: 3,
-				cached: 0,
-				failed: 0,
-				elapsed_ms: 5,
-				saved_ms: 0,
-			});
-		});
-
-		assert_eq!(screen.matches("one:build").count(), 1, "{screen}");
-		assert_eq!(screen.matches("two:build").count(), 1, "{screen}");
-		assert!(!screen.contains("three:build"), "{screen}");
-	}
-
 	fn _assert_send_sync<T: Send + Sync>() {}
 
 	#[test]

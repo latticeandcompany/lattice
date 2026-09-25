@@ -26,6 +26,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 dagger = { path = "../../../crates/dagger" }
+lattice-cache = { path = "../../../crates/lattice-cache" }
 lattice-config = { path = "../../../crates/lattice-config" }
 lattice-events = { path = "../../../crates/lattice-events" }
 lattice-project = { path = "../../../crates/lattice-project" }
