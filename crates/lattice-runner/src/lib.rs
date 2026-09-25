@@ -1410,7 +1410,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		ctx.children.remove(pid);
 	}
 
-	let mut captured = std::mem::take(&mut *capture.lock().unwrap());
+	let captured = std::mem::take(&mut *capture.lock().unwrap());
 	let mut exit_code = status.as_ref().ok().and_then(|s| s.code());
 
 	let success = if timed_out {
@@ -1418,14 +1418,24 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			.timeout
 			.map(|t| t.to_string())
 			.unwrap_or_else(|| "its timeout".to_string());
-		captured.push((true, format!("timed out after {limit} and was stopped")));
+		// A warning rather than a line of the task's output: a display that has
+		// already streamed the output does not print the captured copy again.
+		let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+			workspace: ws.clone(),
+			task: task.clone(),
+			msg: format!("timed out after {limit} and was stopped"),
+		});
 		exit_code = None;
 		false
 	} else {
 		match status {
 			Ok(s) => s.success(),
 			Err(e) => {
-				captured.push((true, format!("failed to wait for task: {e}")));
+				let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+					workspace: ws.clone(),
+					task: task.clone(),
+					msg: format!("failed to wait for task: {e}"),
+				});
 				false
 			}
 		}
