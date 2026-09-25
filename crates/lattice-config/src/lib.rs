@@ -295,44 +295,159 @@ pub struct EngineSpecObject {
 	pub bin: Option<String>,
 }
 
-/// One workspace: a directory with its own manifest, and the unit of task
-/// running and caching.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WorkspaceConfig {
-	pub name: String,
-	/// Literal directory path (relative to repo root).
-	pub path: String,
-	/// When true (default), infer engine and task commands from the native manifest.
-	#[serde(default = "default_true")]
-	pub auto: bool,
-	/// Per-workspace toolchain constraints; overrides/pins the inferred engine.
-	#[serde(default, deserialize_with = "unique_map")]
-	pub engines: EngineMap,
-	/// Other workspaces (by name) this one depends on.
-	#[serde(default)]
-	pub depends_on: Option<Vec<String>>,
-	/// Explicit script-name -> command overrides.
-	#[serde(default, deserialize_with = "unique_map")]
-	pub scripts: IndexMap<String, String>,
-}
-
-/// A named task in the root task graph and how it relates across workspaces.
+/// What `lattice.json` says about the workspaces one `overrides` key matches.
+///
+/// The key is a workspace name, or a glob over workspace paths when it holds a
+/// `/` or a glob character.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceOverride {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>,
+	/// The tool that runs this workspace's tasks, or `"none"` for a workspace
+	/// whose every task is written out under `tasks`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub driver: Option<String>,
+	#[serde(
+		default,
+		deserialize_with = "unique_map",
+		skip_serializing_if = "IndexMap::is_empty"
+	)]
+	pub engines: EngineMap,
+	/// Workspaces this one depends on beyond what its manifest already says.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub depends_on: Vec<String>,
+	#[serde(
+		default,
+		deserialize_with = "unique_map",
+		skip_serializing_if = "IndexMap::is_empty"
+	)]
+	pub tasks: IndexMap<String, TaskOverride>,
+}
+
+pub const NO_DRIVER: &str = "none";
+
+/// A task in an override: a bare command, or the full task object.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum TaskOverride {
+	Command(String),
+	Detailed(PipelineTask),
+}
+
+/// Hand-written for the reason given on [`EngineSpec`]'s impl: an untagged enum
+/// would swallow the unknown-field error the object form raises.
+impl<'de> Deserialize<'de> for TaskOverride {
+	fn deserialize<D: serde::Deserializer<'de>>(
+		deserializer: D,
+	) -> std::result::Result<Self, D::Error> {
+		struct OverrideVisitor;
+
+		impl<'de> serde::de::Visitor<'de> for OverrideVisitor {
+			type Value = TaskOverride;
+
+			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+				f.write_str("a command string or a task object")
+			}
+
+			fn visit_str<E: serde::de::Error>(
+				self,
+				v: &str,
+			) -> std::result::Result<TaskOverride, E> {
+				Ok(TaskOverride::Command(v.to_string()))
+			}
+
+			fn visit_map<A: serde::de::MapAccess<'de>>(
+				self,
+				map: A,
+			) -> std::result::Result<TaskOverride, A::Error> {
+				PipelineTask::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+					.map(TaskOverride::Detailed)
+			}
+		}
+
+		deserializer.deserialize_any(OverrideVisitor)
+	}
+}
+
+impl TaskOverride {
+	pub fn into_task(self) -> PipelineTask {
+		match self {
+			TaskOverride::Command(run) => PipelineTask {
+				run: Some(run),
+				..PipelineTask::default()
+			},
+			TaskOverride::Detailed(task) => task,
+		}
+	}
+}
+
+/// How a task behaves. Every field is optional so that layers — Lattice's
+/// defaults, the root `tasks` map, a workspace override — can each set only
+/// what they mean to, and [`PipelineTask::layer`] stacks them.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PipelineTask {
+	/// The command, when a workspace override writes it out instead of letting
+	/// Lattice find it in the workspace's own manifest.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub run: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub depends_on: Option<Vec<String>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub inputs: Option<Vec<String>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub outputs: Option<Vec<String>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub ignore: Option<Vec<String>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub env: Option<Vec<String>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub persistent: Option<bool>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub cache: Option<bool>,
 	/// How long the task may run before it is killed. Absent means no limit.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub timeout: Option<Duration>,
 }
 
+/// What Lattice assumes about a task by its name alone, before `lattice.json`
+/// says anything. `build` waits on the builds of the workspaces it depends on;
+/// the names that conventionally start a server keep running; the ones that
+/// change something outside the workspace are never answered from the cache.
+pub fn builtin_task_defaults(task: &str) -> PipelineTask {
+	match task {
+		"build" => PipelineTask {
+			depends_on: Some(vec!["^build".to_string()]),
+			..PipelineTask::default()
+		},
+		"dev" | "start" | "serve" | "watch" => PipelineTask {
+			persistent: Some(true),
+			..PipelineTask::default()
+		},
+		"clean" | "deploy" | "publish" | "release" => PipelineTask {
+			cache: Some(false),
+			..PipelineTask::default()
+		},
+		_ => PipelineTask::default(),
+	}
+}
+
 impl PipelineTask {
+	/// `self` with every field `over` sets replacing this one's. A list replaces
+	/// rather than extends: an override that names `outputs` means those outputs.
+	pub fn layer(mut self, over: &PipelineTask) -> PipelineTask {
+		macro_rules! take {
+			($($field:ident),*) => {
+				$(if over.$field.is_some() {
+					self.$field = over.$field.clone();
+				})*
+			};
+		}
+		take!(run, depends_on, inputs, outputs, ignore, env, persistent, cache, timeout);
+		self
+	}
+
 	/// A persistent task is long-running (e.g. a dev server) and never cached.
 	pub fn is_persistent(&self) -> bool {
 		self.persistent == Some(true)
@@ -596,10 +711,18 @@ pub struct Settings {
 	pub max_cache_size: Option<CacheSize>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub cache_dir: Option<String>,
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "is_false")]
 	pub loquacious: bool,
-	#[serde(default = "default_true")]
+	#[serde(default = "default_true", skip_serializing_if = "is_true")]
 	pub version_check: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+	!*b
+}
+
+fn is_true(b: &bool) -> bool {
+	*b
 }
 
 impl Default for Settings {
@@ -614,6 +737,13 @@ impl Default for Settings {
 }
 
 impl Settings {
+	fn is_default(&self) -> bool {
+		self.max_cache_size.is_none()
+			&& self.cache_dir.is_none()
+			&& !self.loquacious
+			&& self.version_check
+	}
+
 	/// The cache directory, defaulting to `.lattice/cache`.
 	pub fn cache_dir(&self) -> &str {
 		self.cache_dir.as_deref().unwrap_or(".lattice/cache")
@@ -626,10 +756,20 @@ impl Settings {
 pub struct LatticeConfig {
 	#[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
 	pub schema: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub lattice_version: Option<String>,
-	#[serde(default)]
-	pub workspaces: Vec<WorkspaceConfig>,
-	#[serde(default, deserialize_with = "unique_map")]
+	/// Directories, or globs of them, that are workspaces on top of the ones the
+	/// repo's own workspace files already name.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub workspaces: Vec<String>,
+	/// Globs of workspace paths to leave out, whoever named them.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub exclude: Vec<String>,
+	#[serde(
+		default,
+		deserialize_with = "unique_map",
+		skip_serializing_if = "IndexMap::is_empty"
+	)]
 	pub engines: EngineMap,
 	/// Repo-root-relative globs whose contents feed every task's cache key.
 	///
@@ -637,30 +777,45 @@ pub struct LatticeConfig {
 	/// workspace — a shared `tsconfig.base.json`, a schema directory, a root
 	/// `.env` — cannot be named there in a way that means the same thing for
 	/// every workspace. Anything listed here is hashed into all of them.
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub global_dependencies: Vec<String>,
 	/// Environment variable names whose values feed every task's cache key.
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub global_env: Vec<String>,
-	#[serde(default, deserialize_with = "unique_map")]
+	#[serde(
+		default,
+		deserialize_with = "unique_map",
+		skip_serializing_if = "IndexMap::is_empty"
+	)]
 	pub tasks: IndexMap<String, PipelineTask>,
-	#[serde(default)]
+	#[serde(
+		default,
+		deserialize_with = "unique_map",
+		skip_serializing_if = "IndexMap::is_empty"
+	)]
+	pub overrides: IndexMap<String, WorkspaceOverride>,
+	#[serde(default, skip_serializing_if = "Settings::is_default")]
 	pub settings: Settings,
 }
 
 impl LatticeConfig {
-	/// Any engine (root or per-workspace) declared in string form whose key is
-	/// not a well-known engine is an error. Workspace names must be unique,
-	/// workspace paths and `settings.cacheDir` must be non-empty and stay inside
-	/// the repo, an engine `bin` must stay inside its toolchain install, and every
-	/// `dependsOn` and `scripts` key must name something that exists.
+	/// Checks that need nothing but the file. Whether an override key or a
+	/// `dependsOn` names a real workspace is only known once the workspaces are
+	/// discovered, and is checked there.
 	pub fn validate(&self) -> Result<()> {
 		check_string_engines(&self.engines, "root")?;
 		check_engine_bins(&self.engines, "root")?;
-		for ws in &self.workspaces {
-			let scope = format!("workspace '{}'", ws.name);
-			check_string_engines(&ws.engines, &scope)?;
-			check_engine_bins(&ws.engines, &scope)?;
+		for (key, over) in &self.overrides {
+			let scope = format!("overrides.{key}");
+			check_string_engines(&over.engines, &scope)?;
+			check_engine_bins(&over.engines, &scope)?;
+			if let Some(name) = &over.name {
+				if name.trim().is_empty() {
+					bail!(
+						"`{scope}.name` is empty. Give the workspace a name, or leave the key out"
+					);
+				}
+			}
 		}
 		if let Some(cache_dir) = &self.settings.cache_dir {
 			if cache_dir.trim().is_empty() {
@@ -671,116 +826,52 @@ impl LatticeConfig {
 			}
 			check_cache_dir(cache_dir)?;
 		}
-
-		// Workspace names unique.
-		let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-		for ws in &self.workspaces {
-			if ws.path.trim().is_empty() {
-				bail!("workspace '{}' has an empty path", ws.name);
-			}
-			check_contained_path(&ws.name, &ws.path)?;
-			if !seen.insert(ws.name.as_str()) {
-				bail!(
-					"duplicate workspace name '{}'. Every workspace name must be unique",
-					ws.name
-				);
-			}
+		for pattern in &self.workspaces {
+			check_contained_pattern("workspaces", pattern)?;
 		}
-
-		self.check_workspace_deps()?;
-		self.check_task_deps()?;
-		self.check_workspace_scripts()?;
-
-		Ok(())
-	}
-
-	/// A workspace `dependsOn` entry that names no declared workspace builds no
-	/// edge at all, so `^task` expands to nothing and the run silently loses its
-	/// ordering. Name the typo instead.
-	fn check_workspace_deps(&self) -> Result<()> {
-		let names: Vec<String> = self.workspaces.iter().map(|ws| ws.name.clone()).collect();
-		for ws in &self.workspaces {
-			for dep in ws.depends_on.iter().flatten() {
-				if dep == &ws.name {
-					bail!("workspace '{}' lists itself in `dependsOn`", ws.name);
-				}
-				if names.contains(dep) {
-					continue;
-				}
-				let mut message = format!(
-					"workspace '{}' depends on '{dep}', which is not a declared workspace",
-					ws.name
-				);
-				if let Some(near) = closest_field(dep, &names) {
-					message.push_str(&format!("\nDid you mean `{near}`?"));
-				}
-				if !names.is_empty() {
-					message.push_str(&format!("\nDeclared workspaces: {}", names.join(", ")));
-				}
-				bail!(message);
-			}
+		for pattern in &self.exclude {
+			check_contained_pattern("exclude", pattern)?;
 		}
-		Ok(())
-	}
-
-	/// A task `dependsOn` entry naming a task the `tasks` map does not define
-	/// resolves to no node, so the prerequisite is quietly dropped.
-	fn check_task_deps(&self) -> Result<()> {
-		let names: Vec<String> = self.tasks.keys().cloned().collect();
 		for (task, cfg) in &self.tasks {
+			if cfg.run.is_some() {
+				bail!(
+					"`tasks.{task}` has a `run`, but the root `tasks` map says how a task behaves \
+					 in every workspace, not what it runs. Put the command under the workspace \
+					 it belongs to: \"overrides\": {{ \"<workspace>\": {{ \"tasks\": {{ \"{task}\": \
+					 \"<command>\" }} }} }}"
+				);
+			}
 			for dep in cfg.depends_on.iter().flatten() {
-				let bare = dep.strip_prefix('^').unwrap_or(dep);
-				if bare == task && bare == dep {
+				if dep == task {
 					bail!("task '{task}' lists itself in `dependsOn`");
 				}
-				if names.iter().any(|n| n == bare) {
-					continue;
-				}
-				let mut message = format!(
-					"task '{task}' depends on '{dep}', but '{bare}' is not defined in `tasks`"
-				);
-				if let Some(near) = closest_field(bare, &names) {
-					message.push_str(&format!("\nDid you mean `{near}`?"));
-				}
-				if !names.is_empty() {
-					message.push_str(&format!("\nDefined tasks: {}", names.join(", ")));
-				}
-				bail!(message);
 			}
 		}
 		Ok(())
 	}
+}
 
-	/// A `scripts` key only ever becomes a command for the root task of the same
-	/// name, so one that matches no declared task never runs. The workspace then
-	/// falls back to whatever command Lattice infers, and the override the user
-	/// wrote is dropped in silence.
-	fn check_workspace_scripts(&self) -> Result<()> {
-		let names: Vec<String> = self.tasks.keys().cloned().collect();
-		for ws in &self.workspaces {
-			for script in ws.scripts.keys() {
-				if names.iter().any(|n| n == script) {
-					continue;
-				}
-				let mut message = format!(
-					"workspace '{}' declares a script '{script}', but '{script}' is not defined \
-					 in `tasks`, so nothing would ever run it",
-					ws.name
-				);
-				if let Some(near) = closest_field(script, &names) {
-					message.push_str(&format!("\nDid you mean `{near}`?"));
-				}
-				if names.is_empty() {
-					message.push_str(&format!(
-						"\nAdd '{script}' to `tasks` in lattice.json, or remove the script"
-					));
-				} else {
-					message.push_str(&format!("\nDefined tasks: {}", names.join(", ")));
-				}
-				bail!(message);
-			}
-		}
-		Ok(())
+/// A `workspaces` or `exclude` entry is matched against paths inside the repo,
+/// so one that starts outside it can never match anything.
+fn check_contained_pattern(field: &str, pattern: &str) -> Result<()> {
+	if pattern.trim().is_empty() {
+		bail!("`{field}` has an empty entry. Remove it, or write a directory like \"apps/*\"");
+	}
+	match contained_depth(pattern) {
+		Ok(_) => Ok(()),
+		Err(Escape::NotRelative) => bail!(
+			"`{field}` entry '{pattern}' is not relative to the repo root. Write it relative to \
+			 the repo root, like \"apps/*\""
+		),
+		Err(Escape::LeavesRoot) => bail!(
+			"`{field}` entry '{pattern}' points outside the repo root. Every workspace has to be \
+			 inside the repo"
+		),
+		Err(Escape::AmbiguousWhitespace) => bail!(
+			"`{field}` entry '{pattern}' has leading or trailing whitespace around a directory \
+			 name. Windows drops that whitespace and unix keeps it, so the entry would match a \
+			 different directory on each. Remove it"
+		),
 	}
 }
 
@@ -834,28 +925,6 @@ fn contained_depth(path: &str) -> std::result::Result<i32, Escape> {
 		}
 	}
 	Ok(depth)
-}
-
-/// A workspace path has to stay inside the repo. Everything downstream — the
-/// input walk, the output globs, the clear-before-restore a cache hit does —
-/// treats it as the boundary of what a task may touch.
-fn check_contained_path(name: &str, path: &str) -> Result<()> {
-	match contained_depth(path) {
-		Ok(_) => Ok(()),
-		Err(Escape::NotRelative) => bail!(
-			"workspace '{name}' has a path '{path}' that is not relative to the repo \
-			 root. Write every workspace path relative to the repo root"
-		),
-		Err(Escape::LeavesRoot) => bail!(
-			"workspace '{name}' has a path '{path}' that points outside the repo root. \
-			 Every workspace path must stay inside the repo"
-		),
-		Err(Escape::AmbiguousWhitespace) => bail!(
-			"workspace '{name}' has a path '{path}' with leading or trailing whitespace \
-			 around a directory name. Windows drops that whitespace and unix keeps it, so \
-			 the path would name a different directory on each. Remove it"
-		),
-	}
 }
 
 /// `settings.cacheDir` is joined to the repo root and then owned outright:
@@ -959,6 +1028,12 @@ pub fn load_config(root: &Path) -> Result<LatticeConfig> {
 /// error rather than a no-op. A misspelled `inputs` or `outputs` would otherwise
 /// change what a task hashes and caches without saying anything.
 pub fn parse_config(content: &str) -> Result<LatticeConfig> {
+	if is_v1_config(content) {
+		bail!(
+			"{CONFIG_FILE} is written for Lattice 1.x, which listed every workspace as an object \
+			 with a name and a path. Run `lattice migrate` to rewrite it for this version"
+		);
+	}
 	let mut deserializer = serde_json::Deserializer::from_str(content);
 	let config: LatticeConfig =
 		serde_path_to_error::deserialize(&mut deserializer).map_err(parse_error)?;
@@ -967,6 +1042,52 @@ pub fn parse_config(content: &str) -> Result<LatticeConfig> {
 		.with_context(|| format!("failed to parse {CONFIG_FILE}"))?;
 	config.validate()?;
 	Ok(config)
+}
+
+/// JSON the way people write `lattice.json` by hand: two-space indents, fields
+/// in the order the type declares them, and a list of short values kept on one
+/// line.
+pub fn to_config_text<T: Serialize>(value: &T) -> String {
+	let pretty = serde_json::to_string_pretty(value).unwrap_or_default();
+	let lines: Vec<&str> = pretty.lines().collect();
+	let mut out = String::new();
+	let mut i = 0;
+	while i < lines.len() {
+		let line = lines[i];
+		if line.ends_with('[') {
+			let close = (i + 1..lines.len()).find(|&j| lines[j].trim_start().starts_with(']'));
+			if let Some(close) = close {
+				let items: Vec<&str> = lines[i + 1..close]
+					.iter()
+					.map(|l| l.trim().trim_end_matches(','))
+					.collect();
+				let scalar = |item: &&str| !item.starts_with(['{', '[', '}', ']']);
+				let joined = format!("{}{}{}", line, items.join(", "), lines[close].trim_start());
+				if items.iter().all(scalar) && joined.len() <= 80 {
+					out.push_str(&joined);
+					out.push('\n');
+					i = close + 1;
+					continue;
+				}
+			}
+		}
+		out.push_str(line);
+		out.push('\n');
+		i += 1;
+	}
+	out
+}
+
+/// Whether `content` is a 1.x config: one whose `workspaces` holds objects.
+/// Text that is not JSON at all is left for the real parse to report.
+pub fn is_v1_config(content: &str) -> bool {
+	let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+		return false;
+	};
+	value
+		.get("workspaces")
+		.and_then(|w| w.as_array())
+		.is_some_and(|entries| entries.iter().any(|e| e.is_object()))
 }
 
 /// An unknown key and the keys that would have been accepted in its place,
@@ -1099,22 +1220,32 @@ pub fn closest_field<'a>(field: &str, expected: &'a [String]) -> Option<&'a str>
 		.map(|(_, candidate)| candidate.as_str())
 }
 
-/// Levenshtein distance, case-insensitively, so `Outputs` reads as one edit from
-/// `outputs` rather than seven.
+/// Edit distance, case-insensitively, counting a swap of two neighbouring
+/// characters as one edit: `tset` is one slip from `test`, not two, and
+/// `Outputs` is none from `outputs`.
 fn edit_distance(a: &str, b: &str) -> usize {
 	let a: Vec<char> = a.chars().flat_map(char::to_lowercase).collect();
 	let b: Vec<char> = b.chars().flat_map(char::to_lowercase).collect();
-	let mut previous: Vec<usize> = (0..=b.len()).collect();
-	let mut current = vec![0usize; b.len() + 1];
-	for (i, ca) in a.iter().enumerate() {
-		current[0] = i + 1;
-		for (j, cb) in b.iter().enumerate() {
-			let substitution = previous[j] + usize::from(ca != cb);
-			current[j + 1] = substitution.min(previous[j + 1] + 1).min(current[j] + 1);
-		}
-		std::mem::swap(&mut previous, &mut current);
+	let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+	for (i, row) in d.iter_mut().enumerate() {
+		row[0] = i;
 	}
-	previous[b.len()]
+	for j in 0..=b.len() {
+		d[0][j] = j;
+	}
+	for i in 1..=a.len() {
+		for j in 1..=b.len() {
+			let cost = usize::from(a[i - 1] != b[j - 1]);
+			let mut best = (d[i - 1][j] + 1)
+				.min(d[i][j - 1] + 1)
+				.min(d[i - 1][j - 1] + cost);
+			if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+				best = best.min(d[i - 2][j - 2] + 1);
+			}
+			d[i][j] = best;
+		}
+	}
+	d[a.len()][b.len()]
 }
 
 /// Walk up from `start` looking for a directory containing `lattice.json`.
@@ -1198,71 +1329,96 @@ mod tests {
 		}
 	}
 
-	/// The example exists to show cross-workspace ordering. A `^task` with no
-	/// workspace edge to expand into demonstrates nothing, so assert the pair.
 	#[test]
-	fn polyglot_example_has_an_edge_for_its_caret_task() {
-		let dir = repo_root().join("examples").join("polyglot");
-		let config = load_config(&dir).expect("examples/polyglot must load");
-
-		let caret_tasks: Vec<&String> = config
-			.tasks
-			.iter()
-			.filter(|(_, task)| {
-				task.depends_on
-					.iter()
-					.flatten()
-					.any(|dep| dep.starts_with('^'))
-			})
-			.map(|(name, _)| name)
-			.collect();
-		assert!(
-			!caret_tasks.is_empty(),
-			"examples/polyglot must keep a `^task` dependency to demonstrate ordering"
-		);
-
-		let edges: Vec<(&str, &Vec<String>)> = config
-			.workspaces
-			.iter()
-			.filter_map(|ws| ws.depends_on.as_ref().map(|deps| (ws.name.as_str(), deps)))
-			.filter(|(_, deps)| !deps.is_empty())
-			.collect();
-		assert!(
-			!edges.is_empty(),
-			"tasks {caret_tasks:?} use `^`, but no workspace in examples/polyglot declares \
-			 `dependsOn`, so they expand to nothing"
-		);
-
-		let names: Vec<&str> = config
-			.workspaces
-			.iter()
-			.map(|ws| ws.name.as_str())
-			.collect();
-		for (workspace, deps) in edges {
-			for dep in deps {
-				assert!(
-					names.contains(&dep.as_str()),
-					"workspace '{workspace}' depends on unknown workspace '{dep}'"
-				);
-			}
-		}
+	fn schema_rejects_v1_workspace_objects() {
+		let old = json!({ "workspaces": [{ "name": "a", "path": "a" }] });
+		assert!(!compiled_schema().is_valid(&old));
 	}
 
 	#[test]
-	fn schema_rejects_old_glob_string_workspaces() {
-		let validator = compiled_schema();
-		let old = json!({ "workspaces": ["apps/*"] });
-		assert!(
-			!validator.is_valid(&old),
-			"glob-string workspaces must be rejected by the schema"
+	fn config_text_keeps_short_lists_on_one_line() {
+		let config = parse_config(
+			r#"{"tasks": {"build": {"dependsOn": ["^build"]}, "clean": {}}, "workspaces": ["apps/*", "crates/*"]}"#,
+		)
+		.unwrap();
+		let text = to_config_text(&config);
+		assert_eq!(
+			text,
+			"{\n  \"workspaces\": [\"apps/*\", \"crates/*\"],\n  \"tasks\": {\n    \"build\": {\n      \"dependsOn\": [\"^build\"]\n    },\n    \"clean\": {}\n  }\n}\n"
 		);
+	}
+
+	#[test]
+	fn a_v1_config_is_pointed_at_migrate() {
+		let message = parse_failure(r#"{ "workspaces": [{ "name": "a", "path": "a" }] }"#);
+		assert!(message.contains("Lattice 1.x"), "{message}");
+		assert!(message.contains("lattice migrate"), "{message}");
+	}
+
+	#[test]
+	fn workspace_globs_and_overrides_parse() {
+		let config = parse_config(
+			r#"{
+			  "workspaces": ["apps/*", "services/api"],
+			  "exclude": ["apps/legacy"],
+			  "overrides": {
+			    "web": { "driver": "pnpm", "dependsOn": ["api"],
+			             "tasks": { "build": "vite build", "e2e": { "run": "playwright test", "cache": false } } },
+			    "services/*": { "engines": { "go": ">=1.22" } }
+			  }
+			}"#,
+		)
+		.unwrap();
+		assert_eq!(config.workspaces, ["apps/*", "services/api"]);
+		let web = &config.overrides["web"];
+		assert_eq!(web.driver.as_deref(), Some("pnpm"));
+		assert!(matches!(&web.tasks["build"], TaskOverride::Command(c) if c == "vite build"));
+		let e2e = web.tasks["e2e"].clone().into_task();
+		assert_eq!(e2e.run.as_deref(), Some("playwright test"));
+		assert_eq!(e2e.cache, Some(false));
+	}
+
+	#[test]
+	fn a_run_in_the_root_task_map_is_sent_to_an_override() {
+		let message = parse_failure(r#"{ "tasks": { "build": { "run": "make" } } }"#);
+		assert!(message.contains("`tasks.build` has a `run`"), "{message}");
+		assert!(message.contains("\"overrides\""), "{message}");
+	}
+
+	#[test]
+	fn an_unknown_override_field_is_named_with_its_key() {
+		let message = parse_failure(r#"{ "overrides": { "web": { "dependOn": ["a"] } } }"#);
+		assert!(
+			message.contains("unknown field `dependOn` in overrides.web"),
+			"{message}"
+		);
+		assert!(message.contains("Did you mean `dependsOn`?"), "{message}");
+	}
+
+	#[test]
+	fn layering_replaces_only_what_the_upper_layer_sets() {
+		let base = builtin_task_defaults("build");
+		let over = PipelineTask {
+			outputs: Some(vec!["out/**".into()]),
+			..Default::default()
+		};
+		let layered = base.layer(&over);
+		assert_eq!(layered.depends_on, Some(vec!["^build".to_string()]));
+		assert_eq!(layered.outputs, Some(vec!["out/**".to_string()]));
+	}
+
+	#[test]
+	fn builtin_defaults_by_task_name() {
+		assert!(builtin_task_defaults("dev").is_persistent());
+		assert!(!builtin_task_defaults("clean").is_cacheable());
+		assert_eq!(builtin_task_defaults("lint"), PipelineTask::default());
 	}
 
 	#[test]
 	fn schema_rejects_old_projects_key() {
 		let validator = compiled_schema();
 		let old = json!({
-			"workspaces": [{ "name": "a", "path": "a" }],
+			"workspaces": ["a"],
 			"projects": {}
 		});
 		assert!(
@@ -1272,43 +1428,11 @@ mod tests {
 	}
 
 	#[test]
-	fn schema_rejects_glob_key_on_workspace() {
-		let validator = compiled_schema();
-		let old = json!({
-			"workspaces": [{ "name": "a", "path": "a", "glob": "a/*" }]
-		});
-		assert!(
-			!validator.is_valid(&old),
-			"a `glob` key on a workspace must be rejected by the schema"
-		);
-	}
-
-	#[test]
-	fn schema_requires_workspace_path() {
-		let validator = compiled_schema();
-		let bad = json!({ "workspaces": [{ "name": "no-path" }] });
-		assert!(
-			!validator.is_valid(&bad),
-			"a workspace without `path` must be rejected by the schema"
-		);
-	}
-
-	#[test]
-	fn schema_requires_workspace_name() {
-		let validator = compiled_schema();
-		let bad = json!({ "workspaces": [{ "path": "apps/web" }] });
-		assert!(
-			!validator.is_valid(&bad),
-			"a workspace without `name` must be rejected by the schema"
-		);
-	}
-
-	#[test]
 	fn schema_allows_self_reference() {
 		let validator = compiled_schema();
 		let ok = json!({
 			"$schema": ".lattice/schema.json",
-			"workspaces": [{ "name": "web", "path": "apps/web" }]
+			"workspaces": ["apps/web"]
 		});
 		assert!(
 			validator.is_valid(&ok),
@@ -1462,110 +1586,11 @@ mod tests {
 		}
 	}
 
-	#[test]
-	fn validate_rejects_duplicate_workspace_names() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [
-				{ "name": "dup", "path": "a" },
-				{ "name": "dup", "path": "b" }
-			]
-		}))
-		.unwrap();
-		assert!(
-			config.validate().is_err(),
-			"duplicate workspace names must be rejected"
-		);
-	}
-
-	/// A `dependsOn` naming a workspace that does not exist builds no edge, so the
-	/// run loses the ordering it was written to guarantee and says nothing.
-	#[test]
-	fn validate_rejects_a_workspace_dep_that_names_nothing() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [
-				{ "name": "lib", "path": "lib" },
-				{ "name": "app", "path": "app", "dependsOn": ["libb"] }
-			]
-		}))
-		.unwrap();
-		let message = config
-			.validate()
-			.expect_err("an unknown workspace dep must be rejected")
-			.to_string();
-		assert!(message.contains("'libb'"), "must name the typo: {message}");
-		assert!(
-			message.contains("Did you mean `lib`?"),
-			"must offer the near miss: {message}"
-		);
-	}
-
-	#[test]
-	fn validate_accepts_a_workspace_dep_that_resolves() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [
-				{ "name": "lib", "path": "lib" },
-				{ "name": "app", "path": "app", "dependsOn": ["lib"] }
-			]
-		}))
-		.unwrap();
-		config
-			.validate()
-			.expect("a resolvable dep must be accepted");
-	}
-
-	#[test]
-	fn validate_rejects_a_self_dependent_workspace() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [{ "name": "app", "path": "app", "dependsOn": ["app"] }]
-		}))
-		.unwrap();
-		assert!(config.validate().is_err());
-	}
-
-	/// Same failure mode one level up: a task dep that matches no task in the
-	/// map resolves to no node, so the prerequisite is dropped in silence.
-	#[test]
-	fn validate_rejects_a_task_dep_that_names_nothing() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"tasks": { "build": { "dependsOn": ["codegen"] } }
-		}))
-		.unwrap();
-		let message = config
-			.validate()
-			.expect_err("an undefined task dep must be rejected")
-			.to_string();
-		assert!(message.contains("'codegen'"), "{message}");
-		assert!(message.contains("Defined tasks: build"), "{message}");
-	}
-
-	/// `^build` is the same task in dependency workspaces, so it resolves against
-	/// the task map exactly like a bare `build` does.
-	#[test]
-	fn validate_checks_the_caret_form_against_the_task_map() {
-		let ok: LatticeConfig = serde_json::from_value(json!({
-			"tasks": { "build": { "dependsOn": ["^build"] } }
-		}))
-		.unwrap();
-		ok.validate()
-			.expect("^build resolves to the declared build task");
-
-		let bad: LatticeConfig = serde_json::from_value(json!({
-			"tasks": { "build": { "dependsOn": ["^compile"] } }
-		}))
-		.unwrap();
-		let message = bad
-			.validate()
-			.expect_err("^compile names nothing")
-			.to_string();
-		assert!(message.contains("'compile'"), "{message}");
-	}
-
 	/// `/etc` is not "absolute" on Windows — it names no drive — but `join`
-	/// resolves it to the drive root all the same, so it leaves the repo just as
-	/// an absolute path does. Every spelling that does that has to be rejected on
-	/// every platform, or the guard holds only where it was written.
+	/// resolves it to the drive root all the same. Every spelling that leaves the
+	/// repo has to be rejected on every platform.
 	#[test]
-	fn validate_rejects_a_workspace_path_outside_the_repo() {
+	fn validate_rejects_a_workspace_pattern_outside_the_repo() {
 		for path in [
 			"../outside",
 			"apps/../../outside",
@@ -1575,23 +1600,24 @@ mod tests {
 			"C:etc",
 		] {
 			let config: LatticeConfig =
-				serde_json::from_value(json!({ "workspaces": [{ "name": "esc", "path": path }] }))
-					.unwrap();
+				serde_json::from_value(json!({ "workspaces": [path] })).unwrap();
+			assert!(config.validate().is_err(), "'{path}' must be rejected");
+			let config: LatticeConfig =
+				serde_json::from_value(json!({ "exclude": [path] })).unwrap();
 			assert!(
 				config.validate().is_err(),
-				"path '{path}' must be rejected: everything downstream treats the \
-				 workspace dir as the boundary of what a task may touch"
+				"exclude '{path}' must be rejected"
 			);
 		}
 	}
 
 	#[test]
-	fn validate_allows_a_path_that_dips_and_returns() {
-		let config: LatticeConfig = serde_json::from_value(
-			json!({ "workspaces": [{ "name": "a", "path": "apps/../apps/web" }] }),
-		)
-		.unwrap();
-		config.validate().expect("the path stays inside the repo");
+	fn validate_allows_a_pattern_that_dips_and_returns() {
+		let config: LatticeConfig =
+			serde_json::from_value(json!({ "workspaces": ["apps/../apps/*"] })).unwrap();
+		config
+			.validate()
+			.expect("the pattern stays inside the repo");
 	}
 
 	#[test]
@@ -1772,8 +1798,8 @@ mod tests {
 		);
 		assert!(
 			message.contains(
-				"Fields accepted here: $schema, latticeVersion, workspaces, engines, \
-				 globalDependencies, globalEnv, tasks, settings"
+				"Fields accepted here: $schema, latticeVersion, workspaces, exclude, engines, \
+				 globalDependencies, globalEnv, tasks, overrides, settings"
 			),
 			"must list what belongs there: {message}"
 		);
@@ -1807,16 +1833,9 @@ mod tests {
 	}
 
 	#[test]
-	fn unknown_workspace_key_names_the_entry() {
-		let message = parse_failure(
-			r#"{ "workspaces": [ { "name": "a", "path": "a" },
-			                     { "name": "b", "path": "b", "dependOn": ["a"] } ] }"#,
-		);
-		assert!(
-			message.contains("unknown field `dependOn` in workspaces[1]"),
-			"must index the offending entry: {message}"
-		);
-		assert!(message.contains("Did you mean `dependsOn`?"), "{message}");
+	fn a_workspaces_entry_that_is_not_a_string_is_rejected() {
+		let message = parse_failure_chain(r#"{ "workspaces": ["apps/*", 3] }"#);
+		assert!(message.contains("invalid type"), "{message}");
 	}
 
 	#[test]
@@ -1899,6 +1918,7 @@ mod tests {
 		assert_eq!(edit_distance("dependOn", "dependsOn"), 1);
 		assert_eq!(edit_distance("OUTPUTS", "outputs"), 0);
 		assert_eq!(edit_distance("", "abc"), 3);
+		assert_eq!(edit_distance("tset", "test"), 1);
 	}
 
 	/// Property names of a schema object, which must also forbid extras.
@@ -1941,30 +1961,32 @@ mod tests {
 				accepted_keys::<LatticeConfig>(json!({
 					"$schema": ".lattice/schema.json",
 					"latticeVersion": "1.0.0",
-					"workspaces": [],
-					"engines": {},
-					"globalDependencies": [],
-					"globalEnv": [],
-					"tasks": {},
-					"settings": {}
+					"workspaces": ["apps/*"],
+					"exclude": ["apps/old"],
+					"engines": { "node": ">=20" },
+					"globalDependencies": ["a.json"],
+					"globalEnv": ["CI"],
+					"tasks": { "build": {} },
+					"overrides": { "web": {} },
+					"settings": { "loquacious": true }
 				})),
 			),
 			(
-				"a workspace entry",
-				schema_properties(&defs["workspace"], "$defs/workspace"),
-				accepted_keys::<WorkspaceConfig>(json!({
-					"name": "a",
-					"path": "a",
-					"auto": true,
-					"engines": {},
-					"dependsOn": [],
-					"scripts": {}
+				"an override",
+				schema_properties(&defs["override"], "$defs/override"),
+				accepted_keys::<WorkspaceOverride>(json!({
+					"name": "web",
+					"driver": "pnpm",
+					"engines": { "node": ">=20" },
+					"dependsOn": ["api"],
+					"tasks": { "build": "x" }
 				})),
 			),
 			(
 				"a task",
 				schema_properties(&defs["pipelineTask"], "$defs/pipelineTask"),
 				accepted_keys::<PipelineTask>(json!({
+					"run": "make",
 					"dependsOn": [],
 					"inputs": [],
 					"outputs": [],
@@ -1981,8 +2003,8 @@ mod tests {
 				accepted_keys::<Settings>(json!({
 					"maxCacheSize": "1GB",
 					"cacheDir": ".lattice/cache",
-					"loquacious": false,
-					"versionCheck": true
+					"loquacious": true,
+					"versionCheck": false
 				})),
 			),
 			(
@@ -2014,14 +2036,17 @@ mod tests {
 		let full = json!({
 			"$schema": ".lattice/schema.json",
 			"latticeVersion": "1.0.0",
-			"workspaces": [{
-				"name": "web",
-				"path": "apps/web",
-				"auto": false,
-				"engines": { "node": ">=20.0.0" },
-				"dependsOn": [],
-				"scripts": { "build": "npm run build" }
-			}],
+			"workspaces": ["apps/*"],
+			"exclude": ["apps/old"],
+			"overrides": {
+				"web": {
+					"name": "site",
+					"driver": "npm",
+					"engines": { "node": ">=20.0.0" },
+					"dependsOn": ["api"],
+					"tasks": { "build": "npm run build", "e2e": { "run": "playwright test", "cache": false } }
+				}
+			},
 			"engines": {
 				"protoc": {
 					"version": ">=25.0.0",
@@ -2092,25 +2117,21 @@ mod tests {
 	}
 
 	#[test]
-	fn a_duplicate_script_key_is_rejected() {
+	fn a_duplicate_override_task_is_rejected() {
 		let message = parse_failure(
-			r#"{ "workspaces": [{ "name": "a", "path": "a", "auto": false,
-			     "scripts": { "build": "one", "build": "two" } }],
-			     "tasks": { "build": {} } }"#,
+			r#"{ "overrides": { "a": { "tasks": { "build": "one", "build": "two" } } } }"#,
 		);
 		assert!(
-			message.contains("duplicate key `build` in workspaces[0].scripts"),
-			"must index the workspace the duplicate is in: {message}"
+			message.contains("duplicate key `build` in overrides.a.tasks"),
+			"{message}"
 		);
 	}
 
-	/// The strictness was already there for a struct like a workspace entry; the
-	/// maps were the half that leaked. Both have to reject a repeat.
 	#[test]
 	fn a_duplicate_struct_field_is_still_rejected() {
 		let message =
-			parse_failure_chain(r#"{ "workspaces": [{ "name": "a", "path": "a", "path": "b" }] }"#);
-		assert!(message.contains("duplicate field `path`"), "{message}");
+			parse_failure_chain(r#"{ "overrides": { "a": { "name": "x", "name": "y" } } }"#);
+		assert!(message.contains("duplicate field `name`"), "{message}");
 	}
 
 	#[test]
@@ -2118,13 +2139,12 @@ mod tests {
 		let config = parse_config(
 			r#"{ "engines": { "node": ">=20", "cargo": ">=1.88" },
 			     "tasks": { "build": {}, "test": {} },
-			     "workspaces": [{ "name": "a", "path": "a",
-			                      "scripts": { "build": "x", "test": "y" } }] }"#,
+			     "overrides": { "a": { "tasks": { "build": "x", "test": "y" } } } }"#,
 		)
 		.expect("distinct keys must still parse");
 		assert_eq!(config.engines.len(), 2);
 		assert_eq!(config.tasks.len(), 2);
-		assert_eq!(config.workspaces[0].scripts.len(), 2);
+		assert_eq!(config.overrides["a"].tasks.len(), 2);
 	}
 
 	/// An oversized timeout used to saturate the float-to-int cast to `u64::MAX`,
@@ -2240,37 +2260,19 @@ mod tests {
 			.expect("a contained cacheDir must be accepted");
 	}
 
-	/// A path judged only as text let a spelling through that the running platform
-	/// still resolves to a root, and let leading or trailing whitespace through,
-	/// which Windows strips and unix keeps — the same string, two directories.
+	/// Windows strips whitespace around a path component and unix keeps it — the
+	/// same string, two directories.
 	#[test]
-	fn validate_rejects_a_workspace_path_whose_shape_is_ambiguous() {
+	fn validate_rejects_a_workspace_pattern_whose_shape_is_ambiguous() {
 		for path in ["apps/web ", " apps/web", "apps/ web", "apps/web/ "] {
 			let config: LatticeConfig =
-				serde_json::from_value(json!({ "workspaces": [{ "name": "ws", "path": path }] }))
-					.unwrap();
+				serde_json::from_value(json!({ "workspaces": [path] })).unwrap();
 			let message = config
 				.validate()
 				.expect_err("whitespace around a directory name must be rejected")
 				.to_string();
-			assert!(
-				message.contains("whitespace"),
-				"must say what is wrong with '{path}': {message}"
-			);
+			assert!(message.contains("whitespace"), "'{path}': {message}");
 		}
-	}
-
-	/// Deliberate: a backslash path is one filename on unix, so it cannot be
-	/// judged an escape here. It fails later, when the directory is resolved.
-	#[test]
-	fn validate_still_lets_a_windows_separator_path_through() {
-		let config: LatticeConfig = serde_json::from_value(
-			json!({ "workspaces": [{ "name": "web", "path": "apps\\web" }] }),
-		)
-		.unwrap();
-		config
-			.validate()
-			.expect("a backslash path is caught at resolve time, not here");
 	}
 
 	/// An engine `bin` is joined to the toolchain install and then prepended to
@@ -2301,21 +2303,19 @@ mod tests {
 	}
 
 	#[test]
-	fn validate_rejects_an_engine_bin_in_a_workspace_too() {
+	fn validate_rejects_an_engine_bin_in_an_override_too() {
 		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [{
-				"name": "web",
-				"path": "apps/web",
-				"engines": { "node": { "version": ">=20", "bin": "/usr/bin" } }
-			}]
+			"overrides": {
+				"web": { "engines": { "node": { "version": ">=20", "bin": "/usr/bin" } } }
+			}
 		}))
 		.unwrap();
 		let message = config
 			.validate()
-			.expect_err("a workspace engine bin must be checked too")
+			.expect_err("an override engine bin must be checked too")
 			.to_string();
 		assert!(
-			message.contains("engine 'node' in workspace 'web'"),
+			message.contains("engine 'node' in overrides.web"),
 			"{message}"
 		);
 	}
@@ -2344,60 +2344,6 @@ mod tests {
 				.validate()
 				.unwrap_or_else(|e| panic!("bin '{bin}' must be accepted: {e}"));
 		}
-	}
-
-	/// A `scripts` key only becomes a command for the root task of the same name,
-	/// so a typo'd override never runs and the workspace silently falls back to
-	/// the inferred command.
-	#[test]
-	fn validate_rejects_a_script_that_names_no_task() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [{ "name": "core", "path": "core",
-							 "scripts": { "biuld": "cargo build --release" } }],
-			"tasks": { "build": {} }
-		}))
-		.unwrap();
-		let message = config
-			.validate()
-			.expect_err("a script naming no task must be rejected")
-			.to_string();
-		assert!(
-			message.contains("workspace 'core' declares a script 'biuld'"),
-			"must name the workspace and the script: {message}"
-		);
-		assert!(
-			message.contains("Did you mean `build`?"),
-			"must reuse the suggestion machinery: {message}"
-		);
-		assert!(message.contains("Defined tasks: build"), "{message}");
-	}
-
-	#[test]
-	fn validate_accepts_a_script_that_names_a_task() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [{ "name": "core", "path": "core", "auto": false,
-							 "scripts": { "build": "cargo build --release" } }],
-			"tasks": { "build": {}, "test": {} }
-		}))
-		.unwrap();
-		config
-			.validate()
-			.expect("a script matching a declared task must be accepted");
-	}
-
-	/// With no `tasks` at all there is nothing to suggest, so the message has to
-	/// say what to add instead.
-	#[test]
-	fn a_script_with_no_tasks_declared_says_what_to_add() {
-		let config: LatticeConfig = serde_json::from_value(json!({
-			"workspaces": [{ "name": "core", "path": "core", "scripts": { "build": "x" } }]
-		}))
-		.unwrap();
-		let message = config.validate().expect_err("must be rejected").to_string();
-		assert!(
-			message.contains("Add 'build' to `tasks` in lattice.json"),
-			"{message}"
-		);
 	}
 
 	#[test]

@@ -10,8 +10,8 @@ use lattice_config::{find_root, resolve_engines, LOCKFILES};
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, ROSETTE};
 use lattice_project::scaffold::{LEGACY_SETUP_MARKER, SETUP_MARKER_DIR};
 use lattice_runner::DRAIN_GRACE;
-use lattice_workspace::toolchain;
 use lattice_workspace::{discover_workspaces, Workspace};
+use lattice_workspace::{tasks, toolchain};
 
 use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag};
 
@@ -44,7 +44,8 @@ impl SetupArgs {
 
 		lattice_config::schema::ensure_schema(&root);
 		let config = lattice_config::load_config(&root)?;
-		let declared: Vec<&str> = config.workspaces.iter().map(|w| w.name.as_str()).collect();
+		let workspaces = discover_workspaces(&root, &config)?;
+		let declared: Vec<&str> = workspaces.iter().map(|w| w.name.as_str()).collect();
 		require_known_workspaces(&self.workspaces, &declared)?;
 
 		let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
@@ -64,7 +65,6 @@ impl SetupArgs {
 			toolchain::provision_and_resolve(&root, &config.engines, &mut |m| reporter.note(m))?;
 		memo.insert(format!("{:?}", config.engines), root_resolved.path_prepend);
 
-		let workspaces = discover_workspaces(&root, &config)?;
 		let selected: Vec<&Workspace> = if self.workspaces.is_empty() {
 			workspaces.iter().collect()
 		} else {
@@ -91,6 +91,7 @@ impl SetupArgs {
 		}
 
 		let mut any_failed = false;
+		let mut installed: Vec<(PathBuf, String)> = Vec::new();
 
 		for ws in &selected {
 			// No driver and no engines → nothing to do, skip quietly.
@@ -105,13 +106,13 @@ impl SetupArgs {
 				continue;
 			};
 
-			let has_wrapper = match driver.tool.as_str() {
-				"gradle" => ws.path.join("gradlew").exists(),
-				"maven" => ws.path.join("mvnw").exists(),
-				_ => false,
+			let wrapper = match driver.tool.as_str() {
+				"gradle" => Some(tasks::wrapper(&ws.path, &root, "gradlew", "gradle")),
+				"maven" => Some(tasks::wrapper(&ws.path, &root, "mvnw", "mvn")),
+				_ => None,
 			};
 
-			let install_cmd = match install_command_for(&driver.tool, has_wrapper) {
+			let install_cmd = match install_command_for(&driver.tool, wrapper.as_deref()) {
 				Some(cmd) => cmd,
 				None => {
 					reporter.note(&format!(
@@ -122,8 +123,16 @@ impl SetupArgs {
 				}
 			};
 
+			// A package manager installs a whole workspace tree from the directory
+			// its lockfile is in, so members of one tree share a single install.
+			let install_dir = install_dir(&root, &ws.path);
+			if installed.contains(&(install_dir.clone(), install_cmd.clone())) {
+				continue;
+			}
+			installed.push((install_dir.clone(), install_cmd.clone()));
+
 			// Keep the lockfile-mtime "up to date" skip unless --force.
-			if !self.force && !lockfile_changed(&root, &ws.path) {
+			if !self.force && !lockfile_changed(&root, &install_dir) {
 				println!(
 					"{} {} {}",
 					paint_teal("●"),
@@ -141,14 +150,14 @@ impl SetupArgs {
 			);
 
 			let prepend = ws_prepend.get(&ws.name).cloned().unwrap_or_default();
-			match run_install(&install_cmd, &ws.path, &prepend).await {
+			match run_install(&install_cmd, &install_dir, &prepend).await {
 				Ok(true) => {
-					if let Err(e) = touch_marker(&root, &ws.path) {
+					if let Err(e) = touch_marker(&root, &install_dir) {
 						reporter.warn(&format!(
 							"{}: dependencies installed, but {} could not be written, so the \
 							 next `lattice setup` will install again: {e}",
 							ws.name,
-							marker_relative(&root, &ws.path)
+							marker_relative(&root, &install_dir)
 						));
 					}
 				}
@@ -172,9 +181,18 @@ impl SetupArgs {
 	}
 }
 
+/// The nearest directory at or above `workspace_path` holding a lockfile, which
+/// is where its package manager installs from, or the workspace itself.
+fn install_dir(root: &Path, workspace_path: &Path) -> PathBuf {
+	lockfile_dirs(root, workspace_path)
+		.into_iter()
+		.find(|dir| LOCKFILES.iter().any(|lf| dir.join(lf).is_file()))
+		.unwrap_or_else(|| workspace_path.to_path_buf())
+}
+
 /// Map a detected driver tool to its native dependency-install command.
-/// `has_wrapper` selects the wrapper form for gradle/maven.
-pub fn install_command_for(tool: &str, has_wrapper: bool) -> Option<String> {
+/// `wrapper` is how to call gradle or maven from the workspace.
+pub fn install_command_for(tool: &str, wrapper: Option<&str>) -> Option<String> {
 	let cmd = match tool {
 		"pnpm" => "pnpm install",
 		"yarn" => "yarn install",
@@ -198,26 +216,8 @@ pub fn install_command_for(tool: &str, has_wrapper: bool) -> Option<String> {
 		"dart" => "dart pub get",
 		"stack" => "stack build --only-dependencies",
 		"cabal" => "cabal build --only-download",
-		"gradle" => {
-			return Some(
-				if has_wrapper {
-					"./gradlew dependencies"
-				} else {
-					"gradle dependencies"
-				}
-				.to_string(),
-			)
-		}
-		"maven" => {
-			return Some(
-				if has_wrapper {
-					"./mvnw dependency:resolve"
-				} else {
-					"mvn dependency:resolve"
-				}
-				.to_string(),
-			)
-		}
+		"gradle" => return Some(format!("{} dependencies", wrapper.unwrap_or("gradle"))),
+		"maven" => return Some(format!("{} dependency:resolve", wrapper.unwrap_or("mvn"))),
 		_ => return None,
 	};
 	Some(cmd.to_string())
@@ -235,15 +235,11 @@ fn require_known_workspaces(requested: &[String], declared: &[&str]) -> Result<(
 		let mut names: Vec<&str> = declared.to_vec();
 		names.sort_unstable();
 		let listed = if names.is_empty() {
-			"lattice.json declares no workspaces".to_string()
+			"Lattice found no workspaces".to_string()
 		} else {
-			format!("Declared workspaces: {}", names.join(", "))
+			format!("Workspaces: {}", names.join(", "))
 		};
-		bail!(
-			"workspace '{}' is not declared in the `workspaces` array in lattice.json. {}",
-			name,
-			listed
-		);
+		bail!("there is no workspace named '{name}'. {listed}");
 	}
 	Ok(())
 }
@@ -428,44 +424,44 @@ mod tests {
 	#[test]
 	fn install_command_mapping_covers_known_tools() {
 		assert_eq!(
-			install_command_for("pnpm", false).as_deref(),
+			install_command_for("pnpm", None).as_deref(),
 			Some("pnpm install")
 		);
 		assert_eq!(
-			install_command_for("yarn", false).as_deref(),
+			install_command_for("yarn", None).as_deref(),
 			Some("yarn install")
 		);
 		assert_eq!(
-			install_command_for("npm", false).as_deref(),
+			install_command_for("npm", None).as_deref(),
 			Some("npm install")
 		);
 		assert_eq!(
-			install_command_for("bun", false).as_deref(),
+			install_command_for("bun", None).as_deref(),
 			Some("bun install")
 		);
 		assert_eq!(
-			install_command_for("deno", false).as_deref(),
+			install_command_for("deno", None).as_deref(),
 			Some("deno cache .")
 		);
 		assert_eq!(
-			install_command_for("cargo", false).as_deref(),
+			install_command_for("cargo", None).as_deref(),
 			Some("cargo fetch")
 		);
 		assert_eq!(
-			install_command_for("go", false).as_deref(),
+			install_command_for("go", None).as_deref(),
 			Some("go mod download")
 		);
 		assert_eq!(
-			install_command_for("poetry", false).as_deref(),
+			install_command_for("poetry", None).as_deref(),
 			Some("poetry install")
 		);
-		assert_eq!(install_command_for("uv", false).as_deref(), Some("uv sync"));
+		assert_eq!(install_command_for("uv", None).as_deref(), Some("uv sync"));
 		assert_eq!(
-			install_command_for("bundler", false).as_deref(),
+			install_command_for("bundler", None).as_deref(),
 			Some("bundle install")
 		);
 		assert_eq!(
-			install_command_for("pip", false).as_deref(),
+			install_command_for("pip", None).as_deref(),
 			Some("pip install -r requirements.txt")
 		);
 	}
@@ -473,19 +469,19 @@ mod tests {
 	#[test]
 	fn gradle_and_maven_pick_wrapper_form() {
 		assert_eq!(
-			install_command_for("gradle", true).as_deref(),
+			install_command_for("gradle", Some("./gradlew")).as_deref(),
 			Some("./gradlew dependencies")
 		);
 		assert_eq!(
-			install_command_for("gradle", false).as_deref(),
+			install_command_for("gradle", None).as_deref(),
 			Some("gradle dependencies")
 		);
 		assert_eq!(
-			install_command_for("maven", true).as_deref(),
+			install_command_for("maven", Some("./mvnw")).as_deref(),
 			Some("./mvnw dependency:resolve")
 		);
 		assert_eq!(
-			install_command_for("maven", false).as_deref(),
+			install_command_for("maven", None).as_deref(),
 			Some("mvn dependency:resolve")
 		);
 	}
@@ -502,7 +498,7 @@ mod tests {
 				)
 			});
 			assert_eq!(
-				install_command_for(spec.tool, false).is_some(),
+				install_command_for(spec.tool, None).is_some(),
 				installs,
 				"install command for '{}' does not match its role",
 				spec.tool
@@ -512,9 +508,9 @@ mod tests {
 
 	#[test]
 	fn unknown_tool_has_no_installer() {
-		assert_eq!(install_command_for("rake", false), None);
-		assert_eq!(install_command_for("alpes", false), None);
-		assert_eq!(install_command_for("node", false), None);
+		assert_eq!(install_command_for("rake", None), None);
+		assert_eq!(install_command_for("alpes", None), None);
+		assert_eq!(install_command_for("node", None), None);
 	}
 
 	#[test]
@@ -535,7 +531,7 @@ mod tests {
 		let err = require_known_workspaces(&["web".to_string()], &[])
 			.unwrap_err()
 			.to_string();
-		assert!(err.contains("declares no workspaces"), "{err}");
+		assert!(err.contains("found no workspaces"), "{err}");
 	}
 
 	#[test]

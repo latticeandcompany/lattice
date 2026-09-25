@@ -1,52 +1,27 @@
 {
   "$schema": ".lattice/schema.json",
   "latticeVersion": "1.1.1",
-  "workspaces": [
-    { "name": "web", "path": "apps/web" },
-    { "name": "api", "path": "apps/api" },
-    {
-      "name": "utils",
-      "path": "libs/utils",
-      "auto": false,
-      "scripts": {
-        "build": "python3 -c \"import os; os.makedirs('dist', exist_ok=True); import shutil; shutil.copy('src/utils.py', 'dist/utils.py'); print('utils build complete')\"",
-        "test": "python3 src/utils.py",
-        "lint": "python3 -m py_compile src/utils.py && echo 'Syntax OK'",
-        "clean": "python3 -c \"import shutil; shutil.rmtree('dist', ignore_errors=True); print('utils clean complete')\""
-      }
-    },
-    {
-      "name": "worker",
-      "path": "services/worker",
-      "auto": false,
-      "dependsOn": ["utils"],
-      "scripts": {
-        "build": "sh -c 'if command -v go >/dev/null; then go build ./...; else echo \"[worker] go not installed, skipping native build\"; fi'",
-        "test": "sh -c 'if command -v go >/dev/null; then go test ./...; else echo \"[worker] go not installed, skipping tests\"; fi'",
-        "lint": "sh -c 'if command -v go >/dev/null; then go vet ./...; else echo \"[worker] go not installed, skipping lint\"; fi'",
-        "clean": "sh -c 'rm -rf bin && echo worker clean complete'"
-      }
-    }
-  ],
-  "engines": {
-    "node": ">=20.0.0",
-    "rust": ">=1.75.0"
-  },
+  "workspaces": ["apps/*", "libs/*", "services/*"],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*"],
-      "ignore": ["**/*.test.*", "**/README.md"],
-      "outputs": ["dist/**", "target/debug/**", "bin/**"]
+      "ignore": ["**/*.test.*", "**/README.md"]
     },
-    "test": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*", "tests/**/*"]
+    "test": { "dependsOn": ["build"] }
+  },
+  "overrides": {
+    "web": { "engines": { "node": ">=20.0.0" } },
+    "api": { "engines": { "rust": ">=1.75.0" } },
+    "utils": {
+      "tasks": {
+        "build": {
+          "run": "python3 -c \"import os, shutil; os.makedirs('dist', exist_ok=True); shutil.copy('src/utils.py', 'dist/utils.py')\"",
+          "outputs": ["dist/**"]
+        },
+        "test": "python3 src/utils.py",
+        "lint": "python3 -m py_compile src/utils.py"
+      }
     },
-    "lint": {
-      "inputs": ["src/**/*"]
-    },
-    "clean": {}
+    "worker": { "dependsOn": ["utils"] }
   },
   "settings": {
     "maxCacheSize": "1GB"

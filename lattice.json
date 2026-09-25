@@ -1,53 +1,23 @@
 {
   "$schema": ".lattice/schema.json",
   "latticeVersion": "1.1.1",
-  "workspaces": [
-    { "name": "lattice-config", "path": "crates/lattice-config" },
-    { "name": "lattice-events", "path": "crates/lattice-events" },
-    { "name": "lattice-output", "path": "crates/lattice-output", "dependsOn": ["lattice-events"] },
-    { "name": "lattice-workspace", "path": "crates/lattice-workspace", "dependsOn": ["lattice-config"] },
-    { "name": "lattice-cache", "path": "crates/lattice-cache", "dependsOn": ["lattice-config"] },
-    { "name": "lattice-testkit", "path": "crates/lattice-testkit" },
-    { "name": "dagger", "path": "crates/dagger", "dependsOn": ["lattice-config", "lattice-workspace"] },
-    { "name": "lattice-runner", "path": "crates/lattice-runner", "dependsOn": ["dagger", "lattice-cache", "lattice-events", "lattice-config", "lattice-workspace"] },
-    { "name": "lattice-project", "path": "crates/lattice-project", "dependsOn": ["lattice-runner", "dagger", "lattice-cache", "lattice-events", "lattice-config", "lattice-workspace"] },
-    { "name": "lattice", "path": "crates/lattice", "dependsOn": ["lattice-project", "lattice-runner", "dagger", "lattice-cache", "lattice-output", "lattice-config", "lattice-workspace"] },
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=26" } },
-    { "name": "npm", "path": "packages/npm", "engines": { "node": ">=22" } },
-    {
-      "name": "desktop",
-      "path": "apps/desktop",
-      "engines": { "node": ">=26" },
-      "dependsOn": ["lattice-project", "lattice-events"],
-      "scripts": {
-        "dev": "npm run app",
-        "build": "npm run bundle"
-      }
-    }
-  ],
+  "workspaces": ["apps/*", "packages/npm"],
   "engines": {
     "cargo": ">=1.88.0"
   },
   "globalDependencies": ["Cargo.toml", "apps/desktop/src/**"],
   "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "public/**/*", "Cargo.toml", "package.json", "package-lock.json", "astro.config.mjs", "vite.config.ts", "rolldown.config.ts", "index.html", "tsconfig.json", "tsconfig.build.json", "src-tauri/src/**/*", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "src-tauri/capabilities/**"]
-    },
-    "dev": {
-      "persistent": true,
-      "cache": false
-    },
-    "test": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*", "tests/**/*"]
-    },
-    "lint": {
-      "inputs": ["src/**/*"]
-    },
-    "check": {
-      "inputs": ["src/**/*", "tests/**/*", "Cargo.toml", "package.json", "tsconfig.json", "rolldown.config.ts"]
-    },
-    "clean": {}
+    "test": { "dependsOn": ["build"] }
+  },
+  "overrides": {
+    "apps/*": { "engines": { "node": ">=26" } },
+    "packages/npm": { "engines": { "node": ">=22" } },
+    "apps/desktop": {
+      "dependsOn": ["lattice-project", "lattice-events"],
+      "tasks": {
+        "dev": "npm run app",
+        "build": "npm run bundle"
+      }
+    }
   }
 }

@@ -6,15 +6,17 @@ use std::path::Path;
 /// committed and kept present by [`ensure_schema`].
 pub const SCHEMA_JSON: &str = include_str!("../assets/schema.json");
 
-/// Ensure `<root>/.lattice/schema.json` exists so editors can resolve the
-/// config's `$schema`. Writes the bundled schema only when the file is absent,
-/// leaving a committed (or newer) copy untouched to avoid churn. This is a
-/// best-effort editor convenience: any I/O error is swallowed so it can never
-/// fail a real command.
+/// Keep `<root>/.lattice/schema.json` in step with this binary so editors
+/// validate the config against the version that will read it. Written when
+/// absent or out of date; line endings are ignored in the comparison so a
+/// checkout that converted them is not churned. Best effort: an I/O error never
+/// fails a real command.
 pub fn ensure_schema(root: &Path) {
 	let schema_path = root.join(".lattice").join("schema.json");
-	if schema_path.exists() {
-		return;
+	if let Ok(existing) = std::fs::read_to_string(&schema_path) {
+		if existing.replace("\r\n", "\n") == SCHEMA_JSON.replace("\r\n", "\n") {
+			return;
+		}
 	}
 	let Some(dir) = schema_path.parent() else {
 		return;
@@ -45,7 +47,7 @@ mod tests {
 			max_cache_size: Some(crate::CacheSize::parse("1GB").unwrap()),
 			cache_dir: Some(".lattice/cache".to_string()),
 			loquacious: true,
-			version_check: true,
+			version_check: false,
 		};
 		let serialized = serde_json::to_value(&populated).unwrap();
 		let actual: Vec<&String> = serialized
@@ -81,19 +83,29 @@ mod tests {
 	}
 
 	#[test]
-	fn leaves_existing_schema_untouched() {
+	fn replaces_a_schema_from_another_version() {
 		let dir = tempfile::tempdir().unwrap();
 		let lattice_dir = dir.path().join(".lattice");
 		std::fs::create_dir_all(&lattice_dir).unwrap();
 		let schema_path = lattice_dir.join("schema.json");
-		std::fs::write(&schema_path, "custom-pinned-copy").unwrap();
+		std::fs::write(&schema_path, "a schema from 1.x").unwrap();
 
 		ensure_schema(dir.path());
 
-		assert_eq!(
-			std::fs::read_to_string(&schema_path).unwrap(),
-			"custom-pinned-copy",
-			"an existing schema must not be clobbered"
-		);
+		assert_eq!(std::fs::read_to_string(&schema_path).unwrap(), SCHEMA_JSON);
+	}
+
+	#[test]
+	fn leaves_a_current_schema_with_converted_line_endings_alone() {
+		let dir = tempfile::tempdir().unwrap();
+		let lattice_dir = dir.path().join(".lattice");
+		std::fs::create_dir_all(&lattice_dir).unwrap();
+		let schema_path = lattice_dir.join("schema.json");
+		let crlf = SCHEMA_JSON.replace("\r\n", "\n").replace('\n', "\r\n");
+		std::fs::write(&schema_path, &crlf).unwrap();
+
+		ensure_schema(dir.path());
+
+		assert_eq!(std::fs::read_to_string(&schema_path).unwrap(), crlf);
 	}
 }

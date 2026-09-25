@@ -1,5 +1,9 @@
-//! Build the task execution DAG from resolved workspaces + the root task graph,
-//! and derive a petgraph-independent [`Schedule`] the runner drives.
+//! Build the task execution DAG from resolved workspaces, and derive a
+//! petgraph-independent [`Schedule`] the runner drives.
+//!
+//! Each workspace carries its own resolved tasks, so the graph is built from
+//! those: a node is a task some workspace can run, and its `dependsOn` — as
+//! that workspace resolved it — draws the edges.
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,7 +15,7 @@ use petgraph::Direction;
 
 use serde::Serialize;
 
-use lattice_config::LatticeConfig;
+use lattice_config::closest_field;
 use lattice_workspace::Workspace;
 
 #[derive(Debug, Clone)]
@@ -31,28 +35,37 @@ pub struct ExecutionGraph {
 	pub topo_order: Vec<NodeIndex>,
 }
 
-/// The transitive closure of `root_tasks` over `dependsOn` (both same-workspace
-/// and `^`-prefixed cross-workspace edges refer to task names). Stacked roots
-/// share this one set, so a dependency common to several roots is collected once.
-fn collect_task_set(root_tasks: &[&str], config: &LatticeConfig) -> Vec<String> {
+/// Every `dependsOn` any workspace gives `task`, `^` kept.
+fn deps_of<'a>(task: &str, workspaces: &'a [Workspace]) -> Vec<&'a String> {
+	let mut deps: Vec<&String> = Vec::new();
+	for ws in workspaces {
+		if let Some(t) = ws.task(task) {
+			for dep in t.config.depends_on.iter().flatten() {
+				if !deps.contains(&dep) {
+					deps.push(dep);
+				}
+			}
+		}
+	}
+	deps
+}
+
+/// The transitive closure of `root_tasks` over `dependsOn`, across every
+/// workspace. Stacked roots share this one set, so a dependency common to
+/// several roots is collected once.
+fn collect_task_set(root_tasks: &[&str], workspaces: &[Workspace]) -> Vec<String> {
 	let mut visited = HashSet::new();
 	let mut ordered = Vec::new();
 	let mut stack: Vec<String> = root_tasks.iter().map(|t| t.to_string()).collect();
 
 	while let Some(task) = stack.pop() {
-		if visited.contains(&task) {
+		if !visited.insert(task.clone()) {
 			continue;
 		}
-		visited.insert(task.clone());
-
-		if let Some(task_cfg) = config.tasks.get(&task) {
-			if let Some(deps) = &task_cfg.depends_on {
-				for dep in deps {
-					let dep_task = dep.strip_prefix('^').unwrap_or(dep).to_string();
-					if !visited.contains(&dep_task) {
-						stack.push(dep_task);
-					}
-				}
+		for dep in deps_of(&task, workspaces) {
+			let bare = dep.strip_prefix('^').unwrap_or(dep).to_string();
+			if !visited.contains(&bare) {
+				stack.push(bare);
 			}
 		}
 		ordered.push(task);
@@ -61,159 +74,130 @@ fn collect_task_set(root_tasks: &[&str], config: &LatticeConfig) -> Vec<String> 
 	ordered
 }
 
-/// Whether any task in the transitive closure of `root_tasks` (over `dependsOn`)
-/// is persistent. A persistent task (dev server, watcher) streams output
-/// indefinitely, so the caller uses this to pick a streaming-friendly output
-/// mode instead of the live TUI.
-pub fn includes_persistent_task(root_tasks: &[&str], config: &LatticeConfig) -> bool {
-	collect_task_set(root_tasks, config).iter().any(|task| {
-		config
-			.tasks
-			.get(task)
-			.map(|cfg| cfg.is_persistent())
-			.unwrap_or(false)
+/// Whether any task in the transitive closure of `root_tasks` is persistent in
+/// any workspace, so the caller can pick an output mode that streams.
+pub fn includes_persistent_task(root_tasks: &[&str], workspaces: &[Workspace]) -> bool {
+	collect_task_set(root_tasks, workspaces).iter().any(|task| {
+		workspaces
+			.iter()
+			.any(|ws| ws.task(task).is_some_and(|t| t.config.is_persistent()))
 	})
 }
 
-/// Build the cross-workspace execution graph for a single `root_task`.
-///
-/// Convenience wrapper over [`build_execution_graph_multi`] for the common
-/// single-task case.
-pub fn build_execution_graph(
-	workspaces: &[Workspace],
-	root_task: &str,
-	config: &LatticeConfig,
-) -> Result<ExecutionGraph> {
-	build_execution_graph_multi(workspaces, &[root_task], config)
+/// Every task name any workspace can run, sorted.
+pub fn known_tasks(workspaces: &[Workspace]) -> Vec<String> {
+	let mut names: Vec<String> = workspaces
+		.iter()
+		.flat_map(|ws| ws.tasks.keys().cloned())
+		.collect();
+	names.sort();
+	names.dedup();
+	names
 }
 
-/// Build one combined cross-workspace execution graph for several stacked
-/// `root_tasks` (e.g. `lattice run lint test build`).
-///
-/// The roots are merged into a single DAG, so a dependency shared by several
-/// roots runs once and independent roots parallelize where the graph allows.
-///
-/// Edges: `^task` deps connect a workspace's task to the same task in each of
-/// its `dependsOn` workspaces; bare deps connect tasks within one workspace.
-/// A persistent task may not be depended on (it never completes); cycles are
-/// rejected.
-pub fn build_execution_graph_multi(
+/// Fail on a task nobody can run, naming what is there instead. Asked of the
+/// tasks a run requests and of every `dependsOn` they pull in, since a
+/// misspelled prerequisite would otherwise drop its ordering without a word.
+fn require_somewhere(
+	task: &str,
+	needed_by: Option<(&str, &str)>,
+	workspaces: &[Workspace],
+) -> Result<()> {
+	if workspaces.iter().any(|ws| ws.tasks.contains_key(task)) {
+		return Ok(());
+	}
+	let known = known_tasks(workspaces);
+	let mut message = match needed_by {
+		Some((owner, dep)) => {
+			format!("task '{owner}' depends on '{dep}', but no workspace has a '{task}' task")
+		}
+		None => format!("no workspace has a '{task}' task"),
+	};
+	if let Some(near) = closest_field(task, &known) {
+		message.push_str(&format!("\nDid you mean `{near}`?"));
+	}
+	if known.is_empty() {
+		message.push_str("\nLattice found no tasks in any workspace");
+	} else {
+		message.push_str(&format!("\nTasks: {}", known.join(", ")));
+	}
+	bail!(message)
+}
+
+/// Build one combined graph for `root_tasks` across every workspace.
+pub fn build_execution_graph(
 	workspaces: &[Workspace],
 	root_tasks: &[&str],
-	config: &LatticeConfig,
 ) -> Result<ExecutionGraph> {
-	build_execution_graph_selected(workspaces, root_tasks, config, None)
+	build_execution_graph_selected(workspaces, root_tasks, None)
 }
 
 /// Build the graph for `root_tasks` narrowed to `selected_workspaces` plus
 /// everything those workspaces depend on, transitively.
 ///
-/// `selected_workspaces` holds workspace names — the ones a `--filter` matched.
-/// They are the roots of the run: every node they reach backwards through the
-/// graph comes along, so a `^build` edge into an unselected workspace still
-/// resolves to that workspace's task. Nodes outside the closure are dropped, and
-/// the ones pulled in only as prerequisites are marked [`TaskNode::pulled_in`].
-/// `None` selects every workspace, which is [`build_execution_graph_multi`].
+/// The roots are merged into a single DAG, so a dependency shared by several
+/// roots runs once and independent roots parallelize where the graph allows.
+/// `^task` connects a workspace's task to that task in each workspace it depends
+/// on; a bare name connects tasks within one workspace. A persistent task may
+/// not be depended on (it never completes), and cycles are rejected.
+///
+/// `selected_workspaces` holds the names a filter or the working directory
+/// picked. They are the roots of the run: every node they reach backwards
+/// comes along, marked [`TaskNode::pulled_in`]. `None` selects every workspace.
 pub fn build_execution_graph_selected(
 	workspaces: &[Workspace],
 	root_tasks: &[&str],
-	config: &LatticeConfig,
 	selected_workspaces: Option<&HashSet<String>>,
 ) -> Result<ExecutionGraph> {
 	for root_task in root_tasks {
-		if !config.tasks.contains_key(*root_task) {
-			bail!(
-				"task '{}' is not defined in the `tasks` map in lattice.json",
-				root_task
-			);
+		require_somewhere(root_task, None, workspaces)?;
+	}
+
+	let task_set = collect_task_set(root_tasks, workspaces);
+	for task in &task_set {
+		for dep in deps_of(task, workspaces) {
+			let bare = dep.strip_prefix('^').unwrap_or(dep);
+			require_somewhere(bare, Some((task, dep)), workspaces)?;
 		}
 	}
 
-	let task_set = collect_task_set(root_tasks, config);
 	let mut graph: DiGraph<TaskNode, ()> = DiGraph::new();
 	let mut node_map: HashMap<(String, String), NodeIndex> = HashMap::new();
 
-	// Inter-workspace dependency edges come from each workspace's `dependsOn`.
-	let mut ws_deps: HashMap<String, Vec<String>> = HashMap::new();
-	for ws in workspaces {
-		if !ws.depends_on.is_empty() {
-			ws_deps.insert(ws.name.clone(), ws.depends_on.clone());
-		}
-	}
-
 	for task_name in &task_set {
-		let task_cfg = config
-			.tasks
-			.get(task_name.as_str())
-			.cloned()
-			.unwrap_or_default();
-		let is_persistent = task_cfg.is_persistent();
-
 		for ws in workspaces {
-			let selected = selected_workspaces.is_none_or(|sel| sel.contains(&ws.name));
-			let command = match ws.command_for(task_name) {
-				Some(cmd) => cmd.to_string(),
-				None => {
-					// A manual workspace that declares no command for the
-					// requested root task halts — unless the workspace is outside
-					// the selection, where the task was never asked for. Auto
-					// workspaces silently skip tasks that don't apply to their
-					// toolchain.
-					if !ws.auto && selected && root_tasks.contains(&task_name.as_str()) {
-						bail!(
-							"workspace '{}' has \"auto\": false and declares no command for \
-                             task '{}'. Add the command under this workspace's \"scripts\" \
-                             map in lattice.json",
-							ws.name,
-							task_name
-						);
-					}
-					continue;
-				}
+			let Some(task) = ws.task(task_name) else {
+				continue;
 			};
-
+			let selected = selected_workspaces.is_none_or(|sel| sel.contains(&ws.name));
 			let idx = graph.add_node(TaskNode {
 				workspace_name: ws.name.clone(),
 				task_name: task_name.clone(),
-				command,
-				is_persistent,
+				command: task.command.clone(),
+				is_persistent: task.config.is_persistent(),
 				pulled_in: !selected,
 			});
 			node_map.insert((ws.name.clone(), task_name.clone()), idx);
 		}
 	}
 
-	for task_name in &task_set {
-		let task_cfg = config
-			.tasks
-			.get(task_name.as_str())
-			.cloned()
-			.unwrap_or_default();
-		if let Some(depends_on) = &task_cfg.depends_on {
-			for dep in depends_on {
+	for ws in workspaces {
+		for task_name in &task_set {
+			let Some(task) = ws.task(task_name) else {
+				continue;
+			};
+			let to_idx = node_map[&(ws.name.clone(), task_name.clone())];
+			for dep in task.config.depends_on.iter().flatten() {
 				if let Some(dep_task) = dep.strip_prefix('^') {
-					// Cross-workspace: link each ws's task to that task in its deps.
-					for ws in workspaces {
-						if let Some(&to_idx) = node_map.get(&(ws.name.clone(), task_name.clone())) {
-							let deps = ws_deps.get(&ws.name).cloned().unwrap_or_default();
-							for dep_ws_name in &deps {
-								if let Some(&from_idx) =
-									node_map.get(&(dep_ws_name.clone(), dep_task.to_string()))
-								{
-									graph.add_edge(from_idx, to_idx, ());
-								}
-							}
+					for dep_ws in &ws.depends_on {
+						if let Some(&from_idx) =
+							node_map.get(&(dep_ws.clone(), dep_task.to_string()))
+						{
+							graph.add_edge(from_idx, to_idx, ());
 						}
 					}
-				} else {
-					// Same-workspace edge.
-					for ws in workspaces {
-						if let Some(&to_idx) = node_map.get(&(ws.name.clone(), task_name.clone())) {
-							if let Some(&from_idx) = node_map.get(&(ws.name.clone(), dep.clone())) {
-								graph.add_edge(from_idx, to_idx, ());
-							}
-						}
-					}
+				} else if let Some(&from_idx) = node_map.get(&(ws.name.clone(), dep.clone())) {
+					graph.add_edge(from_idx, to_idx, ());
 				}
 			}
 		}
@@ -223,7 +207,6 @@ pub fn build_execution_graph_selected(
 		graph = dependency_closure(&graph);
 	}
 
-	// Persistent tasks must be leaves: nothing may depend on them.
 	for idx in graph.node_indices() {
 		if graph[idx].is_persistent
 			&& graph
@@ -239,8 +222,15 @@ pub fn build_execution_graph_selected(
 		}
 	}
 
-	let topo_order =
-		toposort(&graph, None).map_err(|_| anyhow::anyhow!("the task graph has a cycle"))?;
+	let topo_order = toposort(&graph, None).map_err(|cycle| {
+		let node = &graph[cycle.node_id()];
+		anyhow::anyhow!(
+			"the task graph has a cycle through {}:{}. Workspace dependencies come from each \
+			 manifest and from `dependsOn` in `overrides`; one of them points back the way it came",
+			node.workspace_name,
+			node.task_name
+		)
+	})?;
 
 	Ok(ExecutionGraph { graph, topo_order })
 }
@@ -432,31 +422,59 @@ pub fn build_schedule(graph: &ExecutionGraph) -> (Vec<NodeIndex>, Schedule) {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use indexmap::IndexMap;
-	use lattice_config::{EngineMap, PipelineTask};
+	use lattice_config::PipelineTask;
+	use lattice_workspace::WorkspaceTask;
+
+	type Tasks = Vec<(String, PipelineTask)>;
 
 	fn ws(name: &str, deps: &[&str], commands: &[(&str, &str)]) -> Workspace {
-		let mut map: IndexMap<String, String> = IndexMap::new();
-		for (k, v) in commands {
-			map.insert((*k).to_string(), (*v).to_string());
+		let mut w = Workspace::new(name, name).with_deps(deps);
+		for (task, command) in commands {
+			w = w.with_task(task, command, PipelineTask::default());
 		}
-		Workspace {
-			name: name.to_string(),
-			path: std::path::PathBuf::from(name),
-			auto: true,
-			depends_on: deps.iter().map(|s| s.to_string()).collect(),
-			engines: EngineMap::new(),
-			driver: None,
-			commands: map,
-		}
+		w
 	}
 
-	fn config(tasks: &[(&str, PipelineTask)]) -> LatticeConfig {
-		let mut c = LatticeConfig::default();
-		for (name, t) in tasks {
-			c.tasks.insert((*name).to_string(), t.clone());
+	fn config(tasks: &[(&str, PipelineTask)]) -> Tasks {
+		tasks
+			.iter()
+			.map(|(n, t)| ((*n).to_string(), t.clone()))
+			.collect()
+	}
+
+	/// Every workspace's copy of each task in `cfg` given `cfg`'s settings, the
+	/// way discovery layers the root `tasks` map onto what it finds.
+	fn apply(workspaces: &[Workspace], cfg: &Tasks) -> Vec<Workspace> {
+		let mut out = workspaces.to_vec();
+		for w in &mut out {
+			for (name, settings) in cfg {
+				if let Some(task) = w.tasks.get_mut(name) {
+					task.config = settings.clone();
+				}
+			}
 		}
-		c
+		out
+	}
+
+	fn graph(workspaces: &[Workspace], root: &str, cfg: &Tasks) -> Result<ExecutionGraph> {
+		build_execution_graph(&apply(workspaces, cfg), &[root])
+	}
+
+	fn graph_multi(
+		workspaces: &[Workspace],
+		roots: &[&str],
+		cfg: &Tasks,
+	) -> Result<ExecutionGraph> {
+		build_execution_graph(&apply(workspaces, cfg), roots)
+	}
+
+	fn graph_selected(
+		workspaces: &[Workspace],
+		roots: &[&str],
+		cfg: &Tasks,
+		selected: Option<&HashSet<String>>,
+	) -> Result<ExecutionGraph> {
+		build_execution_graph_selected(&apply(workspaces, cfg), roots, selected)
 	}
 
 	fn task(depends_on: &[&str]) -> PipelineTask {
@@ -477,7 +495,7 @@ mod tests {
 			("build", PipelineTask::default()),
 			("test", task(&["build"])),
 		]);
-		let g = build_execution_graph(&workspaces, "test", &cfg).unwrap();
+		let g = graph(&workspaces, "test", &cfg).unwrap();
 		let order = dry_run_order(&g);
 		let build_pos = order.iter().position(|n| n.task_name == "build").unwrap();
 		let test_pos = order.iter().position(|n| n.task_name == "test").unwrap();
@@ -497,7 +515,7 @@ mod tests {
 			("build", PipelineTask::default()),
 			("test", task(&["build"])),
 		]);
-		let g = build_execution_graph_multi(&workspaces, &["lint", "test", "build"], &cfg).unwrap();
+		let g = graph_multi(&workspaces, &["lint", "test", "build"], &cfg).unwrap();
 		let order = dry_run_order(&g);
 
 		let build_nodes = order.iter().filter(|n| n.task_name == "build").count();
@@ -512,7 +530,7 @@ mod tests {
 	fn stacked_roots_reject_unknown_task() {
 		let workspaces = vec![ws("app", &[], &[("build", "tsc")])];
 		let cfg = config(&[("build", PipelineTask::default())]);
-		let err = build_execution_graph_multi(&workspaces, &["build", "nope"], &cfg).unwrap_err();
+		let err = graph_multi(&workspaces, &["build", "nope"], &cfg).unwrap_err();
 		assert!(format!("{err}").contains("nope"));
 	}
 
@@ -524,7 +542,7 @@ mod tests {
 		];
 		// app:build depends on ^build → lib:build.
 		let cfg = config(&[("build", task(&["^build"]))]);
-		let g = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+		let g = graph(&workspaces, "build", &cfg).unwrap();
 		let (indices, sched) = build_schedule(&g);
 
 		let pos_of = |wsn: &str| {
@@ -557,9 +575,7 @@ mod tests {
 	#[test]
 	fn selected_workspace_pulls_in_transitive_deps() {
 		let cfg = config(&[("build", task(&["^build"]))]);
-		let g =
-			build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["top"])))
-				.unwrap();
+		let g = graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["top"]))).unwrap();
 		let order = dry_run_order(&g);
 
 		let names: Vec<&str> = order.iter().map(|n| n.workspace_name.as_str()).collect();
@@ -572,9 +588,7 @@ mod tests {
 	#[test]
 	fn selection_excludes_workspaces_that_depend_on_the_match() {
 		let cfg = config(&[("build", task(&["^build"]))]);
-		let g =
-			build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["mid"])))
-				.unwrap();
+		let g = graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["mid"]))).unwrap();
 		let names: Vec<&str> = dry_run_order(&g)
 			.iter()
 			.map(|n| n.workspace_name.as_str())
@@ -591,13 +605,7 @@ mod tests {
 			ws("app", &["left", "right"], &[("build", "build app")]),
 		];
 		let cfg = config(&[("build", task(&["^build"]))]);
-		let g = build_execution_graph_selected(
-			&workspaces,
-			&["build"],
-			&cfg,
-			Some(&selection(&["app"])),
-		)
-		.unwrap();
+		let g = graph_selected(&workspaces, &["build"], &cfg, Some(&selection(&["app"]))).unwrap();
 		let order = dry_run_order(&g);
 
 		assert_eq!(order.len(), 4, "the shared dependency is collected once");
@@ -616,9 +624,7 @@ mod tests {
 	#[test]
 	fn selecting_a_leaf_pulls_in_nothing() {
 		let cfg = config(&[("build", task(&["^build"]))]);
-		let g =
-			build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["base"])))
-				.unwrap();
+		let g = graph_selected(&chain(), &["build"], &cfg, Some(&selection(&["base"]))).unwrap();
 		let order = dry_run_order(&g);
 
 		assert_eq!(order.len(), 1);
@@ -629,8 +635,7 @@ mod tests {
 	#[test]
 	fn selecting_nothing_yields_an_empty_graph() {
 		let cfg = config(&[("build", task(&["^build"]))]);
-		let g = build_execution_graph_selected(&chain(), &["build"], &cfg, Some(&HashSet::new()))
-			.unwrap();
+		let g = graph_selected(&chain(), &["build"], &cfg, Some(&HashSet::new())).unwrap();
 		assert!(dry_run_order(&g).is_empty());
 	}
 
@@ -639,16 +644,13 @@ mod tests {
 		// test depends on build in its own workspace, and build on ^build.
 		let mut workspaces = chain();
 		for w in &mut workspaces {
-			w.commands.insert("test".to_string(), "test".to_string());
+			w.tasks.insert(
+				"test".to_string(),
+				WorkspaceTask::new("test", PipelineTask::default()),
+			);
 		}
 		let cfg = config(&[("build", task(&["^build"])), ("test", task(&["build"]))]);
-		let g = build_execution_graph_selected(
-			&workspaces,
-			&["test"],
-			&cfg,
-			Some(&selection(&["top"])),
-		)
-		.unwrap();
+		let g = graph_selected(&workspaces, &["test"], &cfg, Some(&selection(&["top"]))).unwrap();
 		let order = dry_run_order(&g);
 
 		let labels: Vec<String> = order
@@ -663,42 +665,32 @@ mod tests {
 	}
 
 	#[test]
-	fn a_manual_workspace_outside_the_selection_may_lack_the_task() {
-		let mut deps_only = ws("base", &[], &[("build", "build base")]);
-		deps_only.auto = false;
-		let mut app = ws(
-			"app",
-			&["base"],
-			&[("build", "build app"), ("serve", "serve")],
-		);
-		app.auto = false;
-		let workspaces = vec![deps_only, app];
-		let cfg = config(&[("build", task(&["^build"])), ("serve", task(&["build"]))]);
+	fn a_prerequisite_no_workspace_has_is_named() {
+		let workspaces = vec![ws("app", &[], &[("build", "b")])];
+		let cfg = config(&[("build", task(&["codegne"]))]);
+		let err = graph(&workspaces, "build", &cfg).unwrap_err().to_string();
+		assert!(err.contains("task 'build' depends on 'codegne'"), "{err}");
+	}
 
-		// Unfiltered, `serve` halts: base is manual and declares no serve command.
-		let err = build_execution_graph_multi(&workspaces, &["serve"], &cfg).unwrap_err();
-		assert!(format!("{err}").contains("base"));
-
-		// Selecting app asks base only for the build it depends on, which it has.
-		let g = build_execution_graph_selected(
-			&workspaces,
-			&["serve"],
-			&cfg,
-			Some(&selection(&["app"])),
-		)
-		.unwrap();
-		let labels: Vec<String> = dry_run_order(&g)
+	#[test]
+	fn a_task_only_some_workspaces_have_runs_in_those() {
+		let workspaces = vec![
+			ws("web", &[], &[("lint", "eslint")]),
+			ws("api", &[], &[("build", "go build")]),
+		];
+		let g = graph(&workspaces, "lint", &config(&[])).unwrap();
+		let labels: Vec<&str> = dry_run_order(&g)
 			.iter()
-			.map(|n| format!("{}:{}", n.workspace_name, n.task_name))
+			.map(|n| n.workspace_name.as_str())
 			.collect();
-		assert_eq!(labels, vec!["base:build", "app:build", "app:serve"]);
+		assert_eq!(labels, vec!["web"]);
 	}
 
 	#[test]
 	fn cycle_is_rejected() {
 		let workspaces = vec![ws("app", &[], &[("a", "x"), ("b", "y")])];
 		let cfg = config(&[("a", task(&["b"])), ("b", task(&["a"]))]);
-		let err = build_execution_graph(&workspaces, "a", &cfg).unwrap_err();
+		let err = graph(&workspaces, "a", &cfg).unwrap_err();
 		assert!(format!("{err}").contains("cycle"));
 	}
 
@@ -711,7 +703,7 @@ mod tests {
 			..Default::default()
 		};
 		let cfg = config(&[("dev", dev), ("build", task(&["dev"]))]);
-		let err = build_execution_graph(&workspaces, "build", &cfg).unwrap_err();
+		let err = graph(&workspaces, "build", &cfg).unwrap_err();
 		assert!(format!("{err}").contains("persistent"));
 	}
 
@@ -721,19 +713,17 @@ mod tests {
 			persistent: Some(true),
 			..Default::default()
 		};
-		let cfg = config(&[
-			("dev", dev),
-			("build", PipelineTask::default()),
-			// start depends on dev (a persistent dependency).
-			("start", task(&["dev"])),
-		]);
-
-		// A persistent root is detected directly.
-		assert!(includes_persistent_task(&["dev"], &cfg));
-		// A persistent dependency pulled in transitively is detected.
-		assert!(includes_persistent_task(&["start"], &cfg));
-		// A run with no persistent task anywhere in its closure is not.
-		assert!(!includes_persistent_task(&["build"], &cfg));
+		let workspaces = apply(
+			&[ws(
+				"app",
+				&[],
+				&[("dev", "vite"), ("build", "tsc"), ("start", "node .")],
+			)],
+			&config(&[("dev", dev), ("start", task(&["dev"]))]),
+		);
+		assert!(includes_persistent_task(&["dev"], &workspaces));
+		assert!(includes_persistent_task(&["start"], &workspaces));
+		assert!(!includes_persistent_task(&["build"], &workspaces));
 	}
 
 	#[test]
@@ -741,7 +731,7 @@ mod tests {
 		// a -> b (b depends on a).
 		let workspaces = vec![ws("app", &[], &[("a", "x"), ("b", "y")])];
 		let cfg = config(&[("a", PipelineTask::default()), ("b", task(&["a"]))]);
-		let g = build_execution_graph(&workspaces, "b", &cfg).unwrap();
+		let g = graph(&workspaces, "b", &cfg).unwrap();
 		let (indices, sched) = build_schedule(&g);
 
 		let pos = |t: &str| {
@@ -773,7 +763,7 @@ mod tests {
 		};
 		let codegen = PipelineTask::default();
 		let cfg = config(&[("build", build), ("codegen", codegen)]);
-		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+		let graph = graph(&workspaces, "build", &cfg).unwrap();
 
 		let dump = dump_graph(&graph);
 		let order: Vec<&str> = dump.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -791,7 +781,7 @@ mod tests {
 			..Default::default()
 		};
 		let cfg = config(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+		let graph = graph(&workspaces, "build", &cfg).unwrap();
 
 		let dump = dump_graph(&graph);
 		assert_eq!(
@@ -813,7 +803,7 @@ mod tests {
 			..Default::default()
 		};
 		let cfg = config(&[("build", build), ("codegen", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+		let graph = graph(&workspaces, "build", &cfg).unwrap();
 
 		let dump = dump_graph(&graph);
 		assert_eq!(dump.edges.len(), 1);
@@ -833,7 +823,7 @@ mod tests {
 			..Default::default()
 		};
 		let cfg = config(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &cfg).unwrap();
+		let graph = graph(&workspaces, "build", &cfg).unwrap();
 
 		let dump = dump_graph(&graph);
 		let pairs: Vec<(&str, &str)> = dump
@@ -860,7 +850,7 @@ mod tests {
 			..Default::default()
 		};
 		let cfg = config(&[("dev", dev)]);
-		let graph = build_execution_graph(&workspaces, "dev", &cfg).unwrap();
+		let graph = graph(&workspaces, "dev", &cfg).unwrap();
 
 		let value = serde_json::to_value(dump_graph(&graph)).unwrap();
 		assert_eq!(

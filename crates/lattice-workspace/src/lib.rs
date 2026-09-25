@@ -1,44 +1,33 @@
-//! Workspace discovery and task-driver resolution.
+//! Workspace discovery: which directories are workspaces, which tool runs
+//! each one's tasks, what those tasks are, and which workspaces depend on
+//! which.
 //!
-//! Lattice resolves the task *driver* (the tool that runs tasks) for each
-//! workspace from three kinds of evidence:
-//!
-//! * (a) a declaration in `lattice.json` `engines`;
-//! * (b) a dev-authored native declaration file (`packageManager`,
-//!   `.tool-versions`, `.nvmrc`, `rust-toolchain.toml`, `./gradlew`, …);
-//! * (c) a tool-unique lockfile or artifact (`bun.lockb`, `pnpm-lock.yaml`,
-//!   `Cargo.lock`, `poetry.lock`, …).
-//!
-//! Role rank decides first, and the kind of evidence only breaks a tie. Every
-//! candidate's [`Role`] is ranked, the candidates below the highest rank are
-//! dropped, and a declaration then picks the winner among what is left. So a
-//! declaration does not beat a higher-ranked tool: a workspace that declares
-//! `pnpm` and holds a `turbo.json` resolves to `turbo`.
-//!
-//! With no candidate left, or several of equal rank and no single declaration
-//! among them, resolution stops and asks ([`AmbiguityError`]). A bare generic
-//! ecosystem marker (a lone `package.json`, `pom.xml`, …) is not enough on its
-//! own, and neither is a pure runtime, which cannot drive a named task.
-//!
-//! Tools carry one or more [`Role`]s. Tools with *different* driving roles
-//! compose into a stack (a node runtime plus a pnpm package-manager); only tools
-//! competing for the *same* driving role are a conflict. A tool can fill more
-//! than one role — deno and bun are runtimes as well as a task runner and a
-//! package manager — in which case the highest-ranked role is the one it drives
-//! with.
-//!
-//! Once a driver is resolved, [`dependency_bin_dirs`] says where the tools the
-//! project installed for itself live, so a task can find them the way a package
-//! manager's own script runner would.
+//! [`members`] finds the directories, from the repo's own workspace files plus
+//! `lattice.json`. [`detect_driver`] picks the tool for each from the evidence
+//! its files hold — a declaration in `overrides` first, then role (a task runner
+//! over a package manager over a build tool), then how deliberate the evidence
+//! is (a `packageManager` field over a lockfile over a manifest). [`tasks`]
+//! lists what that tool can run there, and [`manifest`] reads the dependencies
+//! that order the workspaces.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use indexmap::IndexMap;
-use lattice_config::{closest_field, EngineMap, LatticeConfig};
+use lattice_config::{
+	builtin_task_defaults, closest_field, resolve_engines, EngineMap, LatticeConfig, PipelineTask,
+	WorkspaceOverride, NO_DRIVER,
+};
 
+pub mod manifest;
+pub mod members;
+mod read;
 pub mod scan;
+pub mod tasks;
 pub mod toolchain;
+
+pub use read::rel_path;
 
 /// The kind of job a tool does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -392,29 +381,31 @@ impl DriverRegistry {
 	}
 }
 
-/// How a driver was selected (which rung of the evidence ladder).
+/// Why a driver was chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Evidence {
-	/// Declared in `lattice.json` `engines` (the escape hatch).
+	/// Named by `driver` in an override.
 	Declaration,
-	/// A dev-authored native declaration file (carries a description).
+	/// A file a developer writes to say which tool they use: `packageManager`,
+	/// `.tool-versions`, a wrapper script, a `[tool.poetry]` table.
 	NativeFile(String),
-	/// A tool-unique lockfile/artifact (carries the file name).
+	/// A lockfile or artifact only one tool produces.
 	Lockfile(String),
+	/// A manifest only one tool reads, such as `Cargo.toml` or `go.mod`.
+	Manifest(String),
 }
 
 impl Evidence {
-	/// Precedence rank: declaration beats native file beats lockfile.
 	fn rank(&self) -> u8 {
 		match self {
-			Evidence::Declaration => 2,
-			Evidence::NativeFile(_) => 1,
-			Evidence::Lockfile(_) => 0,
+			Evidence::Declaration => 3,
+			Evidence::NativeFile(_) => 2,
+			Evidence::Lockfile(_) => 1,
+			Evidence::Manifest(_) => 0,
 		}
 	}
 }
 
-/// The detected/declared task driver for a workspace.
 #[derive(Debug, Clone)]
 pub struct DriverResolution {
 	pub tool: String,
@@ -422,133 +413,100 @@ pub struct DriverResolution {
 	pub via: Evidence,
 }
 
-/// A discovered workspace with its engines, driver, and commands resolved.
+/// Where a workspace's task came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskOrigin {
+	/// The workspace's own files or its tool's verbs; carries the file or tool.
+	Native(String),
+	/// A command written in `overrides`.
+	Config,
+}
+
+/// One task as it runs in one workspace: the command, and every layer of
+/// settings — Lattice's defaults, the root `tasks` map, the workspace's
+/// override — already stacked.
+#[derive(Debug, Clone)]
+pub struct WorkspaceTask {
+	pub command: String,
+	pub config: PipelineTask,
+	pub origin: TaskOrigin,
+	args_after_separator: bool,
+}
+
+impl WorkspaceTask {
+	/// A task written out in full, as an override would.
+	pub fn new(command: impl Into<String>, config: PipelineTask) -> Self {
+		WorkspaceTask {
+			command: command.into(),
+			config,
+			origin: TaskOrigin::Config,
+			args_after_separator: false,
+		}
+	}
+
+	/// The command with `args` passed through to it.
+	pub fn command_with_args(&self, args: &[String]) -> String {
+		tasks::append_args(&self.command, args, self.args_after_separator)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct Workspace {
 	pub name: String,
 	pub path: PathBuf,
-	pub auto: bool,
+	/// Repo-relative, forward-slashed, `"."` for the root.
+	pub rel_path: String,
+	/// Every workspace this one depends on, inferred and declared.
 	pub depends_on: Vec<String>,
-	/// Resolved (root-merged) engine constraints.
+	/// The subset of [`Workspace::depends_on`] that came from manifests.
+	pub inferred_deps: Vec<String>,
+	/// Root engines with the workspace's own layered on top.
 	pub engines: EngineMap,
-	/// The detected/declared task driver (`None` for pure manual scripts).
 	pub driver: Option<DriverResolution>,
-	/// Resolved `task_name -> shell command`.
-	pub commands: IndexMap<String, String>,
+	pub tasks: IndexMap<String, WorkspaceTask>,
+	/// Something discovery could not read, said once per run.
+	pub problems: Vec<String>,
 }
 
 impl Workspace {
+	/// A workspace with no driver and no tasks, for a caller that builds one by
+	/// hand rather than discovering it.
+	pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+		let name = name.into();
+		Workspace {
+			rel_path: name.clone(),
+			name,
+			path: path.into(),
+			depends_on: Vec::new(),
+			inferred_deps: Vec::new(),
+			engines: EngineMap::new(),
+			driver: None,
+			tasks: IndexMap::new(),
+			problems: Vec::new(),
+		}
+	}
+
+	pub fn with_task(mut self, name: &str, command: &str, config: PipelineTask) -> Self {
+		self.tasks
+			.insert(name.to_string(), WorkspaceTask::new(command, config));
+		self
+	}
+
+	pub fn with_deps(mut self, deps: &[&str]) -> Self {
+		self.depends_on = deps.iter().map(|d| d.to_string()).collect();
+		self
+	}
+
+	pub fn task(&self, name: &str) -> Option<&WorkspaceTask> {
+		self.tasks.get(name)
+	}
+
 	pub fn command_for(&self, task: &str) -> Option<&str> {
-		self.commands.get(task).map(|s| s.as_str())
+		self.tasks.get(task).map(|t| t.command.as_str())
 	}
 }
 
-/// One workspace whose manifest declares a script map without the task that was
-/// asked for.
-struct MissingScript {
-	workspace: String,
-	/// The manifest's own word for its script map: `scripts`, or `tasks` for deno.
-	section: &'static str,
-	task: String,
-	/// The declared script name closest to `task`, when one is close enough to be
-	/// a plausible typo.
-	nearest: Option<String>,
-}
-
-impl MissingScript {
-	fn describe(&self) -> String {
-		format!(
-			"{} declares {} but no \"{}\"",
-			self.workspace, self.section, self.task
-		)
-	}
-}
-
-const DECLARE_IT: &str = "Declare it in the workspace's manifest, or under \"scripts\" in \
-                          lattice.json, if the task should run there";
-
-/// What the developer should hear once about the tasks discovery dropped from
-/// `tasks`: one line covering every workspace whose manifest declares a script
-/// map that does not hold the task, and one per workspace whose manifest could
-/// not be read. Empty when nothing was dropped.
-///
-/// A front end prints these through its warn path. A manifest with no script map
-/// at all stays silent: a types-only package that declares nothing is a complete,
-/// deliberate config, not a mistake. A manifest that declares scripts and misses
-/// the one being run is the case worth a word, because a typo looks exactly like
-/// it.
-pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> Vec<String> {
-	let mut missing: Vec<MissingScript> = Vec::new();
-	let mut unreadable: Vec<String> = Vec::new();
-
-	for ws in workspaces.iter().filter(|ws| ws.auto) {
-		let Some(tool) = ws.driver.as_ref().map(|d| d.tool.as_str()) else {
-			continue;
-		};
-		// `None` is a driver that takes the task name on its command line, so there
-		// is no manifest to have left anything out of.
-		let Some((_, section)) = manifest_location(&ws.path, tool) else {
-			continue;
-		};
-		let declared = match manifest_scripts(&ws.path, tool) {
-			ManifestScripts::Declares(names) => names,
-			ManifestScripts::Unreadable(reason) => {
-				unreadable.push(format!(
-					"{}: {reason}, so every task it would have named was skipped",
-					ws.name
-				));
-				continue;
-			}
-			ManifestScripts::NoSection | ManifestScripts::DirectInvoke => continue,
-		};
-		for task in tasks {
-			if ws.commands.contains_key(task.as_str()) {
-				continue;
-			}
-			missing.push(MissingScript {
-				workspace: ws.name.clone(),
-				section,
-				task: task.clone(),
-				nearest: closest_field(task, &declared).map(str::to_string),
-			});
-		}
-	}
-
-	let mut notes = Vec::new();
-	match missing.as_slice() {
-		[] => {}
-		[one] => {
-			let advice = match &one.nearest {
-				Some(near) => format!("Did you mean \"{near}\"?"),
-				None => DECLARE_IT.to_string(),
-			};
-			notes.push(format!(
-				"{}, so the task was skipped. {advice}",
-				one.describe()
-			));
-		}
-		several => {
-			let listed: Vec<String> = several
-				.iter()
-				.map(|m| match &m.nearest {
-					Some(near) => format!("{} (did you mean \"{near}\"?)", m.describe()),
-					None => m.describe(),
-				})
-				.collect();
-			notes.push(format!(
-				"some tasks were skipped: {}. Declare each in the workspace's manifest, or \
-				 under \"scripts\" in lattice.json, if the task should run there",
-				listed.join("; ")
-			));
-		}
-	}
-	notes.extend(unreadable);
-	notes
-}
-
-/// Raised when Lattice cannot unambiguously pick a task driver: either two
-/// tools compete for the same role, or a workspace shows only a bare generic
-/// marker with no tool-unique signal. Renders a copy-pasteable fix.
+/// Lattice could not tell which tool runs a workspace's tasks.
 #[derive(Debug, Clone)]
 pub struct AmbiguityError {
 	pub workspace: String,
@@ -558,44 +516,44 @@ pub struct AmbiguityError {
 
 impl std::fmt::Display for AmbiguityError {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		writeln!(
-			f,
-			"workspace '{}' has an ambiguous or undeclared driver.",
-			self.workspace
-		)?;
 		if self.candidates.is_empty() {
 			writeln!(
 				f,
-				"Lattice detected no driver. The directory holds no lockfile, no \
-                 wrapper, and no native declaration."
+				"Lattice cannot tell what runs the tasks in workspace '{}': it has no lockfile, \
+				 wrapper or manifest Lattice recognizes.",
+				self.workspace
 			)?;
 		} else {
-			writeln!(f, "Candidate drivers: {}", self.candidates.join(", "))?;
+			writeln!(
+				f,
+				"Lattice cannot tell which of {} runs the tasks in workspace '{}': there is no \
+				 lockfile or packageManager field to go by.",
+				self.candidates.join(", "),
+				self.workspace
+			)?;
 		}
-		write!(
-			f,
-			"Declare the driver in lattice.json, under this workspace:\n  {}",
-			self.suggested_fix
-		)
+		write!(f, "Say which in lattice.json:\n  {}", self.suggested_fix)
 	}
 }
 
 impl std::error::Error for AmbiguityError {}
 
-/// Generic ecosystem markers: files that name a language but not a tool. Each
-/// maps to the tools that could plausibly drive such a workspace; the first
-/// marker found wins.
-static ECOSYSTEM_MARKERS: &[(&str, &[&str])] = &[
-	("package.json", &["pnpm", "npm", "yarn", "bun"]),
+/// Files that name a language but not always a tool, and the tools that read
+/// each. One candidate means the file is enough to pick the driver on its own.
+pub(crate) static ECOSYSTEM_MARKERS: &[(&str, &[&str])] = &[
+	("package.json", &["npm", "pnpm", "yarn", "bun"]),
 	("Cargo.toml", &["cargo"]),
 	("go.mod", &["go"]),
 	("pyproject.toml", &["uv", "poetry", "pdm", "pipenv"]),
-	("requirements.txt", &["pip", "uv", "poetry"]),
-	("setup.py", &["pip", "uv", "poetry"]),
-	("Gemfile", &["bundler", "rake"]),
+	("Pipfile", &["pipenv"]),
+	("requirements.txt", &["pip"]),
+	("setup.py", &["pip"]),
+	("Gemfile", &["bundler"]),
 	("pom.xml", &["maven"]),
 	("build.gradle", &["gradle"]),
 	("build.gradle.kts", &["gradle"]),
+	("settings.gradle", &["gradle"]),
+	("settings.gradle.kts", &["gradle"]),
 	("composer.json", &["composer"]),
 	("mix.exs", &["mix"]),
 	("pubspec.yaml", &["dart"]),
@@ -604,123 +562,326 @@ static ECOSYSTEM_MARKERS: &[(&str, &[&str])] = &[
 	("cabal.project", &["cabal"]),
 ];
 
-/// Extensions of .NET project files, which carry a project name rather than a
-/// fixed one, so they are matched by extension instead of by name.
-const DOTNET_PROJECT_EXTS: &[&str] = &["sln", "csproj", "fsproj", "vbproj"];
+/// Extensions of project files that carry the project's name rather than a
+/// fixed one, so they are matched by extension.
+const NAMED_PROJECT_EXTS: &[(&str, &str)] = &[
+	("sln", "dotnet"),
+	("slnx", "dotnet"),
+	("csproj", "dotnet"),
+	("fsproj", "dotnet"),
+	("vbproj", "dotnet"),
+	("cabal", "cabal"),
+];
 
-/// The plausible ecosystem package-managers/build-tools for the generic marker
-/// present in `path`, if any. Used only to populate an [`AmbiguityError`].
 fn ecosystem_candidates(path: &Path) -> Vec<&'static str> {
 	for (marker, candidates) in ECOSYSTEM_MARKERS {
 		if path.join(marker).exists() {
 			return candidates.to_vec();
 		}
 	}
-	if has_dotnet_project(path) {
-		return vec!["dotnet", "nuget"];
-	}
-	vec![]
+	named_project_tool(path).into_iter().collect()
 }
 
-fn has_dotnet_project(path: &Path) -> bool {
-	let Ok(entries) = std::fs::read_dir(path) else {
-		return false;
-	};
-	entries.flatten().any(|e| {
-		e.path()
-			.extension()
-			.and_then(|x| x.to_str())
-			.map(|ext| DOTNET_PROJECT_EXTS.contains(&ext))
-			.unwrap_or(false)
+fn named_project_tool(path: &Path) -> Option<&'static str> {
+	let entries = std::fs::read_dir(path).ok()?;
+	let mut found: Vec<&'static str> = entries
+		.flatten()
+		.filter_map(|e| {
+			let ext = e.path().extension()?.to_str()?.to_string();
+			NAMED_PROJECT_EXTS
+				.iter()
+				.find(|(x, _)| *x == ext)
+				.map(|(_, tool)| *tool)
+		})
+		.collect();
+	found.sort_unstable();
+	found.into_iter().next()
+}
+
+fn override_fix(workspace: &str, tool: &str) -> String {
+	format!("\"overrides\": {{ \"{workspace}\": {{ \"driver\": \"{tool}\" }} }}")
+}
+
+fn add_candidate(cands: &mut IndexMap<String, Evidence>, tool: &str, ev: Evidence) {
+	match cands.get(tool) {
+		Some(existing) if existing.rank() >= ev.rank() => {}
+		_ => {
+			cands.insert(tool.to_string(), ev);
+		}
+	}
+}
+
+/// The evidence one directory holds on its own.
+fn direct_evidence(path: &Path) -> IndexMap<String, Evidence> {
+	let mut cands: IndexMap<String, Evidence> = IndexMap::new();
+
+	if path.join(".nvmrc").exists() {
+		add_candidate(&mut cands, "node", Evidence::NativeFile(".nvmrc".into()));
+	}
+	if let Some(pm) = read_package_manager_field(path) {
+		if DriverRegistry::get(&pm).is_some() {
+			add_candidate(
+				&mut cands,
+				&pm,
+				Evidence::NativeFile("package.json packageManager".into()),
+			);
+		}
+	}
+	for tool in read_tool_versions(path) {
+		if DriverRegistry::get(&tool).is_some() {
+			add_candidate(
+				&mut cands,
+				&tool,
+				Evidence::NativeFile(".tool-versions".into()),
+			);
+		}
+	}
+	if path.join("rust-toolchain.toml").exists() || path.join("rust-toolchain").exists() {
+		add_candidate(
+			&mut cands,
+			"cargo",
+			Evidence::NativeFile("rust-toolchain".into()),
+		);
+	}
+	if path.join(".python-version").exists() {
+		add_candidate(
+			&mut cands,
+			"python",
+			Evidence::NativeFile(".python-version".into()),
+		);
+	}
+	if let Some(pyproject) = read::toml(&path.join("pyproject.toml")) {
+		for tool in ["poetry", "pdm", "uv"] {
+			if read::toml_path(&pyproject, &["tool", tool]).is_some() {
+				add_candidate(
+					&mut cands,
+					tool,
+					Evidence::NativeFile(format!("pyproject.toml [tool.{tool}]")),
+				);
+			}
+		}
+	}
+	if path.join(".ruby-version").exists() || has_gemfile_ruby_directive(path) {
+		add_candidate(
+			&mut cands,
+			"ruby",
+			Evidence::NativeFile("ruby-version".into()),
+		);
+	}
+	if path.join(".java-version").exists() {
+		add_candidate(
+			&mut cands,
+			"java",
+			Evidence::NativeFile(".java-version".into()),
+		);
+	}
+	if go_mod_has_toolchain(path) {
+		add_candidate(
+			&mut cands,
+			"go",
+			Evidence::NativeFile("go.mod toolchain".into()),
+		);
+	}
+	for (wrapper, tool) in [("gradlew", "gradle"), ("mvnw", "maven")] {
+		if path.join(wrapper).exists() {
+			add_candidate(&mut cands, tool, Evidence::NativeFile(wrapper.into()));
+		}
+	}
+	if path.join("deno.json").exists() || path.join("deno.jsonc").exists() {
+		add_candidate(&mut cands, "deno", Evidence::NativeFile("deno.json".into()));
+	}
+
+	for spec in DRIVERS {
+		for fp in spec.fingerprint {
+			if is_native_fingerprint(fp) {
+				continue;
+			}
+			if path.join(fp).exists() {
+				add_candidate(&mut cands, spec.tool, Evidence::Lockfile((*fp).to_string()));
+			}
+		}
+	}
+	cands
+}
+
+fn top_rank(cands: &IndexMap<String, Evidence>) -> u8 {
+	cands
+		.keys()
+		.filter_map(|t| DriverRegistry::get(t))
+		.map(|s| s.drive_role().drive_rank())
+		.max()
+		.unwrap_or(0)
+}
+
+/// The single tool that runs `path`'s tasks, or why there is not one.
+///
+/// Evidence in the directory decides first, by role and then by how deliberate
+/// it is. A workspace inside a JS or Python monorepo has no lockfile of its own
+/// — the package manager wrote one at the root — so failing that, the nearest
+/// directory above it that has one decides, among the tools that read this
+/// workspace's manifest. Failing that, a manifest only one tool reads
+/// (`Cargo.toml`, `go.mod`, `pom.xml`, a `build.gradle`) is enough.
+pub fn detect_driver(
+	root: &Path,
+	path: &Path,
+	name: &str,
+) -> Result<DriverResolution, AmbiguityError> {
+	let cands = direct_evidence(path);
+	let rank = top_rank(&cands);
+	if rank > Role::Runtime.drive_rank() {
+		return choose(name, &cands, rank);
+	}
+
+	let ecosystem = ecosystem_candidates(path);
+	if ecosystem.len() > 1 {
+		for ancestor in path.ancestors().skip(1) {
+			if !ancestor.starts_with(root) {
+				break;
+			}
+			let above: IndexMap<String, Evidence> = direct_evidence(ancestor)
+				.into_iter()
+				.filter(|(tool, _)| ecosystem.contains(&tool.as_str()))
+				.map(|(tool, ev)| {
+					let rel = read::rel_path(path, ancestor);
+					let described = match ev {
+						Evidence::Lockfile(f) => Evidence::Lockfile(format!("{rel}/{f}")),
+						Evidence::NativeFile(f) => Evidence::NativeFile(format!("{rel}/{f}")),
+						other => other,
+					};
+					(tool, described)
+				})
+				.collect();
+			if !above.is_empty() {
+				let rank = top_rank(&above);
+				return choose(name, &above, rank);
+			}
+			if ancestor == root {
+				break;
+			}
+		}
+	}
+
+	match ecosystem.as_slice() {
+		[tool] => {
+			let spec = DriverRegistry::get(tool).expect("marker tools are registered");
+			let marker = ECOSYSTEM_MARKERS
+				.iter()
+				.find(|(m, c)| c == &[*tool] && path.join(m).exists())
+				.map(|(m, _)| m.to_string())
+				.unwrap_or_else(|| format!("{tool} project file"));
+			Ok(DriverResolution {
+				tool: tool.to_string(),
+				role: spec.drive_role(),
+				via: Evidence::Manifest(marker),
+			})
+		}
+		[] => {
+			// A runtime pin with nothing else says which language, not which tool.
+			Err(AmbiguityError {
+				workspace: name.to_string(),
+				candidates: Vec::new(),
+				suggested_fix: format!(
+					"\"overrides\": {{ \"{name}\": {{ \"tasks\": {{ \"build\": \"<command>\" }} }} }}"
+				),
+			})
+		}
+		several => {
+			let candidates: Vec<String> = several.iter().map(|t| t.to_string()).collect();
+			Err(AmbiguityError {
+				workspace: name.to_string(),
+				suggested_fix: override_fix(name, &candidates[0]),
+				candidates,
+			})
+		}
+	}
+}
+
+fn choose(
+	name: &str,
+	cands: &IndexMap<String, Evidence>,
+	rank: u8,
+) -> Result<DriverResolution, AmbiguityError> {
+	let in_top: Vec<(&String, &Evidence)> = cands
+		.iter()
+		.filter(|(t, _)| {
+			DriverRegistry::get(t).is_some_and(|s| s.drive_role().drive_rank() == rank)
+		})
+		.collect();
+	let best = in_top.iter().map(|(_, ev)| ev.rank()).max().unwrap_or(0);
+	let strongest: Vec<&(&String, &Evidence)> =
+		in_top.iter().filter(|(_, ev)| ev.rank() == best).collect();
+	if strongest.len() != 1 {
+		let mut candidates: Vec<String> = in_top.iter().map(|(t, _)| (*t).clone()).collect();
+		candidates.sort();
+		return Err(AmbiguityError {
+			workspace: name.to_string(),
+			suggested_fix: override_fix(name, &candidates[0]),
+			candidates,
+		});
+	}
+	let (tool, via) = strongest[0];
+	let spec = DriverRegistry::get(tool).expect("candidate is a known tool");
+	Ok(DriverResolution {
+		tool: (*tool).clone(),
+		role: spec.drive_role(),
+		via: (*via).clone(),
 	})
 }
 
-/// Build a copy-pasteable `"engines"` snippet naming `tool`.
-fn suggested_fix_for(tool: &str) -> String {
-	format!("\"engines\": {{ \"{tool}\": \">=0.0.0\" }}")
+/// Fingerprints [`direct_evidence`] reads as native files rather than as
+/// lockfiles, so the sweep does not count them twice.
+fn is_native_fingerprint(fp: &str) -> bool {
+	matches!(
+		fp,
+		".nvmrc"
+			| "rust-toolchain.toml"
+			| "rust-toolchain"
+			| ".python-version"
+			| ".ruby-version"
+			| ".java-version"
+			| "gradlew"
+			| "mvnw" | "deno.json"
+			| "deno.jsonc"
+	)
 }
 
-/// Whether declaring `tool` would actually resolve an ambiguity error. A
-/// runtime cannot drive named tasks, so suggesting one reproduces the error.
-fn can_drive(tool: &str) -> bool {
-	DriverRegistry::get(tool)
-		.map(|spec| spec.drive_role().drive_rank() > Role::Runtime.drive_rank())
-		.unwrap_or(false)
+fn read_package_manager_field(path: &Path) -> Option<String> {
+	let json = read::json(&path.join("package.json"))?;
+	let pm = json.get("packageManager")?.as_str()?;
+	Some(pm.split('@').next().unwrap_or(pm).to_string())
 }
 
-/// The fix to offer when no candidate tool could drive tasks: declaring the
-/// commands outright is the only thing that resolves it.
-fn suggested_scripts_fix() -> String {
-	"\"auto\": false, \"scripts\": { \"build\": \"<command>\" }".to_string()
-}
-
-/// What a workspace's manifest says about the tasks its driver can run.
-enum ManifestScripts {
-	/// The driver takes a task name straight on its command line; there is no
-	/// manifest to consult.
-	DirectInvoke,
-	/// The manifest declares these script names, and nothing else runs.
-	Declares(Vec<String>),
-	/// There is no script map to read — no manifest, or a manifest that declares
-	/// no `scripts`/`tasks` at all. Nothing runs, and nothing is missing either.
-	NoSection,
-	/// The manifest is there and Lattice could not read it. Nothing can be
-	/// inferred from a file that will not parse.
-	Unreadable(String),
-}
-
-/// The manifest file a tool reads its scripts from, and that file's own key for
-/// them. `None` for a driver that takes the task name on its command line.
-fn manifest_location(path: &Path, tool: &str) -> Option<(&'static str, &'static str)> {
-	match tool {
-		"npm" | "pnpm" | "yarn" | "bun" => Some(("package.json", "scripts")),
-		"deno" => {
-			if path.join("deno.jsonc").exists() {
-				Some(("deno.jsonc", "tasks"))
-			} else {
-				Some(("deno.json", "tasks"))
+fn read_tool_versions(path: &Path) -> Vec<String> {
+	let mut names = Vec::new();
+	if let Some(raw) = read::text(&path.join(".tool-versions")) {
+		for line in raw.lines() {
+			let line = line.trim();
+			if line.is_empty() || line.starts_with('#') {
+				continue;
+			}
+			if let Some(tool) = line.split_whitespace().next() {
+				names.push(tool.to_string());
 			}
 		}
-		_ => None,
 	}
+	for f in ["mise.toml", ".mise.toml"] {
+		if let Some(tools) = read::toml(&path.join(f))
+			.and_then(|m| m.get("tools").and_then(|t| t.as_table()).cloned())
+		{
+			names.extend(tools.keys().cloned());
+		}
+	}
+	names
 }
 
-/// Read the `scripts` (JS) / `tasks` (deno) map keys from a workspace manifest.
-fn manifest_scripts(path: &Path, tool: &str) -> ManifestScripts {
-	let Some((file, key)) = manifest_location(path, tool) else {
-		return ManifestScripts::DirectInvoke;
-	};
-	let manifest = path.join(file);
-	let raw = match std::fs::read_to_string(&manifest) {
-		Ok(raw) => raw,
-		Err(err) if manifest.exists() => {
-			return ManifestScripts::Unreadable(format!("{file} could not be read: {err}"));
-		}
-		// A manifest-driven workspace without the manifest declares no scripts,
-		// which is not the same as being free to invent one.
-		Err(_) => return ManifestScripts::NoSection,
-	};
-	// Deno reads its config as JSONC; npm does not, and neither do we for it.
-	let text = if key == "tasks" {
-		strip_json_comments(&raw)
-	} else {
-		raw
-	};
-	let json: serde_json::Value = match serde_json::from_str(&text) {
-		Ok(json) => json,
-		Err(err) => {
-			return ManifestScripts::Unreadable(format!("{file} could not be parsed: {err}"));
-		}
-	};
-	match json.get(key) {
-		None => ManifestScripts::NoSection,
-		Some(value) => match value.as_object() {
-			Some(map) => ManifestScripts::Declares(map.keys().cloned().collect()),
-			None => {
-				ManifestScripts::Unreadable(format!("{file} has a \"{key}\" that is not an object"))
-			}
-		},
-	}
+fn has_gemfile_ruby_directive(path: &Path) -> bool {
+	read::text(&path.join("Gemfile"))
+		.is_some_and(|s| s.lines().any(|l| l.trim_start().starts_with("ruby ")))
+}
+
+fn go_mod_has_toolchain(path: &Path) -> bool {
+	read::text(&path.join("go.mod"))
+		.is_some_and(|s| s.lines().any(|l| l.trim_start().starts_with("toolchain ")))
 }
 
 /// Drop `//` line and `/* */` block comments from JSONC text, leaving string
@@ -762,7 +923,6 @@ pub(crate) fn strip_json_comments(raw: &str) -> String {
 					if prev == '*' && c == '/' {
 						break;
 					}
-					// Newlines are kept so a parse error still names the right line.
 					if c == '\n' {
 						out.push(c);
 					}
@@ -775,334 +935,13 @@ pub(crate) fn strip_json_comments(raw: &str) -> String {
 	out
 }
 
-/// Insert a candidate tool with its evidence, keeping the highest-ranked
-/// evidence per tool (declaration > native file > lockfile).
-fn add_candidate(cands: &mut IndexMap<String, Evidence>, tool: &str, ev: Evidence) {
-	match cands.get(tool) {
-		Some(existing) if existing.rank() >= ev.rank() => {}
-		_ => {
-			cands.insert(tool.to_string(), ev);
-		}
-	}
-}
-
-/// Walk the evidence ladder for one workspace directory and its declared
-/// engines, returning the single task driver or an [`AmbiguityError`].
-///
-/// (The `workspace` field of any error is set to the directory's file name;
-/// [`discover_workspaces`] overwrites it with the configured name.)
-pub fn detect_drivers(
-	path: &Path,
-	declared: &EngineMap,
-) -> Result<DriverResolution, AmbiguityError> {
-	let ws_name = path
-		.file_name()
-		.and_then(|n| n.to_str())
-		.unwrap_or("workspace")
-		.to_string();
-
-	let mut cands: IndexMap<String, Evidence> = IndexMap::new();
-
-	// (a) Declarations in lattice.json.
-	for name in declared.keys() {
-		if DriverRegistry::get(name).is_some() {
-			add_candidate(&mut cands, name, Evidence::Declaration);
-		}
-	}
-
-	// (b) Dev-authored native declaration files.
-	if path.join(".nvmrc").exists() {
-		add_candidate(&mut cands, "node", Evidence::NativeFile(".nvmrc".into()));
-	}
-	if let Some(pm) = read_package_manager_field(path) {
-		if DriverRegistry::get(&pm).is_some() {
-			add_candidate(
-				&mut cands,
-				&pm,
-				Evidence::NativeFile("package.json packageManager".into()),
-			);
-		}
-	}
-	for tool in read_tool_versions(path) {
-		if DriverRegistry::get(&tool).is_some() {
-			add_candidate(
-				&mut cands,
-				&tool,
-				Evidence::NativeFile(".tool-versions".into()),
-			);
-		}
-	}
-	if path.join("rust-toolchain.toml").exists() || path.join("rust-toolchain").exists() {
-		add_candidate(
-			&mut cands,
-			"cargo",
-			Evidence::NativeFile("rust-toolchain".into()),
-		);
-	}
-	if path.join(".python-version").exists() {
-		add_candidate(
-			&mut cands,
-			"python",
-			Evidence::NativeFile(".python-version".into()),
-		);
-	}
-	if path.join(".ruby-version").exists() || has_gemfile_ruby_directive(path) {
-		add_candidate(
-			&mut cands,
-			"ruby",
-			Evidence::NativeFile("ruby-version".into()),
-		);
-	}
-	if path.join(".java-version").exists() {
-		add_candidate(
-			&mut cands,
-			"java",
-			Evidence::NativeFile(".java-version".into()),
-		);
-	}
-	if go_mod_has_toolchain(path) {
-		add_candidate(
-			&mut cands,
-			"go",
-			Evidence::NativeFile("go.mod toolchain".into()),
-		);
-	}
-	if path.join("gradlew").exists() {
-		add_candidate(&mut cands, "gradle", Evidence::NativeFile("gradlew".into()));
-	}
-	if path.join("mvnw").exists() {
-		add_candidate(&mut cands, "maven", Evidence::NativeFile("mvnw".into()));
-	}
-	if path.join("deno.json").exists() || path.join("deno.jsonc").exists() {
-		add_candidate(&mut cands, "deno", Evidence::NativeFile("deno.json".into()));
-	}
-
-	// (c) Tool-unique lockfiles/artifacts.
-	for spec in DRIVERS {
-		for fp in spec.fingerprint {
-			// Skip the fingerprints already handled above as native files.
-			if is_native_fingerprint(fp) {
-				continue;
-			}
-			if path.join(fp).exists() {
-				add_candidate(&mut cands, spec.tool, Evidence::Lockfile((*fp).to_string()));
-			}
-		}
-	}
-
-	// (d) Resolve.
-	if cands.is_empty() {
-		return Err(bare_marker_error(&ws_name, path));
-	}
-
-	// Group by role; find the highest driving role present.
-	let mut top_rank = 0u8;
-	for ev_tool in cands.keys() {
-		if let Some(spec) = DriverRegistry::get(ev_tool) {
-			top_rank = top_rank.max(spec.drive_role().drive_rank());
-		}
-	}
-
-	// A pure runtime cannot drive named tasks, so this is still ambiguity.
-	if top_rank == Role::Runtime.drive_rank() {
-		return Err(bare_marker_error(&ws_name, path));
-	}
-
-	let in_top: Vec<(&String, &Evidence)> = cands
-		.iter()
-		.filter(|(t, _)| {
-			DriverRegistry::get(t)
-				.map(|s| s.drive_role().drive_rank() == top_rank)
-				.unwrap_or(false)
-		})
-		.collect();
-
-	let chosen = if in_top.len() == 1 {
-		in_top[0]
-	} else {
-		// Same-role conflict: a declaration disambiguates if exactly one exists.
-		let declared: Vec<_> = in_top
-			.iter()
-			.filter(|(_, ev)| matches!(**ev, Evidence::Declaration))
-			.copied()
-			.collect();
-		if declared.len() == 1 {
-			declared[0]
-		} else {
-			let mut candidates: Vec<String> = in_top.iter().map(|(t, _)| (*t).clone()).collect();
-			candidates.sort();
-			let fix = suggested_fix_for(&candidates[0]);
-			return Err(AmbiguityError {
-				workspace: ws_name,
-				candidates,
-				suggested_fix: fix,
-			});
-		}
-	};
-
-	let spec = DriverRegistry::get(chosen.0).expect("candidate is a known tool");
-	Ok(DriverResolution {
-		tool: chosen.0.clone(),
-		role: spec.drive_role(),
-		via: chosen.1.clone(),
-	})
-}
-
-fn bare_marker_error(ws_name: &str, path: &Path) -> AmbiguityError {
-	let candidates: Vec<String> = ecosystem_candidates(path)
-		.into_iter()
-		.map(String::from)
-		.collect();
-	let fix = candidates
-		.iter()
-		.find(|tool| can_drive(tool))
-		.map(|tool| suggested_fix_for(tool))
-		.unwrap_or_else(suggested_scripts_fix);
-	AmbiguityError {
-		workspace: ws_name.to_string(),
-		candidates,
-		suggested_fix: fix,
-	}
-}
-
-/// Fingerprints that are handled explicitly as native-declaration evidence
-/// (so the generic fingerprint sweep doesn't double-count them as lockfiles).
-fn is_native_fingerprint(fp: &str) -> bool {
-	matches!(
-		fp,
-		".nvmrc"
-			| "rust-toolchain.toml"
-			| "rust-toolchain"
-			| ".python-version"
-			| ".ruby-version"
-			| ".java-version"
-			| "gradlew"
-			| "mvnw" | "deno.json"
-			| "deno.jsonc"
-	)
-}
-
-fn read_package_manager_field(path: &Path) -> Option<String> {
-	let raw = std::fs::read_to_string(path.join("package.json")).ok()?;
-	let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
-	let pm = json.get("packageManager")?.as_str()?;
-	// Value looks like "pnpm@8.6.0" — take the name before '@'.
-	Some(pm.split('@').next().unwrap_or(pm).to_string())
-}
-
-fn read_tool_versions(path: &Path) -> Vec<String> {
-	let mut names = Vec::new();
-	// .tool-versions (asdf / mise): "node 20.11.1" per line.
-	if let Ok(raw) = std::fs::read_to_string(path.join(".tool-versions")) {
-		for line in raw.lines() {
-			let line = line.trim();
-			if line.is_empty() || line.starts_with('#') {
-				continue;
-			}
-			if let Some(tool) = line.split_whitespace().next() {
-				names.push(tool.to_string());
-			}
-		}
-	}
-	// mise.toml / .mise.toml: names appear under a [tools] table.
-	for f in ["mise.toml", ".mise.toml"] {
-		if let Ok(raw) = std::fs::read_to_string(path.join(f)) {
-			let mut in_tools = false;
-			for line in raw.lines() {
-				let t = line.trim();
-				if t.starts_with('[') {
-					in_tools = t.starts_with("[tools]");
-					continue;
-				}
-				if in_tools {
-					if let Some(key) = t.split('=').next() {
-						let key = key.trim().trim_matches('"');
-						if !key.is_empty() {
-							names.push(key.to_string());
-						}
-					}
-				}
-			}
-		}
-	}
-	names
-}
-
-fn has_gemfile_ruby_directive(path: &Path) -> bool {
-	std::fs::read_to_string(path.join("Gemfile"))
-		.map(|s| s.lines().any(|l| l.trim_start().starts_with("ruby ")))
-		.unwrap_or(false)
-}
-
-fn go_mod_has_toolchain(path: &Path) -> bool {
-	std::fs::read_to_string(path.join("go.mod"))
-		.map(|s| s.lines().any(|l| l.trim_start().starts_with("toolchain ")))
-		.unwrap_or(false)
-}
-
-/// Resolve one task's command for a workspace. For JS/deno drivers the task
-/// must exist in the manifest's `scripts`/`tasks` map; other drivers use the
-/// tool's invoke form directly.
-///
-/// A `persistent` task (dev server, watcher) is never fabricated for a
-/// direct-invoke driver — there is no universal `cargo dev`/`go dev`, so it runs
-/// only where the workspace explicitly declares it (an explicit `scripts` entry,
-/// applied before this is called, or a manifest script for JS/deno drivers).
-pub fn infer_task_command(
-	task: &str,
-	ws_driver: &DriverResolution,
-	path: &Path,
-	persistent: bool,
-) -> Option<String> {
-	let spec = DriverRegistry::get(&ws_driver.tool)?;
-	command_from_scripts(
-		&manifest_scripts(path, &ws_driver.tool),
-		spec,
-		task,
-		persistent,
-	)
-}
-
-/// [`infer_task_command`] against a manifest already read, so a workspace reads
-/// its manifest once rather than once per task in the pipeline.
-fn command_from_scripts(
-	scripts: &ManifestScripts,
-	spec: &DriverSpec,
-	task: &str,
-	persistent: bool,
-) -> Option<String> {
-	match scripts {
-		ManifestScripts::Declares(names) => names
-			.iter()
-			.any(|name| name == task)
-			.then(|| spec.invoke(task)),
-		ManifestScripts::NoSection | ManifestScripts::Unreadable(_) => None,
-		// A task runner runs the tasks the repo declared to it, `dev` included,
-		// so asking one for a task name is not inventing anything. Every other
-		// driver takes the name as a subcommand, and there is no `cargo dev`.
-		ManifestScripts::DirectInvoke if persistent && spec.drive_role() != Role::TaskRunner => {
-			None
-		}
-		ManifestScripts::DirectInvoke => Some(spec.invoke(task)),
-	}
-}
-
-/// Where a package manager puts the executables it installed for a project,
-/// relative to the directory it installed them for.
-///
-/// The list is short because most ecosystems do not need one: bundler, poetry,
-/// gradle, maven and dotnet all reach their local tools through the driver's own
-/// invoke form (`bundle exec`, `./gradlew`, `dotnet tool run`), and cargo and go
-/// install to a toolchain `engines` already pins. What is left is the ecosystems
-/// where a task names a bare executable that lives in a directory nobody types.
-/// A repo pays nothing for the ones it does not have: only existing directories
-/// go on `PATH`.
+/// Where a package manager puts the executables it installed for a project.
+/// Most ecosystems reach their local tools through the driver itself
+/// (`bundle exec`, `./gradlew`); these are the ones where a task names a bare
+/// executable in a directory nobody types.
 const DEPENDENCY_BIN_DIRS: &[&str] = &[
-	// npm, pnpm, yarn, bun
 	"node_modules/.bin",
-	// composer
 	"vendor/bin",
-	// virtualenvs: uv, poetry, pdm, pipenv, and `python -m venv`
 	".venv/bin",
 	".venv/Scripts",
 	"venv/bin",
@@ -1110,17 +949,8 @@ const DEPENDENCY_BIN_DIRS: &[&str] = &[
 ];
 
 /// The directories holding executables installed for the workspace, nearest
-/// first, from `ws_path` up to `root`.
-///
-/// A package manager puts its project-local executables somewhere the developer
-/// never types the path to, and adds that directory to `PATH` itself whenever it
-/// runs a script for them. Lattice hands a task's command straight to the shell,
-/// so a task that names a tool the project installed — the ordinary case, from
-/// `turbo` to `pytest` to `phpstan` — finds nothing on `PATH` and the very first
-/// run fails with `command not found`.
-///
-/// Nearest first, because that is the order the package manager resolves in when
-/// a workspace and the repo root both install a tool.
+/// first, from `ws_path` up to `root` — the order a package manager resolves in
+/// when a workspace and the repo root both install a tool.
 pub fn dependency_bin_dirs(root: &Path, ws_path: &Path) -> Vec<PathBuf> {
 	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 	let start = ws_path
@@ -1144,1011 +974,691 @@ pub fn dependency_bin_dirs(root: &Path, ws_path: &Path) -> Vec<PathBuf> {
 	dirs
 }
 
-/// Discover + validate + resolve commands for every configured workspace.
-///
-/// Strict failures: a workspace path that is not an existing directory; a
-/// duplicate name or path; an `auto` workspace that hits the ambiguity halt.
-pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Workspace>> {
-	use std::collections::HashSet;
+/// Whether an `overrides` key is matched against paths rather than names.
+pub fn is_path_key(key: &str) -> bool {
+	key == "." || key.contains('/') || members::has_glob(key)
+}
 
-	let mut workspaces = Vec::new();
-	let mut seen_names: HashSet<String> = HashSet::new();
-	let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+/// The overrides that apply to one workspace, folded in declaration order.
+#[derive(Default)]
+struct Merged {
+	name: Option<String>,
+	driver: Option<String>,
+	engines: EngineMap,
+	depends_on: Vec<String>,
+	tasks: IndexMap<String, PipelineTask>,
+}
+
+impl Merged {
+	fn fold(&mut self, over: &WorkspaceOverride) {
+		if over.name.is_some() {
+			self.name = over.name.clone();
+		}
+		if over.driver.is_some() {
+			self.driver = over.driver.clone();
+		}
+		for (k, v) in &over.engines {
+			self.engines.insert(k.clone(), v.clone());
+		}
+		for dep in &over.depends_on {
+			if !self.depends_on.contains(dep) {
+				self.depends_on.push(dep.clone());
+			}
+		}
+		for (task, value) in &over.tasks {
+			let layer = value.clone().into_task();
+			let merged = self
+				.tasks
+				.shift_remove(task)
+				.unwrap_or_default()
+				.layer(&layer);
+			self.tasks.insert(task.clone(), merged);
+		}
+	}
+}
+
+struct Found {
+	rel: String,
+	dir: PathBuf,
+	derived_name: String,
+	identity: manifest::Identity,
+	merged: Merged,
+	origin: members::Origin,
+}
+
+/// Every workspace in the repo, with its driver, tasks and dependencies
+/// resolved. See [`members`] for which directories count.
+pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Workspace>> {
 	let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 
-	for ws_cfg in &config.workspaces {
-		let path = root.join(&ws_cfg.path);
-
-		if !path.is_dir() {
-			bail!(
-				"workspace path '{}' does not point to a directory. A workspace \
-                 path is one literal directory, not a glob",
-				ws_cfg.path
-			);
+	let mut path_matchers: Vec<(usize, globset::GlobMatcher)> = Vec::new();
+	for (i, key) in config.overrides.keys().enumerate() {
+		if is_path_key(key) {
+			let glob = globset::GlobBuilder::new(&members::normalize(key))
+				.literal_separator(true)
+				.build()
+				.with_context(|| format!("`overrides` key '{key}' is not a valid glob"))?;
+			path_matchers.push((i, glob.compile_matcher()));
 		}
+	}
+	let mut used = vec![false; config.overrides.len()];
 
-		let name = ws_cfg.name.clone();
-		if !seen_names.insert(name.clone()) {
-			bail!("duplicate workspace name '{}' in lattice.json", name);
-		}
-		let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-		// The directory a workspace resolves to is what bounds its tasks' inputs
-		// and outputs, and a symlink is how that lands somewhere else entirely.
+	let mut found: Vec<Found> = Vec::new();
+	for member in members::find_members(root, config)? {
+		let dir = if member.rel == "." {
+			root.to_path_buf()
+		} else {
+			root.join(&member.rel)
+		};
+		let canonical = manifest::canonical(&dir);
 		if !canonical.starts_with(&canonical_root) {
 			bail!(
-				"workspace path '{}' resolves to {}, which is outside the repo root. A \
-                 workspace directory has to be inside the repo",
-				ws_cfg.path,
+				"workspace '{}' resolves to {}, which is outside the repo root. A workspace \
+				 directory has to be inside the repo",
+				member.rel,
 				canonical.display()
 			);
 		}
-		if !seen_paths.insert(canonical) {
-			bail!("duplicate workspace path '{}' in lattice.json", ws_cfg.path);
-		}
-
-		let engines = lattice_config::resolve_engines(&config.engines, &ws_cfg.engines);
-
-		// Detect the driver for auto workspaces; a manual workspace with only
-		// its own scripts has no driver.
-		let driver = if ws_cfg.auto {
-			match detect_drivers(&path, &engines) {
-				Ok(d) => Some(d),
-				Err(mut e) => {
-					e.workspace = name.clone();
-					bail!("{e}");
-				}
-			}
-		} else {
-			// A manual workspace may still name a driver, but never halts on it.
-			detect_drivers(&path, &engines).ok()
-		};
-
-		// Commands: explicit scripts overrides always win; auto workspaces then
-		// infer commands for each root task via the resolved driver.
-		let mut commands: IndexMap<String, String> = IndexMap::new();
-		for (task, cmd) in &ws_cfg.scripts {
-			commands.insert(task.clone(), cmd.clone());
-		}
-		if ws_cfg.auto {
-			if let Some(spec) = driver.as_ref().and_then(|d| DriverRegistry::get(&d.tool)) {
-				// One read of the manifest for the whole pipeline, not one per task.
-				let scripts = manifest_scripts(&path, spec.tool);
-				for (task, task_cfg) in &config.tasks {
-					if commands.contains_key(task) {
-						continue;
-					}
-					if let Some(cmd) =
-						command_from_scripts(&scripts, spec, task, task_cfg.is_persistent())
-					{
-						commands.insert(task.clone(), cmd);
-					}
-				}
-			}
-		}
-
-		let depends_on = ws_cfg.depends_on.clone().unwrap_or_default();
-
-		workspaces.push(Workspace {
-			name,
-			path,
-			auto: ws_cfg.auto,
-			depends_on,
-			engines,
-			driver,
-			commands,
+		let identity = manifest::identity(root, &dir);
+		let derived_name = identity.name.clone().unwrap_or_else(|| {
+			dir.file_name()
+				.or_else(|| canonical.file_name())
+				.map(|n| n.to_string_lossy().into_owned())
+				.unwrap_or_else(|| "root".to_string())
+		});
+		found.push(Found {
+			rel: member.rel,
+			dir,
+			derived_name,
+			identity,
+			merged: Merged::default(),
+			origin: member.origin,
 		});
 	}
 
+	for f in &mut found {
+		for (i, (key, over)) in config.overrides.iter().enumerate() {
+			let hit = if is_path_key(key) {
+				path_matchers
+					.iter()
+					.any(|(j, m)| *j == i && m.is_match(&f.rel))
+			} else {
+				*key == f.derived_name
+			};
+			if hit {
+				used[i] = true;
+				f.merged.fold(over);
+			}
+		}
+	}
+	// A name key may also name the workspace by the name a path override gave it.
+	for f in &mut found {
+		let Some(renamed) = f.merged.name.clone() else {
+			continue;
+		};
+		for (i, (key, over)) in config.overrides.iter().enumerate() {
+			if !is_path_key(key) && *key == renamed && renamed != f.derived_name {
+				used[i] = true;
+				f.merged.fold(over);
+			}
+		}
+	}
+
+	let known_names: Vec<String> = found
+		.iter()
+		.map(|f| {
+			f.merged
+				.name
+				.clone()
+				.unwrap_or_else(|| f.derived_name.clone())
+		})
+		.collect();
+	for (i, key) in config.overrides.keys().enumerate() {
+		if used[i] {
+			continue;
+		}
+		let mut message = if is_path_key(key) {
+			format!("`overrides` key '{key}' matches no workspace path")
+		} else {
+			format!("`overrides` key '{key}' names no workspace")
+		};
+		if let Some(near) = closest_field(key, &known_names) {
+			message.push_str(&format!("\nDid you mean `{near}`?"));
+		}
+		if !known_names.is_empty() {
+			message.push_str(&format!("\nWorkspaces: {}", known_names.join(", ")));
+		}
+		bail!(message);
+	}
+
+	let mut workspaces: Vec<Workspace> = Vec::new();
+	let mut keys: Vec<(Vec<manifest::PackageKey>, PathBuf)> = Vec::new();
+	let mut dep_refs: Vec<Vec<manifest::DepRef>> = Vec::new();
+	for f in found {
+		let name = f
+			.merged
+			.name
+			.clone()
+			.unwrap_or_else(|| f.derived_name.clone());
+		let driver = match f.merged.driver.as_deref() {
+			Some(NO_DRIVER) => None,
+			Some(tool) => {
+				let Some(spec) = DriverRegistry::get(tool) else {
+					let known: Vec<String> = DRIVERS.iter().map(|d| d.tool.to_string()).collect();
+					let mut message = format!(
+						"workspace '{name}' names driver '{tool}', which Lattice does not know"
+					);
+					if let Some(near) = closest_field(tool, &known) {
+						message.push_str(&format!("\nDid you mean `{near}`?"));
+					}
+					message.push_str(&format!(
+						"\nUse one of {}, or \"none\" and write each task's command under \
+						 `tasks`",
+						known.join(", ")
+					));
+					bail!(message);
+				};
+				Some(DriverResolution {
+					tool: tool.to_string(),
+					role: spec.drive_role(),
+					via: Evidence::Declaration,
+				})
+			}
+			None => match detect_driver(root, &f.dir, &name) {
+				Ok(d) => Some(d),
+				Err(_) if f.merged.tasks.values().any(|t| t.run.is_some()) => None,
+				// A glob in lattice.json can match a directory of notes or assets,
+				// and a repo root can hold nothing but other projects; a directory
+				// with nothing Lattice recognizes is simply not a workspace.
+				Err(e)
+					if e.candidates.is_empty()
+						&& matches!(
+							f.origin,
+							members::Origin::Config | members::Origin::SingleProject
+						) =>
+				{
+					continue
+				}
+				Err(e) => bail!("{e}"),
+			},
+		};
+
+		let mut problems = Vec::new();
+		let native = match &driver {
+			Some(d) => {
+				let n = tasks::native_tasks(&d.tool, &f.dir, root, f.identity.name.as_deref());
+				if let Some(problem) = &n.problem {
+					problems.push(format!("{name}: {problem}, so it runs none of its scripts"));
+				}
+				n.tasks
+			}
+			None => IndexMap::new(),
+		};
+		let tool = driver.as_ref().map(|d| d.tool.as_str()).unwrap_or("");
+		let resolved = resolve_tasks(config, &f.merged, native, tool);
+
+		keys.push((f.identity.keys.clone(), manifest::canonical(&f.dir)));
+		dep_refs.push(f.identity.deps.clone());
+		workspaces.push(Workspace {
+			name,
+			path: f.dir,
+			rel_path: f.rel,
+			depends_on: f.merged.depends_on.clone(),
+			inferred_deps: Vec::new(),
+			engines: resolve_engines(&config.engines, &f.merged.engines),
+			driver,
+			tasks: resolved,
+			problems,
+		});
+	}
+
+	disambiguate(&mut workspaces, config)?;
+	infer_dependencies(&mut workspaces, &keys, &dep_refs);
+	check_declared_dependencies(&workspaces, config)?;
 	Ok(workspaces)
+}
+
+/// Stack every layer of settings for each task the workspace has a command for.
+fn resolve_tasks(
+	config: &LatticeConfig,
+	merged: &Merged,
+	native: IndexMap<String, tasks::NativeTask>,
+	tool: &str,
+) -> IndexMap<String, WorkspaceTask> {
+	let mut names: Vec<String> = native.keys().cloned().collect();
+	for name in merged.tasks.keys() {
+		if !names.contains(name) {
+			names.push(name.clone());
+		}
+	}
+
+	let mut out = IndexMap::new();
+	for name in names {
+		let over = merged.tasks.get(&name);
+		let (command, origin, after_sep) = match over.and_then(|o| o.run.clone()) {
+			Some(run) => (run, TaskOrigin::Config, false),
+			None => match native.get(&name) {
+				Some(n) => (
+					n.command.clone(),
+					TaskOrigin::Native(n.source.clone()),
+					n.args_after_separator,
+				),
+				None => continue,
+			},
+		};
+		let mut layered = builtin_task_defaults(&name);
+		if name == "build" && origin != TaskOrigin::Config {
+			layered.outputs = tasks::default_build_outputs(tool);
+		}
+		if let Some(root_task) = config.tasks.get(&name) {
+			layered = layered.layer(root_task);
+		}
+		if let Some(over) = over {
+			layered = layered.layer(over);
+		}
+		layered.run = None;
+		out.insert(
+			name,
+			WorkspaceTask {
+				command,
+				config: layered,
+				origin,
+				args_after_separator: after_sep,
+			},
+		);
+	}
+	out
+}
+
+/// Two workspaces can derive the same name — `apps/web` and `sites/web`, two
+/// packages with one `name`. Those are named by their paths instead. A clash
+/// between names someone chose on purpose is theirs to fix.
+fn disambiguate(workspaces: &mut [Workspace], config: &LatticeConfig) -> Result<()> {
+	let mut counts: HashMap<String, usize> = HashMap::new();
+	for ws in workspaces.iter() {
+		*counts.entry(ws.name.clone()).or_default() += 1;
+	}
+	let renamed: HashSet<String> = config
+		.overrides
+		.values()
+		.filter_map(|o| o.name.clone())
+		.collect();
+	for ws in workspaces.iter_mut() {
+		if counts[&ws.name] > 1 {
+			if renamed.contains(&ws.name) {
+				bail!(
+					"two workspaces are named '{}'. Give each a different `name` in `overrides`",
+					ws.name
+				);
+			}
+			ws.name = ws.rel_path.clone();
+		}
+	}
+	let mut seen = HashSet::new();
+	for ws in workspaces.iter() {
+		if !seen.insert(ws.name.clone()) {
+			bail!(
+				"two workspaces are named '{}'. Give one a different `name` in `overrides`",
+				ws.name
+			);
+		}
+	}
+	Ok(())
+}
+
+fn infer_dependencies(
+	workspaces: &mut [Workspace],
+	keys: &[(Vec<manifest::PackageKey>, PathBuf)],
+	dep_refs: &[Vec<manifest::DepRef>],
+) {
+	let names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
+	for (i, refs) in dep_refs.iter().enumerate() {
+		let mut inferred: Vec<String> = Vec::new();
+		for dep in refs {
+			let target = keys.iter().position(|(ks, dir)| match dep {
+				manifest::DepRef::Package(key) => ks.contains(key),
+				manifest::DepRef::Dir(path) => dir == path,
+			});
+			if let Some(j) = target.filter(|j| *j != i) {
+				if !inferred.contains(&names[j]) {
+					inferred.push(names[j].clone());
+				}
+			}
+		}
+		inferred.sort();
+		let ws = &mut workspaces[i];
+		for dep in &inferred {
+			if !ws.depends_on.contains(dep) {
+				ws.depends_on.push(dep.clone());
+			}
+		}
+		ws.inferred_deps = inferred;
+	}
+}
+
+/// A `dependsOn` in an override that names no workspace would build no edge,
+/// and the run would lose its ordering without a word.
+fn check_declared_dependencies(workspaces: &[Workspace], config: &LatticeConfig) -> Result<()> {
+	let names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
+	for ws in workspaces {
+		for dep in &ws.depends_on {
+			if dep == &ws.name {
+				bail!("workspace '{}' lists itself in `dependsOn`", ws.name);
+			}
+			if names.contains(dep) {
+				continue;
+			}
+			let mut message = format!(
+				"workspace '{}' depends on '{dep}', which is not a workspace",
+				ws.name
+			);
+			if let Some(near) = closest_field(dep, &names) {
+				message.push_str(&format!("\nDid you mean `{near}`?"));
+			}
+			message.push_str(&format!("\nWorkspaces: {}", names.join(", ")));
+			bail!(message);
+		}
+	}
+	let _ = config;
+	Ok(())
+}
+
+/// What the developer should hear about the tasks a run asked for that some
+/// workspaces do not have: which workspaces sat it out, and a "did you mean"
+/// where a workspace declares something one typo away. Empty when every
+/// workspace has every task.
+pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> Vec<String> {
+	let mut notes = Vec::new();
+	for ws in workspaces {
+		notes.extend(ws.problems.iter().cloned());
+	}
+	for task in tasks {
+		let mut without: Vec<&str> = Vec::new();
+		for ws in workspaces {
+			if ws.tasks.contains_key(task) {
+				continue;
+			}
+			let declared: Vec<String> = ws.tasks.keys().cloned().collect();
+			if let Some(near) = closest_field(task, &declared) {
+				notes.push(format!(
+					"{} has no '{task}' task. Did you mean '{near}'?",
+					ws.name
+				));
+			} else {
+				without.push(&ws.name);
+			}
+		}
+		if !without.is_empty() && without.len() < workspaces.len() {
+			notes.push(format!(
+				"no '{task}' task in {}, so they sit this one out",
+				without.join(", ")
+			));
+		}
+	}
+	notes
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use serde_json::json;
-	use std::fs;
 	use tempfile::TempDir;
 
-	fn engines(v: serde_json::Value) -> EngineMap {
-		serde_json::from_value(v).unwrap()
+	fn write(root: &Path, rel: &str, contents: &str) {
+		let path = root.join(rel);
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(path, contents).unwrap();
 	}
 
-	fn write(dir: &Path, name: &str, contents: &str) {
-		fs::write(dir.join(name), contents).unwrap();
+	fn config(json: &str) -> LatticeConfig {
+		lattice_config::parse_config(json).unwrap()
 	}
 
-	#[test]
-	fn tier_a_declaration_overrides_lockfile() {
-		// A pnpm lockfile is present, but engines declares bun → bun wins, and
-		// since they share a role the declaration is the tiebreaker.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "pnpm-lock.yaml", "");
-		write(tmp.path(), "package.json", "{}");
-		let d = detect_drivers(tmp.path(), &engines(json!({ "bun": ">=1.1" }))).unwrap();
-		assert_eq!(d.tool, "bun");
-		assert_eq!(d.via, Evidence::Declaration);
+	fn find<'a>(workspaces: &'a [Workspace], name: &str) -> &'a Workspace {
+		workspaces
+			.iter()
+			.find(|w| w.name == name)
+			.unwrap_or_else(|| panic!("no workspace '{name}'"))
 	}
 
-	#[test]
-	fn tier_b_tool_versions_selects_named_tool() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), ".tool-versions", "pnpm 8.6.0\n");
-		write(tmp.path(), "package.json", "{}");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "pnpm");
-		assert!(matches!(d.via, Evidence::NativeFile(_)));
-	}
-
-	#[test]
-	fn tier_b_package_manager_field_selects() {
-		let tmp = TempDir::new().unwrap();
+	fn pnpm_monorepo() -> TempDir {
+		let dir = TempDir::new().unwrap();
+		let root = dir.path();
+		write(root, "package.json", r#"{"private": true}"#);
+		write(root, "pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+		write(root, "pnpm-lock.yaml", "");
 		write(
-			tmp.path(),
-			"package.json",
-			r#"{ "packageManager": "yarn@4.0.0" }"#,
+			root,
+			"packages/ui/package.json",
+			r#"{"name": "@acme/ui", "scripts": {"build": "tsc", "lint": "eslint ."}}"#,
 		);
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "yarn");
-	}
-
-	#[test]
-	fn tier_b_gradlew_selects_gradle() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "gradlew", "#!/bin/sh\n");
-		write(tmp.path(), "build.gradle", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "gradle");
-	}
-
-	#[test]
-	fn tier_b_gemfile_ruby_directive_selects_ruby_but_rake_drives() {
-		// Gemfile ruby directive (ruby runtime) + Rakefile (task runner) →
-		// rake drives (higher role); no conflict.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "Gemfile", "ruby \"3.2.0\"\n");
-		write(tmp.path(), "Rakefile", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "rake");
-	}
-
-	#[test]
-	fn tier_c_bun_lockfile_selects() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "bun.lockb", "");
-		write(tmp.path(), "package.json", "{}");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "bun");
-		assert_eq!(d.via, Evidence::Lockfile("bun.lockb".into()));
-	}
-
-	#[test]
-	fn tier_c_cargo_lock_selects() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "Cargo.lock", "");
-		write(tmp.path(), "Cargo.toml", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "cargo");
-	}
-
-	#[test]
-	fn tier_c_poetry_lock_selects() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "poetry.lock", "");
-		write(tmp.path(), "pyproject.toml", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "poetry");
-	}
-
-	#[test]
-	fn tier_d_bare_package_json_is_ambiguous() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "package.json", r#"{ "name": "x" }"#);
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.candidates.contains(&"pnpm".to_string()));
-		let msg = format!("{err}");
-		assert!(msg.contains("engines"), "fix must be copy-pasteable: {msg}");
-	}
-
-	#[test]
-	fn same_role_conflict_is_ambiguous() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "bun.lockb", "");
-		write(tmp.path(), "pnpm-lock.yaml", "");
-		write(tmp.path(), "package.json", "{}");
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.candidates.contains(&"bun".to_string()));
-		assert!(err.candidates.contains(&"pnpm".to_string()));
-		assert!(format!("{err}").contains("engines"));
-	}
-
-	#[test]
-	fn role_composition_node_plus_pnpm_resolves_to_pnpm() {
-		// node runtime (.nvmrc) + pnpm package-manager (lockfile) → pnpm drives,
-		// no conflict. node is still in the engine map for provisioning.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), ".nvmrc", "20.11.1\n");
-		write(tmp.path(), "pnpm-lock.yaml", "");
-		write(tmp.path(), "package.json", "{}");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "pnpm");
-		assert_eq!(d.role, Role::PackageManager);
-	}
-
-	#[test]
-	fn js_driver_reads_real_package_json_scripts() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "pnpm-lock.yaml", "");
 		write(
-			tmp.path(),
-			"package.json",
-			r#"{ "scripts": { "build": "tsc", "start": "node ." } }"#,
+			root,
+			"packages/web/package.json",
+			r#"{"name": "web", "scripts": {"build": "vite build", "dev": "vite"},
+			    "dependencies": {"@acme/ui": "workspace:*", "react": "19"}}"#,
 		);
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(
-			infer_task_command("build", &d, tmp.path(), false).as_deref(),
-			Some("pnpm run build")
-		);
-		// A task not in package.json scripts is not invented.
-		assert_eq!(infer_task_command("test", &d, tmp.path(), false), None);
+		dir
 	}
 
-	fn ws_config(name: &str) -> lattice_config::WorkspaceConfig {
-		lattice_config::WorkspaceConfig {
-			name: name.into(),
-			path: name.into(),
-			auto: true,
-			engines: EngineMap::new(),
-			depends_on: None,
-			scripts: Default::default(),
-		}
-	}
-
-	fn tasks(names: &[&str]) -> Vec<String> {
-		names.iter().map(|n| n.to_string()).collect()
-	}
-
-	/// A manifest-driven workspace whose manifest declares no script for a task
-	/// drops the task, rather than handing the shell an `npm run build` that npm
-	/// answers with `Missing script: "build"`.
 	#[test]
-	fn a_manifest_with_no_scripts_skips_the_task_instead_of_inventing_one() {
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("types");
-		fs::create_dir_all(&ws_dir).unwrap();
-		write(&ws_dir, "package.json", r#"{ "name": "types" }"#);
-		write(&ws_dir, "package-lock.json", "{}");
+	fn a_pnpm_monorepo_needs_no_config_at_all() {
+		let dir = pnpm_monorepo();
+		let ws = discover_workspaces(dir.path(), &config("{}")).unwrap();
 
-		let d = detect_drivers(&ws_dir, &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "npm");
-		assert_eq!(infer_task_command("build", &d, &ws_dir, false), None);
+		assert_eq!(ws.len(), 2, "the root declares members and is not one");
+		let web = find(&ws, "web");
+		assert_eq!(web.driver.as_ref().unwrap().tool, "pnpm");
+		assert_eq!(web.depends_on, ["@acme/ui"]);
+		assert_eq!(web.inferred_deps, ["@acme/ui"]);
+		assert_eq!(web.command_for("build"), Some("pnpm run build"));
+
+		let build = &web.task("build").unwrap().config;
 		assert_eq!(
-			infer_task_command("totally-made-up", &d, &ws_dir, false),
-			None,
-			"no task name is a licence to invent a script"
+			build.depends_on.as_deref(),
+			Some(&["^build".to_string()][..])
 		);
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.tasks.insert("test".into(), Default::default());
-		config.workspaces.push(ws_config("types"));
-
-		// The workspace still loads — a types-only package is a normal thing to
-		// have — and declaring no scripts at all is a complete config, so there
-		// is nothing to tell the developer about.
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		assert_eq!(ws[0].command_for("build"), None);
-		let notes = skipped_task_notes(&ws, &tasks(&["build", "test"]));
-		assert!(notes.is_empty(), "{notes:?}");
+		assert_eq!(build.outputs.as_deref(), Some(&["dist/**".to_string()][..]));
+		assert_eq!(web.task("dev").unwrap().config.persistent, Some(true));
+		assert!(find(&ws, "@acme/ui").task("dev").is_none());
 	}
 
-	/// The typo case: the manifest plainly means to run scripts, and the one being
-	/// asked for is not among them.
 	#[test]
-	fn a_manifest_that_declares_scripts_without_the_task_says_so_once() {
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("web");
-		fs::create_dir_all(&ws_dir).unwrap();
+	fn root_tasks_and_overrides_layer_over_the_defaults() {
+		let dir = pnpm_monorepo();
+		let ws = discover_workspaces(
+			dir.path(),
+			&config(
+				r#"{
+				  "tasks": { "build": { "outputs": ["out/**"], "env": ["API_URL"] } },
+				  "overrides": {
+				    "web": { "tasks": { "build": { "outputs": ["dist/web/**"] }, "e2e": "playwright test" } },
+				    "packages/*": { "tasks": { "lint": { "cache": false } } }
+				  }
+				}"#,
+			),
+		)
+		.unwrap();
+
+		let web = find(&ws, "web");
+		let build = &web.task("build").unwrap().config;
+		assert_eq!(
+			build.outputs.as_deref(),
+			Some(&["dist/web/**".to_string()][..])
+		);
+		assert_eq!(build.env.as_deref(), Some(&["API_URL".to_string()][..]));
+		assert_eq!(
+			build.depends_on.as_deref(),
+			Some(&["^build".to_string()][..])
+		);
+
+		let e2e = web.task("e2e").unwrap();
+		assert_eq!(e2e.command, "playwright test");
+		assert_eq!(e2e.origin, TaskOrigin::Config);
+
+		let ui = find(&ws, "@acme/ui");
+		assert_eq!(ui.task("lint").unwrap().config.cache, Some(false));
+		assert!(ui.task("e2e").is_none());
+	}
+
+	#[test]
+	fn an_override_key_that_matches_nothing_says_what_it_might_have_meant() {
+		let dir = pnpm_monorepo();
+		let err = discover_workspaces(dir.path(), &config(r#"{"overrides": {"weeb": {}}}"#))
+			.unwrap_err()
+			.to_string();
+		assert!(err.contains("'weeb' names no workspace"), "{err}");
+		assert!(err.contains("Did you mean `web`?"), "{err}");
+	}
+
+	#[test]
+	fn a_cross_language_edge_is_declared_and_checked() {
+		let dir = pnpm_monorepo();
 		write(
-			&ws_dir,
-			"package.json",
-			r#"{ "name": "web", "scripts": { "biuld": "tsc", "test": "vitest" } }"#,
+			dir.path(),
+			"services/api/go.mod",
+			"module example.com/api\n",
 		);
-		write(&ws_dir, "pnpm-lock.yaml", "");
+		let ws = discover_workspaces(
+			dir.path(),
+			&config(
+				r#"{"workspaces": ["services/*"], "overrides": {"web": {"dependsOn": ["api"]}}}"#,
+			),
+		)
+		.unwrap();
+		let web = find(&ws, "web");
+		assert!(web.depends_on.contains(&"api".to_string()));
+		assert_eq!(find(&ws, "api").driver.as_ref().unwrap().tool, "go");
 
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.tasks.insert("test".into(), Default::default());
-		config.workspaces.push(ws_config("web"));
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
-		assert_eq!(notes.len(), 1, "{notes:?}");
-		assert_eq!(
-			notes[0],
-			"web declares scripts but no \"build\", so the task was skipped. \
-			 Did you mean \"biuld\"?"
-		);
-
-		// A task the manifest does declare is not mentioned, and neither is a
-		// pipeline task nobody asked to run.
-		assert!(skipped_task_notes(&ws, &tasks(&["test"])).is_empty());
+		let err = discover_workspaces(
+			dir.path(),
+			&config(r#"{"overrides": {"web": {"dependsOn": ["apii"]}}}"#),
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("'apii', which is not a workspace"), "{err}");
 	}
 
-	/// Nothing close enough to be a slip: the note has to say what to do instead
-	/// of guessing.
 	#[test]
-	fn a_missing_script_with_no_near_match_names_the_fix() {
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("web");
-		fs::create_dir_all(&ws_dir).unwrap();
+	fn cargo_members_are_named_by_crate_and_ordered_by_path_deps() {
+		let dir = TempDir::new().unwrap();
+		let root = dir.path();
 		write(
-			&ws_dir,
-			"package.json",
-			r#"{ "name": "web", "scripts": { "storybook": "sb dev" } }"#,
+			root,
+			"Cargo.toml",
+			"[workspace]\nmembers = [\"crates/*\"]\n",
 		);
-		write(&ws_dir, "pnpm-lock.yaml", "");
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.workspaces.push(ws_config("web"));
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
-		assert_eq!(notes.len(), 1, "{notes:?}");
-		assert_eq!(
-			notes[0],
-			"web declares scripts but no \"build\", so the task was skipped. Declare it in \
-			 the workspace's manifest, or under \"scripts\" in lattice.json, if the task \
-			 should run there"
-		);
-	}
-
-	/// Several workspaces, one line. A note per workspace on every run is the
-	/// noise this exists to avoid.
-	#[test]
-	fn several_missing_scripts_aggregate_into_one_note() {
-		let tmp = TempDir::new().unwrap();
-		for (name, manifest) in [
-			("web", r#"{ "scripts": { "biuld": "tsc" } }"#),
-			("docs", r#"{ "scripts": { "start": "astro dev" } }"#),
-		] {
-			let ws_dir = tmp.path().join(name);
-			fs::create_dir_all(&ws_dir).unwrap();
-			write(&ws_dir, "package.json", manifest);
-			write(&ws_dir, "pnpm-lock.yaml", "");
-		}
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.workspaces.push(ws_config("web"));
-		config.workspaces.push(ws_config("docs"));
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
-		assert_eq!(notes.len(), 1, "{notes:?}");
-		assert_eq!(
-			notes[0],
-			"some tasks were skipped: web declares scripts but no \"build\" (did you mean \
-			 \"biuld\"?); docs declares scripts but no \"build\". Declare each in the \
-			 workspace's manifest, or under \"scripts\" in lattice.json, if the task should \
-			 run there"
-		);
-	}
-
-	/// A deno workspace calls the map `tasks`, and the note has to use the word
-	/// the developer would go looking for.
-	#[test]
-	fn a_deno_workspace_is_told_about_its_tasks_map() {
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("edge");
-		fs::create_dir_all(&ws_dir).unwrap();
+		write(root, "Cargo.lock", "");
 		write(
-			&ws_dir,
-			"deno.json",
-			r#"{ "tasks": { "check": "deno check" } }"#,
+			root,
+			"crates/core/Cargo.toml",
+			"[package]\nname = \"acme-core\"\n",
 		);
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.workspaces.push(ws_config("edge"));
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
-		assert_eq!(notes.len(), 1, "{notes:?}");
-		assert!(
-			notes[0].starts_with("edge declares tasks but no \"build\""),
-			"{}",
-			notes[0]
-		);
-	}
-
-	/// A `scripts` override in lattice.json is a command, so the task is not
-	/// skipped and there is nothing to say.
-	#[test]
-	fn a_lattice_json_script_override_silences_the_note() {
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("web");
-		fs::create_dir_all(&ws_dir).unwrap();
 		write(
-			&ws_dir,
-			"package.json",
-			r#"{ "scripts": { "test": "vitest" } }"#,
+			root,
+			"crates/cli/Cargo.toml",
+			"[package]\nname = \"acme-cli\"\n[dependencies]\nacme-core = { path = \"../core\" }\n",
 		);
-		write(&ws_dir, "pnpm-lock.yaml", "");
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		let mut ws_cfg = ws_config("web");
-		ws_cfg
-			.scripts
-			.insert("build".to_string(), "make web".to_string());
-		config.workspaces.push(ws_cfg);
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		assert_eq!(ws[0].command_for("build"), Some("make web"));
-		assert!(skipped_task_notes(&ws, &tasks(&["build"])).is_empty());
+		let ws = discover_workspaces(root, &config("{}")).unwrap();
+		let cli = find(&ws, "acme-cli");
+		assert_eq!(cli.driver.as_ref().unwrap().tool, "cargo");
+		assert_eq!(cli.depends_on, ["acme-core"]);
+		assert_eq!(cli.command_for("lint"), Some("cargo clippy"));
+		assert_eq!(cli.command_for("clean"), Some("cargo clean -p acme-cli"));
 	}
 
-	/// A `deno.jsonc` comment used to fail the strict JSON parse, which sent every
-	/// task down the fabricating branch as `deno task <name>`.
 	#[test]
-	fn a_deno_manifest_with_comments_still_reads_its_tasks() {
-		let tmp = TempDir::new().unwrap();
+	fn a_gradle_build_is_one_workspace_however_many_subprojects_it_has() {
+		let dir = TempDir::new().unwrap();
+		let root = dir.path();
 		write(
-			tmp.path(),
-			"deno.jsonc",
-			"{\n\t// what this workspace can do\n\t\"tasks\": {\n\t\t\"build\": \"deno check mod.ts\",\n\t\t\"serve\": \"deno run https://deno.land/std/http/file_server.ts\"\n\t} /* and nothing else */\n}\n",
+			root,
+			"settings.gradle.kts",
+			"include(\":core\", \":app\")\n",
 		);
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "deno");
-		assert_eq!(
-			infer_task_command("build", &d, tmp.path(), false).as_deref(),
-			Some("deno task build")
-		);
-		assert_eq!(
-			infer_task_command("serve", &d, tmp.path(), false).as_deref(),
-			Some("deno task serve"),
-			"a // inside a string is not a comment"
-		);
-		assert_eq!(infer_task_command("test", &d, tmp.path(), false), None);
-	}
-
-	#[test]
-	fn a_manifest_that_will_not_parse_is_reported_not_worked_around() {
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("web");
-		fs::create_dir_all(&ws_dir).unwrap();
-		write(&ws_dir, "package.json", r#"{ "scripts": { "build": }"#);
-		write(&ws_dir, "pnpm-lock.yaml", "");
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.workspaces.push(ws_config("web"));
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		assert_eq!(ws[0].command_for("build"), None);
-		let notes = skipped_task_notes(&ws, &tasks(&["build"]));
-		assert_eq!(notes.len(), 1);
-		assert!(
-			notes[0].contains("web: package.json could not be parsed"),
-			"{}",
-			notes[0]
-		);
-	}
-
-	/// A workspace directory bounds what its tasks read and write, and a symlink
-	/// is how that lands somewhere else entirely. Unix only: creating a directory
-	/// symlink on Windows needs a privilege a test run cannot count on.
-	#[cfg(unix)]
-	#[test]
-	fn a_workspace_symlinked_out_of_the_repo_is_refused() {
-		let outside = TempDir::new().unwrap();
-		let elsewhere = outside.path().join("elsewhere");
-		fs::create_dir_all(&elsewhere).unwrap();
-		write(&elsewhere, "Cargo.lock", "");
-
-		let tmp = TempDir::new().unwrap();
-		std::os::unix::fs::symlink(&elsewhere, tmp.path().join("app")).unwrap();
-
-		let mut config = LatticeConfig::default();
-		config.workspaces.push(ws_config("app"));
-
-		let err = discover_workspaces(tmp.path(), &config).unwrap_err();
-		let msg = format!("{err:#}");
-		assert!(msg.contains("outside the repo root"), "{msg}");
-	}
-
-	/// A symlink that stays inside the repo is still a workspace.
-	#[cfg(unix)]
-	#[test]
-	fn a_workspace_symlinked_within_the_repo_still_resolves() {
-		let tmp = TempDir::new().unwrap();
-		let real = tmp.path().join("crates").join("core");
-		fs::create_dir_all(&real).unwrap();
-		write(&real, "Cargo.lock", "");
-		std::os::unix::fs::symlink(&real, tmp.path().join("app")).unwrap();
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.workspaces.push(ws_config("app"));
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		assert_eq!(ws[0].command_for("build"), Some("cargo build"));
-	}
-
-	#[test]
-	fn direct_invoke_driver_never_fabricates_persistent_task() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "Cargo.lock", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		// A normal task uses the tool's invoke form directly...
-		assert_eq!(
-			infer_task_command("build", &d, tmp.path(), false).as_deref(),
-			Some("cargo build")
-		);
-		// ...but a persistent task is never fabricated (there is no `cargo dev`).
-		assert_eq!(infer_task_command("dev", &d, tmp.path(), true), None);
-	}
-
-	/// The rule above is about drivers that take the task name as a subcommand.
-	/// A task runner runs the tasks the repo declared to it, and `dev` is one of
-	/// them in most repos that have a task runner at all — refusing to run it
-	/// leaves a task the config names with no command anywhere.
-	#[test]
-	fn a_task_runner_still_runs_the_persistent_task_the_repo_declared() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "turbo.json", r#"{ "tasks": { "dev": {} } }"#);
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(
-			infer_task_command("dev", &d, tmp.path(), true).as_deref(),
-			Some("turbo run dev")
-		);
-	}
-
-	#[test]
-	fn dependency_bin_dirs_walks_from_the_workspace_up_to_the_root() {
-		let tmp = TempDir::new().unwrap();
-		// The walk canonicalizes, and a temp dir is behind a symlink on macOS.
-		let outside = tmp.path().canonicalize().unwrap();
-		let root = outside.join("repo");
-		let ws = root.join("apps").join("web");
-		// One per ecosystem, to prove none of them is the special case.
-		fs::create_dir_all(ws.join("node_modules").join(".bin")).unwrap();
-		fs::create_dir_all(root.join("node_modules").join(".bin")).unwrap();
-		fs::create_dir_all(root.join("vendor").join("bin")).unwrap();
-		fs::create_dir_all(root.join(".venv").join("bin")).unwrap();
-		// Above the repo, and so none of Lattice's business.
-		fs::create_dir_all(outside.join("node_modules").join(".bin")).unwrap();
-
-		let dirs = dependency_bin_dirs(&root, &ws);
-
-		assert_eq!(
-			dirs,
-			vec![
-				ws.join("node_modules").join(".bin"),
-				root.join("node_modules").join(".bin"),
-				root.join("vendor").join("bin"),
-				root.join(".venv").join("bin"),
-			],
-			"nearest first, and never above the repo root"
-		);
-	}
-
-	#[test]
-	fn a_repo_that_installs_nothing_locally_gets_no_extra_path() {
-		let tmp = TempDir::new().unwrap();
-		assert!(dependency_bin_dirs(tmp.path(), tmp.path()).is_empty());
-	}
-
-	#[test]
-	fn discover_builds_commands_and_overrides_win() {
-		use lattice_config::WorkspaceConfig;
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("app");
-		fs::create_dir_all(&ws_dir).unwrap();
-		write(&ws_dir, "pnpm-lock.yaml", "");
-		write(
-			&ws_dir,
-			"package.json",
-			r#"{ "scripts": { "build": "tsc" } }"#,
-		);
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		config.tasks.insert("deploy".into(), Default::default());
-		let mut scripts = indexmap::IndexMap::new();
-		scripts.insert("deploy".to_string(), "./deploy.sh".to_string());
-		config.workspaces.push(WorkspaceConfig {
-			name: "app".into(),
-			path: "app".into(),
-			auto: true,
-			engines: EngineMap::new(),
-			depends_on: None,
-			scripts,
-		});
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
+		write(root, "gradlew", "");
+		write(root, "core/build.gradle.kts", "");
+		write(root, "app/build.gradle.kts", "plugins { application }\n");
+		let ws = discover_workspaces(root, &config("{}")).unwrap();
 		assert_eq!(ws.len(), 1);
-		assert_eq!(ws[0].command_for("build"), Some("pnpm run build"));
-		assert_eq!(ws[0].command_for("deploy"), Some("./deploy.sh"));
-		assert_eq!(ws[0].driver.as_ref().unwrap().tool, "pnpm");
-	}
-
-	#[test]
-	fn auto_workspace_never_infers_persistent_task_command() {
-		use lattice_config::{PipelineTask, WorkspaceConfig};
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("core");
-		fs::create_dir_all(&ws_dir).unwrap();
-		// A cargo (non-manifest) driver: normally infers a command for any task.
-		write(&ws_dir, "Cargo.lock", "");
-
-		let mut config = LatticeConfig::default();
-		config.tasks.insert("build".into(), Default::default());
-		let dev = PipelineTask {
-			persistent: Some(true),
-			..Default::default()
-		};
-		config.tasks.insert("dev".into(), dev);
-		config.workspaces.push(WorkspaceConfig {
-			name: "core".into(),
-			path: "core".into(),
-			auto: true,
-			engines: EngineMap::new(),
-			depends_on: None,
-			scripts: Default::default(),
-		});
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		// A normal task is still inferred; the persistent `dev` is not fabricated.
-		assert_eq!(ws[0].command_for("build"), Some("cargo build"));
-		assert_eq!(ws[0].command_for("dev"), None);
-	}
-
-	#[test]
-	fn auto_workspace_runs_persistent_task_only_where_declared() {
-		use lattice_config::{PipelineTask, WorkspaceConfig};
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("web");
-		fs::create_dir_all(&ws_dir).unwrap();
-		write(&ws_dir, "Cargo.lock", "");
-
-		let mut config = LatticeConfig::default();
-		let dev = PipelineTask {
-			persistent: Some(true),
-			..Default::default()
-		};
-		config.tasks.insert("dev".into(), dev);
-		let mut scripts = indexmap::IndexMap::new();
-		scripts.insert("dev".to_string(), "trunk serve".to_string());
-		config.workspaces.push(WorkspaceConfig {
-			name: "web".into(),
-			path: "web".into(),
-			auto: true,
-			engines: EngineMap::new(),
-			depends_on: None,
-			scripts,
-		});
-
-		let ws = discover_workspaces(tmp.path(), &config).unwrap();
-		// An explicitly declared persistent script is honored.
-		assert_eq!(ws[0].command_for("dev"), Some("trunk serve"));
-	}
-
-	#[test]
-	fn discover_halts_on_auto_ambiguity() {
-		use lattice_config::WorkspaceConfig;
-		let tmp = TempDir::new().unwrap();
-		let ws_dir = tmp.path().join("app");
-		fs::create_dir_all(&ws_dir).unwrap();
-		write(&ws_dir, "package.json", "{}");
-
-		let mut config = LatticeConfig::default();
-		config.workspaces.push(WorkspaceConfig {
-			name: "app".into(),
-			path: "app".into(),
-			auto: true,
-			engines: EngineMap::new(),
-			depends_on: None,
-			scripts: Default::default(),
-		});
-		let err = discover_workspaces(tmp.path(), &config).unwrap_err();
-		assert!(format!("{err:#}").contains("app"));
-	}
-
-	#[test]
-	fn role_composition_python_runtime_plus_uv_resolves_to_uv() {
-		// python runtime (.python-version) + uv package-manager (lockfile) → uv
-		// drives; the runtime is not a conflict, it composes into the stack.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), ".python-version", "3.12.1\n");
-		write(tmp.path(), "uv.lock", "");
-		write(tmp.path(), "pyproject.toml", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "uv");
-		assert_eq!(d.role, Role::PackageManager);
-	}
-
-	#[test]
-	fn role_composition_turbo_over_pnpm_resolves_to_turbo() {
-		// A meta task runner (turbo.json) composes above a package-manager
-		// (pnpm-lock.yaml): turbo has the higher driving role, so it drives.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "turbo.json", "{}");
-		write(tmp.path(), "pnpm-lock.yaml", "");
-		write(tmp.path(), "package.json", "{}");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "turbo");
-		assert_eq!(d.role, Role::TaskRunner);
-		assert_eq!(d.via, Evidence::Lockfile("turbo.json".into()));
-	}
-
-	#[test]
-	fn same_role_conflict_two_python_package_managers() {
-		// pdm and pipenv are both package managers → no unique driver.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "pdm.lock", "");
-		write(tmp.path(), "Pipfile.lock", "");
-		write(tmp.path(), "pyproject.toml", "");
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.candidates.contains(&"pdm".to_string()));
-		assert!(err.candidates.contains(&"pipenv".to_string()));
-		assert!(format!("{err}").contains("engines"));
-	}
-
-	#[test]
-	fn every_driver_is_declarable_as_a_string_engine() {
-		// The suggested fix for an ambiguity error is a string-form `engines`
-		// entry, so every driver must have a built-in version rule to check.
-		for spec in DRIVERS {
-			assert!(
-				lattice_config::is_well_known_engine(spec.tool),
-				"driver '{}' is missing from WELL_KNOWN_ENGINES",
-				spec.tool
-			);
-		}
-	}
-
-	#[test]
-	fn driver_and_engine_version_commands_agree() {
-		for spec in DRIVERS {
-			assert_eq!(
-				Some(spec.version_cmd),
-				lattice_config::builtin_version_cmd(spec.tool),
-				"version command for '{}' differs between the two tables",
-				spec.tool
-			);
-		}
-	}
-
-	#[test]
-	fn dual_role_tools_drive_with_their_highest_role() {
-		// deno and bun are runtimes too, but a runtime is never what they drive
-		// with — otherwise they could not run a named task at all.
-		let deno = DriverRegistry::get("deno").unwrap();
-		assert!(deno.roles.contains(&Role::Runtime));
-		assert_eq!(deno.drive_role(), Role::TaskRunner);
-		let bun = DriverRegistry::get("bun").unwrap();
-		assert!(bun.roles.contains(&Role::Runtime));
-		assert_eq!(bun.drive_role(), Role::PackageManager);
-	}
-
-	#[test]
-	fn a_dual_role_runtime_still_composes_over_node() {
-		// bun is both a runtime and a package manager; node is only a runtime.
-		// bun's package-manager role outranks it, so bun drives without conflict.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), ".nvmrc", "20\n");
-		write(tmp.path(), "bun.lockb", "");
-		write(
-			tmp.path(),
-			"package.json",
-			r#"{ "scripts": { "build": "x" } }"#,
-		);
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "bun");
-		assert_eq!(d.role, Role::PackageManager);
-	}
-
-	#[test]
-	fn detect_nuget_via_packages_config() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "packages.config", "<packages />");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "nuget");
-		assert_eq!(d.via, Evidence::Lockfile("packages.config".into()));
-	}
-
-	#[test]
-	fn a_nuget_lockfile_alone_leaves_dotnet_driving() {
-		// An SDK-style project can restore with a lockfile and still be a
-		// `dotnet` workspace, so packages.lock.json is not nuget evidence.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "global.json", "{}");
-		write(tmp.path(), "packages.lock.json", "{}");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "dotnet");
-	}
-
-	#[test]
-	fn pip_drives_only_when_declared() {
-		// requirements.txt names no tool, so it stays an ambiguity …
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "requirements.txt", "flask\n");
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.candidates.contains(&"pip".to_string()));
-		// … which a declaration settles.
-		let d = detect_drivers(tmp.path(), &engines(json!({ "pip": ">=24.0" }))).unwrap();
-		assert_eq!(d.tool, "pip");
-		assert_eq!(d.via, Evidence::Declaration);
-		assert_eq!(
-			DriverRegistry::get("pip").unwrap().invoke("install"),
-			"pip install"
-		);
-	}
-
-	#[test]
-	fn kotlin_is_a_runtime_that_never_drives_alone() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), ".tool-versions", "kotlin 2.0.0\n");
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(format!("{err}").contains("Lattice detected no driver"));
-
-		// Under gradle it composes: gradle drives, kotlin stays a pinned engine.
-		write(tmp.path(), "gradlew", "");
-		let d = detect_drivers(tmp.path(), &EngineMap::new()).unwrap();
-		assert_eq!(d.tool, "gradle");
-	}
-
-	#[test]
-	fn ecosystem_candidates_cover_the_bare_markers() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "Cargo.toml", "[package]\n");
-		assert_eq!(ecosystem_candidates(tmp.path()), vec!["cargo"]);
-
-		let dotnet = TempDir::new().unwrap();
-		write(dotnet.path(), "Api.csproj", "<Project />");
-		assert_eq!(ecosystem_candidates(dotnet.path()), vec!["dotnet", "nuget"]);
-
-		let empty = TempDir::new().unwrap();
-		assert!(ecosystem_candidates(empty.path()).is_empty());
-	}
-
-	#[test]
-	fn same_role_conflict_two_build_tools() {
-		// stack and cabal are both Haskell build tools → conflict.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "stack.yaml.lock", "");
-		write(tmp.path(), "cabal.project.freeze", "");
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.candidates.contains(&"stack".to_string()));
-		assert!(err.candidates.contains(&"cabal".to_string()));
-		assert!(format!("{err}").contains("engines"));
-	}
-
-	#[test]
-	fn same_role_conflict_declaration_disambiguates() {
-		// Two package-manager lockfiles, but a declaration names one → resolved.
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "pdm.lock", "");
-		write(tmp.path(), "Pipfile.lock", "");
-		write(tmp.path(), "pyproject.toml", "");
-		let d = detect_drivers(tmp.path(), &engines(json!({ "pdm": ">=2.0" }))).unwrap();
-		assert_eq!(d.tool, "pdm");
-		assert_eq!(d.via, Evidence::Declaration);
-	}
-
-	/// The suggested fix has to resolve the error it is printed with. A runtime
-	/// cannot drive named tasks, so suggesting one sends the reader in a circle.
-	#[test]
-	fn suggested_fix_never_names_a_tool_that_cannot_drive() {
-		// Nothing at all to go on.
-		let bare = TempDir::new().unwrap();
-		let err = detect_drivers(bare.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.candidates.is_empty());
-		assert!(err.suggested_fix.contains("\"scripts\""));
-		assert!(!err.suggested_fix.contains("\"engines\""));
-
-		// A runtime was detected, but it cannot drive tasks on its own.
-		let runtime_only = TempDir::new().unwrap();
-		write(runtime_only.path(), ".nvmrc", "20\n");
-		let err = detect_drivers(runtime_only.path(), &EngineMap::new()).unwrap_err();
-		assert!(err.suggested_fix.contains("\"scripts\""));
-		assert!(!err.suggested_fix.contains("\"node\""));
-	}
-
-	/// The ecosystem marker path still names a tool, since every candidate a
-	/// marker maps to can drive.
-	#[test]
-	fn suggested_fix_names_a_driving_tool_when_a_marker_gives_one() {
-		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "package.json", "{}");
-		write(tmp.path(), ".nvmrc", "20\n");
-		let err = detect_drivers(tmp.path(), &EngineMap::new()).unwrap_err();
-		assert_eq!(err.suggested_fix, suggested_fix_for("pnpm"));
-
-		for tool in ECOSYSTEM_MARKERS
-			.iter()
-			.flat_map(|(_, candidates)| candidates.iter())
-			.chain(["dotnet", "nuget"].iter())
-		{
-			assert!(can_drive(tool), "marker candidate '{tool}' cannot drive");
-		}
-	}
-
-	#[test]
-	fn tier_c_new_tool_lockfiles_select_their_driver() {
-		for (file, tool) in [
-			("composer.lock", "composer"),
-			("mix.lock", "mix"),
-			("pubspec.lock", "dart"),
-			("Package.resolved", "swift"),
-			("stack.yaml.lock", "stack"),
-			("cabal.project.freeze", "cabal"),
-			("pdm.lock", "pdm"),
-			("Pipfile.lock", "pipenv"),
-			("justfile", "just"),
-			("Taskfile.yml", "task"),
-			("turbo.json", "turbo"),
-			("nx.json", "nx"),
-		] {
-			let tmp = TempDir::new().unwrap();
-			write(tmp.path(), file, "");
-			let d = detect_drivers(tmp.path(), &EngineMap::new())
-				.unwrap_or_else(|e| panic!("{file} should select {tool}: {e}"));
-			assert_eq!(d.tool, tool, "{file} → {tool}");
-		}
-	}
-
-	#[test]
-	fn new_tool_invoke_forms() {
-		assert_eq!(
-			DriverRegistry::get("mix").unwrap().invoke("test"),
-			"mix test"
+		assert_eq!(ws[0].rel_path, ".");
+		assert_eq!(ws[0].driver.as_ref().unwrap().tool, "gradle");
+		let build = ws[0].task("build").unwrap();
+		assert!(
+			build.command.ends_with("gradlew build"),
+			"{}",
+			build.command
 		);
 		assert_eq!(
-			DriverRegistry::get("dart").unwrap().invoke("get"),
-			"dart pub get"
+			build.config.outputs.as_deref(),
+			Some(&["build/**".to_string()][..])
 		);
-		assert_eq!(
-			DriverRegistry::get("turbo").unwrap().invoke("build"),
-			"turbo run build"
-		);
-		assert_eq!(
-			DriverRegistry::get("nx").unwrap().invoke("build"),
-			"nx run build"
-		);
-	}
-	#[test]
-	fn only_the_agnostic_task_runners_have_no_language() {
-		// `just` and `task` run whatever a directory happens to be, so there is no
-		// ecosystem to name. Every other driver belongs to one.
-		for spec in DriverRegistry::known() {
-			let agnostic = matches!(spec.tool, "just" | "task");
-			assert_eq!(
-				spec.language.is_none(),
-				agnostic,
-				"'{}' has language {:?}, which does not match its role",
-				spec.tool,
-				spec.language
-			);
-		}
 	}
 
 	#[test]
-	fn a_language_slug_is_lowercase_and_reused_across_its_tools() {
-		for spec in DriverRegistry::known() {
-			if let Some(language) = spec.language {
-				assert_eq!(language, language.to_lowercase(), "{}", spec.tool);
-				assert!(!language.is_empty());
-			}
-		}
-		// The families that exist to be shared really are shared.
-		let node: Vec<&str> = DriverRegistry::known()
-			.iter()
-			.filter(|s| s.language == Some("node"))
-			.map(|s| s.tool)
-			.collect();
-		assert!(node.contains(&"npm") && node.contains(&"pnpm") && node.contains(&"node"));
+	fn a_package_json_with_nothing_to_go_by_asks_for_a_driver() {
+		let dir = TempDir::new().unwrap();
+		write(dir.path(), "tools/gen/package.json", "{}");
+		let err = discover_workspaces(dir.path(), &config(r#"{"workspaces": ["tools/*"]}"#))
+			.unwrap_err()
+			.to_string();
+		assert!(err.contains("npm, pnpm, yarn, bun"), "{err}");
+		assert!(
+			err.contains(r#""overrides": { "gen": { "driver": "npm" } }"#),
+			"{err}"
+		);
+
+		let ws = discover_workspaces(
+			dir.path(),
+			&config(r#"{"workspaces": ["tools/*"], "overrides": {"gen": {"driver": "yarn"}}}"#),
+		)
+		.unwrap();
+		assert_eq!(ws[0].driver.as_ref().unwrap().via, Evidence::Declaration);
+	}
+
+	#[test]
+	fn a_workspace_with_no_driver_runs_only_what_its_override_writes() {
+		let dir = TempDir::new().unwrap();
+		std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
+		let ws = discover_workspaces(
+			dir.path(),
+			&config(
+				r#"{"workspaces": ["scripts"], "overrides": {"scripts": {"driver": "none", "tasks": {"build": "make"}}}}"#,
+			),
+		)
+		.unwrap();
+		assert!(ws[0].driver.is_none());
+		assert_eq!(ws[0].command_for("build"), Some("make"));
+		assert_eq!(
+			ws[0].task("build").unwrap().config.outputs,
+			None,
+			"a written-out command gets no guessed outputs"
+		);
+	}
+
+	#[test]
+	fn two_packages_that_share_a_directory_name_are_named_by_path() {
+		let dir = TempDir::new().unwrap();
+		write(dir.path(), "apps/web/go.mod", "module a\n");
+		write(dir.path(), "sites/web/go.mod", "module b\n");
+		let ws = discover_workspaces(
+			dir.path(),
+			&config(r#"{"workspaces": ["apps/*", "sites/*"]}"#),
+		)
+		.unwrap();
+		let names: Vec<&str> = ws.iter().map(|w| w.name.as_str()).collect();
+		assert_eq!(names, ["apps/web", "sites/web"]);
+	}
+
+	#[test]
+	fn skipped_tasks_name_who_sat_out_and_catch_a_typo() {
+		let dir = pnpm_monorepo();
+		let ws = discover_workspaces(dir.path(), &config("{}")).unwrap();
+		let notes = skipped_task_notes(&ws, &["lint".to_string()]);
+		assert_eq!(notes, ["no 'lint' task in web, so they sit this one out"]);
+		let notes = skipped_task_notes(&ws, &["biuld".to_string()]);
+		assert!(
+			notes.iter().any(|n| n.contains("Did you mean 'build'?")),
+			"{notes:?}"
+		);
 	}
 }
