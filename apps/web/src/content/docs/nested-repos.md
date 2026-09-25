@@ -9,245 +9,129 @@ order: 3
 
 Some subtrees already have a task runner, a lockfile, and an internal dependency
 graph of their own. You do not have to flatten one into individual Lattice
-workspaces to bring it into the graph. Declare it as a single workspace whose
-`scripts` shell out to the runner it already has, and it becomes one node
-Lattice schedules and caches like any other.
+workspaces to bring it into the graph. List its directory, and Lattice runs it
+as one workspace through the runner it already has, scheduled and cached like any
+other.
 
-This guide works through `examples/nested-repo` in the Lattice repo. Every block
-below was captured against a copy of it.
+This guide works through `examples/nested-repo` in the Lattice repo.
 
 ## The shape
 
 ```text
 lattice.json           two workspaces: frontend, api
-frontend/              an inner monorepo with its own task runner and lockfile
+frontend/              an inner monorepo: turbo.json, package.json workspaces, a lockfile
   packages/ui/         built first (an inner dependency)
   packages/site/       depends on ui, emits dist/bundle.js
-services/api/          reads site's bundle at run time
+services/api/          a directory of shell scripts that serves site's bundle
 ```
 
-`frontend` wraps a repo with its own inner ordering, `ui` before `site`. `api`
-reads what `frontend` produced.
-
-## Declare the wrapper
+## The config
 
 ```json
 {
   "$schema": ".lattice/schema.json",
   "latticeVersion": "1.1.1",
-  "workspaces": [
-    {
-      "name": "frontend",
-      "path": "frontend",
-      "auto": false,
-      "scripts": {
-        "build": "sh -c 'if [ -x node_modules/.bin/turbo ]; then node_modules/.bin/turbo run build; else echo \"[frontend] turbo is not installed — run: (cd frontend && npm install)\" >&2; exit 1; fi'",
-        "test": "sh -c 'if [ -x node_modules/.bin/turbo ]; then node_modules/.bin/turbo run test; else echo \"[frontend] turbo is not installed — run: (cd frontend && npm install)\" >&2; exit 1; fi'",
-        "clean": "sh -c 'rm -rf .turbo packages/*/dist && echo \"frontend clean complete\"'"
+  "workspaces": ["frontend", "services/api"],
+  "overrides": {
+    "frontend": {
+      "tasks": {
+        "build": {
+          "outputs": ["packages/*/dist/**"],
+          "ignore": ["**/node_modules/**", "**/.turbo/**"]
+        }
       }
     },
-    {
+    "services/api": {
       "name": "api",
-      "path": "services/api",
-      "auto": false,
       "dependsOn": ["frontend"],
-      "scripts": {
-        "build": "mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh && echo 'api built'",
-        "test": "sh -c 'test -x dist/serve.sh && echo \"api test ok\"'",
-        "serve": "sh dist/serve.sh",
-        "clean": "sh -c 'rm -rf dist && echo \"api clean complete\"'"
+      "tasks": {
+        "build": "mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh",
+        "test": "test -x dist/serve.sh",
+        "serve": { "run": "sh dist/serve.sh", "dependsOn": ["build"], "cache": false },
+        "clean": "rm -rf dist"
       }
     }
-  ],
-  "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["**/*"],
-      "ignore": ["**/node_modules/**", "**/.turbo/**", "**/dist/**"],
-      "outputs": ["dist/**", "packages/*/dist/**"]
-    },
-    "test": {
-      "dependsOn": ["build"],
-      "inputs": ["**/*"],
-      "ignore": ["**/node_modules/**", "**/.turbo/**", "**/dist/**"]
-    },
-    "serve": {
-      "dependsOn": ["build"],
-      "cache": false
-    },
-    "clean": {
-      "cache": false
-    }
-  },
-  "settings": {
-    "maxCacheSize": "1GB"
   }
 }
 ```
 
-Nothing here names the inner packages, and the root declares no `engines`. The
-runner Lattice invokes for `frontend:build` comes from that repo's own
-`node_modules`, installed the ordinary way for its ecosystem
-(`cd frontend && npm install`).
+## Why `frontend` needs no commands
 
-## Set `auto: false` on the wrapper
+`frontend` is listed in `workspaces`, so it is one workspace. Its own
+`package.json` names `packages/*` as workspaces, but only the repo root's
+workspace files are expanded, so Lattice never sees `ui` or `site` individually.
 
-Both workspaces set `"auto": false`, which skips driver detection and runs only
-what `scripts` declares. A wrapped subtree wants that, because the handoff is
-specific: which runner binary, invoked from where, with which flags. Detection
-has no way to produce that.
+Its `turbo.json` makes turbo its driver, and every task in that file becomes a
+task Lattice can run there: `build`, `test` and `clean` run as `turbo run build`
+and so on. `turbo` itself is found in `frontend/node_modules/.bin`, which Lattice
+puts on the task's `PATH`, so it comes from the inner repo's own install
+(`cd frontend && npm install`) and the root pins nothing.
 
-The script above names `node_modules/.bin/turbo` by path so it can test for the
-binary and print an install hint when it is missing. Locating it is not the
-reason: Lattice puts `frontend/node_modules/.bin` on the task's `PATH`, so a
-bare `turbo run build` would find the same binary. Write the plain command if
-you do not want the guard.
+`api` is the opposite case: a directory with no manifest at all. Its override
+writes each command out and gives it a name, because a path-keyed override is how
+you reach a workspace whose directory is its only identity.
 
-A manual workspace needs a script for any task you run directly against it.
-`frontend` has no `serve` script, because it has nothing to serve. Running
-`serve` repo-wide, or filtered to `api`, works. Running it scoped to `frontend`
-fails to resolve. A task pulled in only as a dependency is skipped where a
-workspace has no command for it.
+## Cover the whole subtree
 
-## Cover the whole subtree with `inputs`
-
-The inner runner tracks its own file dependencies and keeps its own cache. That
-changes what your `inputs` and `outputs` need to cover, not whether you declare
-them. Lattice hashes `frontend` as one unit with no view into `ui` or `site`
-individually, so `inputs` has to catch a change anywhere inside:
-
-```json
-{
-  "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["**/*"],
-      "ignore": ["**/node_modules/**", "**/.turbo/**", "**/dist/**"],
-      "outputs": ["dist/**", "packages/*/dist/**"]
-    }
-  }
-}
-```
-
-`**/*` is wide because the wrapped repo owns its internal layout. The precision
-lives in `ignore`:
+Lattice hashes `frontend` as one unit with no view inside it. With no `inputs`,
+every file in the workspace that git does not ignore is hashed, which catches a
+change anywhere. The `ignore` list keeps out what changes without the source
+changing:
 
 | Ignored | Why |
 | --- | --- |
-| `**/node_modules/**` | The installed tree. The lockfile is hashed instead. See [Caching](/lattice/docs/caching). |
-| `**/.turbo/**` | The inner runner's own cache directory. It changes on every run regardless of source, which would make every build a miss. |
-| `**/dist/**` | Build output. An output glob left inside `inputs` feeds yesterday's build into today's key. |
+| `**/node_modules/**` | The installed tree. The lockfile is hashed instead |
+| `**/.turbo/**` | The inner runner's own cache. It changes on every run, which would make every build a miss |
 
-`outputs` has to name every artifact directory the wrapped repo produces, at
-every level: `dist/**` for `api`, `packages/*/dist/**` for each inner package.
-Lattice restores exactly those paths on a hit and no others.
+`outputs` names every artifact directory the inner repo produces. A workspace
+driven by turbo has no default `build` output, because the runner could write
+anywhere, so it has to be said: `packages/*/dist/**`. A hit restores exactly
+those paths.
 
 ## Two caches, not one
 
-Wrapping a subtree does not disable its inner cache. It adds a second one above
-it. Lattice's cache covers `frontend` as a whole, and a hit restores every inner
-package's `dist/` in one step without invoking the inner runner at all. The
-inner cache covers individual packages, and it only comes into play on a Lattice
-miss, when Lattice hands the whole workspace back to its runner and the runner
-decides package by package what reruns.
-
-So the first build after a change inside `frontend` costs one inner rebuild,
-narrowed by the inner cache to the package that changed. The second costs
-nothing. This is the trade the wrapper buys: Lattice's cache is coarse and
-language-agnostic, which is what lets the rest of the repo treat `frontend` as
-one node.
+Wrapping a subtree does not disable its inner cache. It adds one above it. A
+Lattice hit restores every inner package's `dist/` in one step without starting
+the inner runner. A miss hands the whole workspace back to the runner, which
+decides package by package what reruns. The first build after a change inside
+`frontend` costs one narrowed inner rebuild; the second costs nothing.
 
 ## Run it
 
-With the inner repo's dependencies installed once
-(`cd frontend && npm install`), from the repo root:
-
-```text
-$ lattice run build
-frontend:build: running
-frontend:build: done (1.43s)
-api:build: running
-api:build: done (0.01s)
-lattice: 2 tasks, 0 cached, 0 failed, 1.46s
-```
-
-Again with nothing changed, and both workspaces come back from cache without the
-inner runner executing:
-
-```text
-$ lattice run build
-frontend:build: cache hit [176b1a72]
-api:build: cache hit [25020aef]
-lattice: 2 tasks, 2 cached, 0 failed, 0.01s, 1.44s saved
-lattice: full power, nothing to run
-```
-
-Edit a file anywhere under `frontend`, say `packages/ui/src/index.js`, and both
-workspaces rerun. `frontend` misses because its `inputs` changed, and `api`
-misses because a task's cache key includes the keys of its prerequisites:
-
-```text
-$ lattice run build
-frontend:build: running
-frontend:build: done (0.54s)
-api:build: running
-api:build: done (0.01s)
-lattice: 2 tasks, 0 cached, 0 failed, 0.56s
-```
-
-To see which of the two reasons applied, add `-v`. The miss line names the
-component that moved, `inputs changed` for `frontend` and
-`dependencies changed` for `api`. See [Caching](/lattice/docs/caching).
-
-## Check the handoff before it runs
-
-`--dry-run` prints the resolved commands and executes nothing, which is how to
-read a handoff script before it fires:
+With the inner repo's dependencies installed once, from the repo root:
 
 ```text
 $ lattice run build --dry-run
 ❖ lattice  dry run · build
-  → frontend:build  sh -c 'if [ -x node_modules/.bin/turbo ]; then node_modules/.bin/turbo run build; else echo "[frontend] turbo is not installed — run: (cd frontend && npm install)" >&2; exit 1; fi'
-  → api:build  mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh && echo 'api built'
+  → frontend:build  turbo run build
+  → api:build  mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh
 ```
 
-## Run a task only the wrapper's dependent has
+`api` waits for `frontend` because the override says it depends on it, and
+`build` depends on `^build`. A second run comes back from cache for both. Edit
+`frontend/packages/ui/src/index.js` and both rerun: `frontend` because its inputs
+moved, and `api` because its prerequisite's key did.
 
-`serve` exists on `api` alone, so filter to it. `serve` depends on `build`, so
-the filter still pulls `frontend:build` in and `api` never serves a bundle that
-was not built:
+## A task only one workspace has
 
-```text
-$ lattice run serve --filter api -v
-lattice: running `build+serve` across 2 workspaces
-lattice: frontend:build: hash 4a12ab5673815fee
-frontend:build: cache hit [4a12ab56]
-lattice: api:build: hash e29eccac6575e5f2
-api:build: cache hit [e29eccac]
-lattice: api:serve: hash 31369803a034db9a
-api:serve: running
-api:serve: api serving:
-api:serve: module.exports = {"site":"site@1","button":"ui/button@1"};
-api:serve: done (0.01s)
-lattice: 3 tasks, 2 cached, 0 failed, 0.01s, 0.55s saved
-```
+`serve` exists on `api` alone. `lattice run serve` runs it there, and `frontend`
+sits it out. `serve` depends on `build`, so `frontend:build` and `api:build` run
+first, from cache when nothing changed, and `api` never serves a bundle that was
+not built.
 
-See [Selecting what runs](/lattice/docs/filtering).
+`serve` is one of the names Lattice treats as a long-running server, so the run
+streams and waits for it to exit. This example's `serve.sh` prints the bundle and
+exits, which Lattice reports as `api:serve: exited (code 0)`. A real server would
+keep running until `Ctrl-C`. See [Persistent tasks](/lattice/docs/persistent-tasks).
 
 ## Wrap, or flatten?
 
-Wrap the subtree as one workspace when:
+Wrap the subtree as one workspace when it has its own runner and internal graph
+that the rest of the repo does not need to schedule, and when its packages are
+built and tested together.
 
-- it has its own task runner, lockfile, and internal dependency graph, and the
-  rest of the repo does not need to schedule that graph
-- its packages are only ever built or tested together, never targeted
-  individually from outside the subtree
-- adopting it incrementally matters more than exposing its internals. See
-  [Adopting Lattice](/lattice/docs/adopting-lattice).
-
-Flatten it into individual workspaces when another workspace needs to depend on
-one specific inner package, when you want a rebuild narrowed to the single inner
-package that changed, or when the inner runner is the only thing standing
-between you and running one package's tests directly. Flattening trades the
-one-line handoff for per-package caching and dependency edges at Lattice's own
-resolution.
+Flatten it — make its members workspaces, by adding them to the root's workspace
+file or to `workspaces` — when another workspace needs to depend on one specific
+inner package, or when you want a rebuild narrowed to the one package that
+changed. Flattening trades the one-line handoff for per-package caching and
+edges at Lattice's own resolution.

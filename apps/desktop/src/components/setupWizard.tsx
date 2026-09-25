@@ -55,6 +55,7 @@ const SetupWizard = () => {
 			candidates: (scan?.candidates ?? []).filter((c) => chosenWorkspaces.has(c.path)),
 			pins: (scan?.pins ?? []).filter((pin) => chosenPins.has(pin.engine)),
 			offered: (scan?.candidates ?? []).map((c) => c.path),
+			rootSettings: scan?.rootSettings ?? null,
 		}),
 		[scan, chosenWorkspaces, chosenPins],
 	);

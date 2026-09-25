@@ -1,179 +1,223 @@
 # `lattice.json` reference
 
-One file at the repo root drives everything. Every command that reads config
-walks up from the current directory to the nearest `lattice.json` and treats
-that directory as the repo root. With no config in this directory or any parent:
+One optional file at the repo root. Every command that reads config walks up
+from the current directory to the nearest `lattice.json` and treats that
+directory as the repo root. With none in this directory or any parent:
 
 ```text
-Error: no lattice.json found in this directory or any parent. Run `lattice init` to create one
+error: no lattice.json found in this directory or any parent. Run `lattice init` to create one
 ```
 
-Every top-level key is optional, so `{}` parses and validates.
+Every key is optional, so `{}` is a complete config for a repo whose own
+workspace files already name its workspaces. What the file holds is only what
+discovery cannot work out: extra workspace directories, exclusions, task
+settings, per-workspace overrides, engine pins, and cache settings.
 
-A key the config does not define, at any level, fails the load. There is no way
-to park an extra key in the file.
+A key the config does not define, at any level, fails the load:
 
 ```text
-Error: unknown field `output` in tasks.build (lattice.json line 1, column 32)
+error: unknown field `output` in tasks.build (lattice.json line 1, column 27)
 Did you mean `outputs`?
-Fields accepted here: dependsOn, inputs, outputs, ignore, env, persistent, cache, timeout
+Fields accepted here: run, dependsOn, inputs, outputs, ignore, env, persistent, cache, timeout
 ```
 
-The message names the key, the object holding it, the position, the nearest
-valid field when one is within one or two edits, and every field accepted there.
-The container reads the way it does in the file: `tasks.build`,
-`workspaces[1]`, `engines.node`, or `at the top level of lattice.json`.
+The message names the key, the object holding it (`tasks.build`,
+`overrides.web`, `engines.node`, or `at the top level of lattice.json`), the
+position, the nearest valid field within one or two edits (a swap of two
+neighbouring letters counts as one), and every field accepted there.
 
-A key written twice in the same object also fails the load. There is no
-last-wins behavior in `tasks`, `engines`, a workspace's `engines`, or a
-workspace's `scripts`:
+A key written twice in a map fails too. There is no last-wins behavior in
+`tasks`, `engines`, `overrides`, an override's `engines`, or an override's
+`tasks`:
 
 ```text
-Error: duplicate key `build` in tasks (lattice.json line 1, column 58)
+error: duplicate key `build` in tasks (lattice.json line 1, column 33)
 Keep one of them: the second replaces the first, so only the last would take effect
 ```
 
-The container is one of exactly four: `tasks`, `engines`,
-`workspaces[<n>].engines`, or `workspaces[<n>].scripts`. The position is where
-the JSON parser finished the object, so it points at the closing brace rather
-than the repeat. Merge the two entries by hand.
-
-Everywhere else a repeated key is a repeated field on a fixed object, and serde
-reports it in its own words under a `Caused by:`. That covers a top-level key, a
-key inside `settings`, a key on a workspace entry, and a key inside one task:
+The position is where the parser finished the object, so it points at the
+closing brace rather than the repeat. A field repeated on a fixed object — a
+top-level key, a key inside `settings`, an override, or one task — is reported
+by the parser in its own words:
 
 ```text
-Error: failed to parse lattice.json
+error: failed to parse lattice.json
+  duplicate field `name` at line 1 column 36
+```
 
-Caused by:
-    duplicate field `path` at line 1 column 52
+A 1.x config, one whose `workspaces` holds objects, is refused before anything
+else is checked:
+
+```text
+error: lattice.json is written for Lattice 1.x, which listed every workspace as an object with a name and a path. Run `lattice migrate` to rewrite it for this version
 ```
 
 ## Top level
 
-Eight keys.
+| Field | Type | Default |
+| --- | --- | --- |
+| `$schema` | `string` | none |
+| `latticeVersion` | `string` | none |
+| `workspaces` | array of `string` | `[]` |
+| `exclude` | array of `string` | `[]` |
+| `engines` | engine map | `{}` |
+| `globalDependencies` | array of `string` | `[]` |
+| `globalEnv` | array of `string` | `[]` |
+| `tasks` | object of task name to task object | `{}` |
+| `overrides` | object of key to override object | `{}` |
+| `settings` | settings object | `{}` |
 
-| Field | Type | Required | Default |
-| --- | --- | --- | --- |
-| `$schema` | `string` | no | none |
-| `latticeVersion` | `string` | no | none |
-| `workspaces` | array of workspace objects | no | `[]` |
-| `engines` | engine map | no | `{}` |
-| `globalDependencies` | array of `string` | no | `[]` |
-| `globalEnv` | array of `string` | no | `[]` |
-| `tasks` | object of `string` to task object | no | `{}` |
-| `settings` | settings object | no | `{}` |
-
-There is no `projects` key, no `pipeline` key, and no `include` or `extends`.
-
-`globalDependencies` holds globs relative to the **repo root**. Their contents
-are hashed into every task's cache key. A task's `inputs` are relative to its own
-workspace and the `tasks` map is shared across workspaces, so a file above a
-workspace has no `inputs` spelling that means the same thing everywhere. This is
-where it goes. `globalEnv` is the same idea for variable names: hashed into every
-key, resolved from the ambient environment, and not re-exported to the task,
-which already inherits it.
+There is no `projects`, `pipeline`, `include` or `extends` key.
 
 `$schema` is conventionally `".lattice/schema.json"`, a copy of the bundled
-schema written next to the config so editors validate and autocomplete it. Every
-command that loads config writes that file **only when it is absent**. An
-existing copy is never overwritten, even by a newer release. `lattice init`
-overwrites it unconditionally. The schema sets `additionalProperties: false` at
-every level, matching the parser, so a typo is underlined as you type and fatal
-when you run. It is the one thing under `.lattice/` meant to be committed;
-`cache/`, `toolchains/`, `bin/`, and `setup/` are gitignored.
+schema written next to the config so editors validate and autocomplete it.
+Every command that loads the config writes that file when it is missing or
+differs from the binary's own copy (line endings aside), and `lattice init` and
+`lattice migrate` write it too. Commit it. The rest of `.lattice/` — `cache/`,
+`toolchains/`, `bin/`, `setup/` — is per-machine and gitignored.
 
-`latticeVersion` pins which Lattice release this repo runs. `lattice upgrade`
-writes it. The value has to parse as a version, with an optional leading `v`.
-Anything else fails by name rather than as a failed download:
-`lattice.json pins \`latticeVersion\` as "<value>", which is not a version. Write
-it like 0.2.0, or run \`lattice upgrade <version>\` to set it`. `"v1.1.1"` and
-`"1.1.1"` name the same release. When either one names the running build, the pin
-is a no-op. A binary that Lattice itself installed under `.lattice/bin` reads the
-pin on every invocation, installs the pinned version if needed, and hands the
-invocation over to it. A binary from anywhere else is never replaced: it prints
-a one-line advisory nag instead, and only in an interactive session.
+`latticeVersion` pins which Lattice release the repo runs; `lattice upgrade`
+writes it. A binary Lattice installed under `.lattice/bin` hands every
+invocation over to the pinned version, installing it if needed, and refuses a
+value that does not parse as a version: `lattice.json pins \`latticeVersion\`
+as "<value>", which is not a version. Write it like 0.2.0, or run \`lattice
+upgrade <version>\` to set it`. Any other binary (npm, `cargo install`, a
+source build) runs as it is and prints a one-line nag in an interactive
+session.
 
-## The workspace object
+`globalDependencies` holds globs relative to the **repo root** whose contents
+are hashed into every task's cache key: the only way to cover a file above a
+workspace, such as a base `tsconfig.json` or a shared schema directory.
+`globalEnv` holds variable names hashed into every key, resolved from the
+ambient environment and not re-exported (the task inherits it anyway).
 
-| Field | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `name` | `string` | yes | none | Unique across the file. |
-| `path` | `string` | yes | none | Literal directory relative to the repo root. Never a glob. |
-| `auto` | `boolean` | no | `true` | Infer the driver and each task's command from the directory's own evidence. `false` disables all inference. |
-| `engines` | engine map | no | `{}` | Per-workspace constraints. A key here overrides the same key at the root. |
-| `dependsOn` | array of `string` | no | none | Other workspaces, by `name`. |
-| `scripts` | object of `string` to `string` | no | `{}` | Task name to exact shell command. Wins over anything inferred. |
+## `workspaces` and `exclude`
 
-`path` is a literal directory. `"apps/*"` matches nothing and fails:
+`workspaces` adds directories to the ones the repo root's own workspace files
+name (`package.json` `workspaces`, `pnpm-workspace.yaml`, Cargo `[workspace]`,
+`go.work`, uv `[tool.uv.workspace]`, deno `workspace`). Each entry is a
+directory or a glob relative to the root: `"services/api"`, `"apps/*"`,
+`"packages/**"`. `*` does not cross a `/`. `"."` is the root itself.
 
-```text
-Error: workspace path 'apps/*' does not point to a directory. A workspace path is one literal directory, not a glob
-```
+`exclude` is globs of workspace paths removed from everything discovery found,
+native or listed.
 
-There is no `glob` field and no way to expand one workspace entry into several.
-Declare each directory.
+- An entry with no glob character is looked up directly; if it is not a
+  directory, the load fails: ``error: `workspaces` entry 'tolls/*' matches no
+  directory. Check the spelling, or remove the entry`` (the same wording for a
+  glob that matches nothing).
+- A glob walks the tree, skipping hidden and gitignored directories and
+  `node_modules`, `target`, `dist`, `build`, `out`, `vendor`, `venv` and
+  `__pycache__`.
+- A directory an entry matches that holds nothing Lattice recognizes is not a
+  workspace and says nothing, unless an override writes out a command for it.
+- A directory listed here is one workspace whatever it contains: a nested
+  monorepo, a Cargo workspace, a Gradle build with subprojects. Only the repo
+  root's workspace files are expanded into members.
+- With no native members and no `workspaces`, the root is the one workspace.
+  With either, the root is a workspace only if listed as `"."`, or if it is a
+  Cargo package or uv project as well as a workspace root.
 
-Two workspaces cannot share a `name`, and two cannot resolve to the same
-directory. Both are errors, not a merge.
-
-`dependsOn` on a workspace declares nothing about ordering by itself. It takes
-effect only where some task's `dependsOn` uses a `^`-prefixed name.
-
-Every `scripts` key must name a task declared under the root `tasks`. A
-`scripts` entry supplies the command for the root task of the same name and
-nothing else, so a key outside `tasks` is unreachable in every configuration:
-
-```text
-Error: workspace 'core' declares a script 'biuld', but 'biuld' is not defined in `tasks`, so nothing would ever run it
-Did you mean `build`?
-Defined tasks: build, test
-```
-
-When there is no `tasks` map to suggest from, the last line is ``Add '<key>' to
-`tasks` in lattice.json, or remove the script``. The typo is usually in the task
-name rather than in the command, so fix the name instead of deleting the
-`scripts` entry. Do not delete the entry without asking.
-
-With `auto: true`, a task the resolved driver has no command for is skipped
-silently for that workspace. Not every workspace has to run every task. With
-`auto: false`, the same situation is fatal:
+Entries must stay inside the repo:
 
 ```text
-Error: workspace 'app' has "auto": false and declares no command for task 'dev'. Add the command under this workspace's "scripts" map in lattice.json
+error: `workspaces` entry '../x' points outside the repo root. Every workspace has to be inside the repo
 ```
 
-Under `--filter`, this check covers the workspaces the pattern matched. A
-workspace pulled in only as a dependency is asked only for the tasks its
-dependents need.
+An absolute or drive-prefixed entry, whitespace around a directory name, and an
+invalid glob (``error: `workspaces` entry 'a/[' is not a valid glob``) are
+rejected the same way, in `exclude` too. A directory that resolves outside the
+repo through a symlink is rejected at discovery.
+
+## Workspace names
+
+A workspace takes the name its manifest gives it: `package.json` `name` (scope
+included), else Cargo `[package] name`, else pyproject `[project] name`, else
+`composer.json` `name`, else its directory's name (the root's directory name for
+the root). Two that derive the same name are both named by their relative path.
+Two named the same on purpose, through `overrides`, fail:
+
+```text
+error: two workspaces are named 'web'. Give each a different `name` in `overrides`
+```
+
+## `overrides`
+
+Keys are **workspace names**, or **globs over workspace paths** when the key is
+`"."` or contains a `/` or a glob character (`*`, `?`, `[`, `{`). A top-level
+directory is matched by path as `"./tools"`. A name key matches the discovered
+name, or a name a path override gave the workspace.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `string` | The workspace's name, in place of its manifest's. Non-empty |
+| `driver` | `string` | The tool that runs its tasks: any driver in `toolchains.md`, or `"none"` for a workspace whose every task is written out under `tasks` |
+| `engines` | engine map | Pins for these workspaces, over the root `engines` per name |
+| `dependsOn` | array of `string` | Workspace names this one depends on beyond what its manifest says |
+| `tasks` | object of task name to command string or task object | Commands and settings for these workspaces |
+
+Several keys can match one workspace. They apply in the order written: `name`
+and `driver` last-wins, `engines` merged per name, `dependsOn` combined without
+repeats, and each task layered field by field.
+
+A task value is a command string (`"build": "vite build"`) or a task object; a
+task object's `run` is the command. A task with a `run` replaces the command
+discovery found, or adds a task the workspace did not have. A task object with
+no `run` changes only the settings of a task the workspace already has, and
+does nothing in a workspace that lacks it.
+
+Errors:
+
+```text
+error: `overrides` key 'weeb' names no workspace
+Did you mean `web`?
+Workspaces: api, web
+```
+
+```text
+error: workspace 'gen' names driver 'pnmp', which Lattice does not know
+Did you mean `pnpm`?
+Use one of node, deno, bun, pnpm, yarn, npm, cargo, go, uv, poetry, pdm, pipenv, pip, python, bundler, rake, ruby, gradle, maven, java, kotlin, dotnet, nuget, pod, swift, composer, mix, dart, stack, cabal, just, task, turbo, nx, or "none" and write each task's command under `tasks`
+```
+
+```text
+error: workspace 'web' depends on 'apii', which is not a workspace
+Did you mean `api`?
+Workspaces: api, web
+```
+
+A path key that matches nothing says `matches no workspace path`. A workspace
+that lists itself in `dependsOn` fails with `workspace '<name>' lists itself in
+\`dependsOn\``. An empty `name` fails with ``\`overrides.<key>.name\` is
+empty``.
 
 ## The engine map
 
-Name-keyed. Each value is either a bare version-constraint string or an object.
+Name-keyed. Each value is a bare version-constraint string or an object. Root
+`engines` apply to every workspace; override `engines` win per name.
 
 ### String form
 
 ```json
-{ "engines": { "node": ">=20.0.0" } }
+{ "engines": { "node": ">=22" } }
 ```
 
-Valid only for one of the 40 well-known engine names in `toolchains.md`. Any
-other name is rejected when the config loads, with the object form spelled out:
+Valid only for the 40 well-known engine names in `toolchains.md`:
 
 ```text
-Error: engine 'alpes' in root uses the string form, which carries only a version. 'alpes' is not a well-known engine, so Lattice cannot version-check it on its own. Use the object form with a `versionCmd`, like this: "alpes": { "version": ">=1.0.0", "versionCmd": "alpes --version" }
+error: engine 'alpes' in root uses the string form, which carries only a version. 'alpes' is not a well-known engine, so Lattice cannot version-check it on its own. Use the object form with a `versionCmd`, like this: "alpes": { "version": ">=1.0.0", "versionCmd": "alpes --version" }
 ```
 
-The scope in that message is `root` or `workspace '<name>'`.
+The scope reads `root` or `overrides.<key>`.
 
 ### Object form
 
-| Field | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `version` | `string` | no | none | Constraint, such as `">=13.0.0"`. |
-| `versionCmd` | `string` | no | none | Command that prints the tool's version. |
-| `installCmd` | `string` | no | none | Command that installs the toolchain. Its presence is what selects provisioning. |
-| `bin` | `string` | no | `"bin"` | Bin directory relative to the install, prepended to the task's `PATH`. Must be relative, non-empty, and inside the install. |
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `version` | `string` | none | Constraint, such as `">=13.0.0"`, `"^1.75"`, or a bare `"22.11.0"` (read as `^22.11.0`) |
+| `versionCmd` | `string` | the built-in rule | Command that prints the tool's version |
+| `installCmd` | `string` | none | Command that installs the tool. Its presence selects provisioning |
+| `bin` | `string` | `"bin"` | Directory inside the install to put on `PATH`. Relative, non-empty, inside the install |
 
 ```json
 {
@@ -181,187 +225,96 @@ The scope in that message is `root` or `workspace '<name>'`.
     "protoc": {
       "version": ">=25.0.0",
       "versionCmd": "protoc --version",
-      "installCmd": "curl -fsSL https://example.com/protoc.sh | sh -s -- \"$LATTICE_TOOLCHAIN_DIR\"",
-      "bin": "bin"
+      "installCmd": "curl -fsSL https://example.com/protoc.sh | sh -s -- \"$LATTICE_TOOLCHAIN_DIR\""
     }
   }
 }
 ```
 
-A `version` on a name outside the well-known table needs a `versionCmd` beside
-it. Config validation does not catch the omission; the first real run does:
+A value that is neither form fails while parsing (`invalid type: integer
+\`20\`, expected a version constraint string or an engine object`). A `bin` of
+`"/usr/bin"` or `"../../.."` fails at load:
 
 ```text
-Error: engine 'protoc' has a version constraint but no way to check the installed version. 'protoc' is not a well-known engine, so add a `versionCmd` to it
+error: engine 'node' in overrides.web has a `bin` of '/usr/bin', which is not relative to the toolchain install. Write `bin` as a path inside the toolchain directory, like "bin"
 ```
 
-A value that is neither a string nor an object is rejected while parsing:
-
-```text
-Error: failed to parse lattice.json
-
-Caused by:
-    invalid type: integer `20`, expected a version constraint string or an engine object at line 1 column 25
-```
-
-Lattice joins `bin` to the toolchain's install directory and puts the result at
-the front of the `PATH` of every task that resolves the engine. The config load
-checks that the value is relative, non-empty, free of whitespace around a
-component, and inside the install directory. `"bin"`, `"."`, `"usr/local/bin"`,
-and `"bin/../libexec"` pass. `"/usr/bin"` and `"../../.."` do not:
-
-```text
-Error: engine 'node' in root has a `bin` of '/usr/bin', which is not relative to the toolchain install. Write `bin` as a path inside the toolchain directory, like "bin"
-```
-
-An absolute `bin` would replace the install path outright. A directory Lattice
-never provisioned would go in front of every command, and the run would still
-report a provisioned toolchain. The scope in the message is `root` or
-`workspace '<name>'`.
-
-A workspace's `engines` map merges with the root's; the workspace wins per key.
-See `toolchains.md` for which shape selects which mode and where a provisioned
-tool lands.
+A `version` on a name with no built-in rule and no `versionCmd` passes the load
+and fails the first run with `engine '<name>' has a version constraint but no
+way to check the installed version`.
 
 ## The task object
 
-Keys under `tasks` are task names you choose. Declaration order is preserved and
-means nothing; the dependency graph decides execution order. An empty task
-object `{}` is valid.
+Used in the root `tasks` map (how a task behaves in every workspace that has
+it) and in an override's `tasks` (for the workspaces it matches). A task does
+not need an entry in either to run.
 
-| Field | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `dependsOn` | array of `string` | no | none | `^task` is that task in each workspace this one depends on. Bare `task` is that task in this same workspace. |
-| `inputs` | array of `string` | no | none | Workspace-relative globs whose file contents feed the cache key. |
-| `outputs` | array of `string` | no | none | Workspace-relative globs captured as the cached artifact. |
-| `ignore` | array of `string` | no | none | Globs subtracted from what `inputs` matched. |
-| `env` | array of `string` | no | none | Variable *names* whose resolved values feed the cache key. |
-| `persistent` | `boolean` | no | `false` | Never cached, forces raw output for the whole run, must be a graph leaf. Its exit is reported, and a non-zero one fails the run. A command is inferred for it only in a workspace whose driver reads a script map or is a task runner; anywhere else it needs a `scripts` entry. |
-| `cache` | `boolean` | no | `true` | `false` opts a non-persistent task out of caching. |
-| `timeout` | `string` or integer | no | none | `"90s"`, `"10m"`, `"1h"`, or a whole number of seconds, up to 365 days. On overrun the task's process group gets `SIGTERM`, five seconds, then `SIGKILL`, and the task counts as failed. Ignored on a `persistent` task. Not part of the cache key. |
+| Field | Type | Description |
+| --- | --- | --- |
+| `run` | `string` | The command. Overrides only; in the root map it fails the load |
+| `dependsOn` | array of `string` | `^task` is that task in each workspace this one depends on; bare `task` is that task in this workspace |
+| `inputs` | array of `string` | Workspace-relative globs hashed into the cache key. Without it, the whole workspace minus gitignored files |
+| `outputs` | array of `string` | Workspace-relative globs archived on success and restored on a hit. Replaces the tool's default |
+| `ignore` | array of `string` | Globs subtracted from what `inputs` matched |
+| `env` | array of `string` | Variable names whose values are hashed; set ones are exported to the task |
+| `persistent` | `boolean` | A long-running task: never cached, nothing may depend on it, forces the plain stream for the run |
+| `cache` | `boolean` | `false` always runs the task |
+| `timeout` | `string` or integer | `"90s"`, `"10m"`, `"1h"`, or whole seconds, up to 365 days. On overrun the process group gets `SIGTERM`, five seconds, then `SIGKILL`, and the task fails. Ignored on a persistent task |
 
-`^task` and bare `task` are the whole addressing vocabulary. There is no glob,
-no `workspace#task`, and no way to name one specific workspace's task.
-
-`timeout` accepts `ms`, `s`, `sec`, `secs`, `m`, `min`, `mins`, `h`, `hr`, and
-`hrs`, case-insensitively, or a bare whole number read as seconds. A string value
-under one second rounds up to one second. Zero and negative values are rejected.
-
-The maximum is 365 days, `31536000` seconds, in both forms. An oversized value is
-rejected rather than clamped. Past that ceiling the deadline overflows instead of
-arriving, so the `timeout` would mean no timeout at all:
+Settings come from four layers, each replacing only the fields it sets:
+Lattice's defaults for the name (`build`: `dependsOn: ["^build"]`; `dev`,
+`start`, `serve`, `watch`: `persistent: true`; `clean`, `deploy`, `publish`,
+`release`: `cache: false`), the tool's default `outputs` for a `build` the
+workspace's own files define, the root `tasks` entry, then the override. Lists
+replace; they never append.
 
 ```text
-Error: failed to parse lattice.json
-
-Caused by:
-    duration '99999h' is longer than the maximum of 365 days. Use a shorter duration, or leave `timeout` out to let the task run without a limit
+error: `tasks.build` has a `run`, but the root `tasks` map says how a task behaves in every workspace, not what it runs. Put the command under the workspace it belongs to: "overrides": { "<workspace>": { "tasks": { "build": "<command>" } } }
 ```
 
-A JSON number gets the same ceiling, worded for that form: `duration of <n>
-seconds is longer than the maximum of 365 days`. To run a task with no limit,
-leave `timeout` out.
+`timeout` takes `ms`, `s`, `sec`, `secs`, `m`, `min`, `mins`, `h`, `hr`,
+`hrs`, case-insensitively, or a whole number of seconds. Under a second rounds
+up to one; zero and negatives are rejected. Over 365 days is rejected
+(`duration '99999h' is longer than the maximum of 365 days`), and a fractional
+number (`1.5`) is rejected rather than rounded; write `"90s"`.
 
-The number form is an integer, which is what the bundled schema declares. `1.5`
-is rejected rather than rounded up to `2`. Write `"1.5m"` or `"90s"` instead,
-because the string form takes decimals. `90.0` is a whole number of seconds and
-parses:
+`dependsOn` checks:
 
-```text
-Error: failed to parse lattice.json
-
-Caused by:
-    duration 1.5 is not a whole number of seconds. Write a whole number of seconds, or a duration string such as "90s", "1500ms", or "10m"
-```
-
-Running a task name that is not a key under `tasks`:
-
-```text
-Error: task 'build' is not defined in the `tasks` map in lattice.json. Defined tasks: test
-```
-
-With an empty `tasks` map the tail reads `lattice.json defines no tasks`.
+- A root task naming itself fails the load: `task 'build' lists itself in
+  \`dependsOn\``.
+- A name no workspace has fails the plan: `task 'build' depends on 'codegne',
+  but no workspace has a 'codegne' task`, with the nearest name and the full
+  task list.
 
 ## Settings
 
-| Field | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `maxCacheSize` | `string` | no | none | An integer plus `B`, `KB`, `MB`, `GB`, or `TB`, base 1024, case-insensitive. A bare integer of bytes works as a string. Enforced after every run, and used by `lattice prune` when `--max-size` is absent. Unset, the cache grows without limit. |
-| `cacheDir` | `string` | no | `".lattice/cache"` | Local cache directory, relative to the repo root. Must be non-empty, stay inside the repo, and not resolve to the repo root. |
-| `loquacious` | `boolean` | no | `false` | Equivalent to always passing `-v`. |
-| `versionCheck` | `boolean` | no | `true` | `false` disables the `latticeVersion` handover and the drift nag. |
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `maxCacheSize` | `string` | none | An integer plus `B`, `KB`, `MB`, `GB` or `TB` (base 1024), or bare bytes, as a string. Enforced after every run that writes, and used by `lattice prune` without `--max-size` |
+| `cacheDir` | `string` | `".lattice/cache"` | Cache directory relative to the root. Inside the repo, not the root itself |
+| `loquacious` | `boolean` | `false` | Always verbose, as if `-v` were passed |
+| `versionCheck` | `boolean` | `true` | `false` disables the `latticeVersion` handover and the nag |
 
-`maxCacheSize` must be a JSON string. `"10GB"` and `"1048576"` are both valid;
-the number `1048576` is not:
-
-```text
-Error: failed to parse lattice.json
-
-Caused by:
-    invalid type: integer `1048576`, expected a string at line 1 column 65
-```
-
-An unrecognized unit is rejected with the unit uppercased in the message, which
-also lists the units that are accepted:
+`maxCacheSize` has to be a JSON string (`invalid type: integer \`1048576\`,
+expected a string`). An unknown unit fails with the units listed. `cacheDir`
+fails if empty, absolute, outside the repo, or the root:
 
 ```text
-Error: failed to parse lattice.json
-
-Caused by:
-    unknown cache size unit 'GIGS' in '10 gigs'. Use B, KB, MB, GB, or TB at line 1 column 69
+error: `settings.cacheDir` is '.', which is the repo root itself. Point it at a directory of its own, like ".lattice/cache" — `lattice prune` deletes cache archives and partial writes in whatever directory it names
 ```
 
-`cacheDir` is validated when the config loads. Lattice owns the directory the
-value names, because `lattice prune` deletes the `*.tar.gz`, `*.meta.json`, and
-`*.tmp` files there. So the value has to be relative, non-empty, free of
-whitespace around a component, inside the repo, and not the repo root itself.
-`".lattice/cache"` and `".cache/lattice"` pass. `"."`, `"/tmp/lattice"`, and
-`"../cache"` do not:
+## When each check runs
 
-```text
-Error: `settings.cacheDir` is '.', which is the repo root itself. Point it at a directory of its own, like ".lattice/cache" — `lattice prune` deletes cache archives and partial writes in whatever directory it names
-```
+| Stage | What fails there |
+| --- | --- |
+| Finding the root | No `lattice.json` here or above |
+| Parsing | 1.x format, malformed JSON, unknown keys, duplicate keys, wrong types, bad durations and sizes |
+| Validation | String-form engines not well-known, `bin`, `cacheDir`, `workspaces`/`exclude` entries outside the repo or with stray whitespace, `run` in the root map, a root task depending on itself, an empty override `name` |
+| Discovery | A `workspaces` entry matching nothing, an invalid glob, an override key matching nothing, an unknown `driver`, a detection halt, a `dependsOn` naming no workspace, a name clash, a workspace outside the repo through a symlink |
+| Planning | A task no workspace has, a `dependsOn` naming no task, a dependency on a persistent task, a cycle |
+| First run | Engine checks and installs |
 
-## Validation summary
-
-| Problem | When caught | Message |
-| --- | --- | --- |
-| No `lattice.json` here or in any parent | before parsing | `no lattice.json found in this directory or any parent. Run \`lattice init\` to create one` |
-| Malformed JSON | parsing | `failed to parse lattice.json`, with the JSON error and position |
-| Workspace missing `name` or `path` | parsing | `missing field \`name\`` or `missing field \`path\``, with line and column |
-| A key the config does not define, at any level | parsing | `unknown field \`<key>\` in <container>`, with the position, the nearest valid field, and the fields accepted there |
-| Engine value neither a string nor an object | parsing | `invalid type: <what was written>, expected a version constraint string or an engine object` |
-| `maxCacheSize` not a string, or a bad unit | parsing | `invalid type: integer \`<n>\`, expected a string`, or `unknown cache size unit '<UNIT>' in '<value>'. Use B, KB, MB, GB, or TB` |
-| The same key twice in `tasks`, `engines`, or a workspace's `engines` or `scripts` | parsing | `duplicate key \`<key>\` in <container> (lattice.json line L, column C)`, then `Keep one of them: the second replaces the first, so only the last would take effect` |
-| A `timeout` over 365 days | parsing | `duration '<value>' is longer than the maximum of 365 days. ...`, or `duration of <n> seconds is longer than the maximum of 365 days. ...` |
-| A `timeout` written as a fractional number | parsing | `duration <n> is not a whole number of seconds. Write a whole number of seconds, or a duration string such as "90s", "1500ms", or "10m"` |
-| Workspace `path` empty or whitespace-only | validation | `workspace '<name>' has an empty path` |
-| Workspace `path` absolute or drive-prefixed | validation | `workspace '<name>' has a path '<path>' that is not relative to the repo root. Write every workspace path relative to the repo root` |
-| Workspace `path` escaping the root with `..` | validation | `workspace '<name>' has a path '<path>' that points outside the repo root. Every workspace path must stay inside the repo` |
-| Whitespace around a component of a workspace `path` | validation | `workspace '<name>' has a path '<path>' with leading or trailing whitespace around a directory name. ...` |
-| `settings.cacheDir` empty, absolute, outside the repo, or the repo root | validation | `\`settings.cacheDir\` is '<value>', which ...`, one wording per case |
-| Engine `bin` empty, absolute, or outside the toolchain install | validation | `engine '<name>' in <scope> has a \`bin\` of '<value>', which ...`, one wording per case |
-| A workspace `scripts` key naming no declared task | validation | `workspace '<name>' declares a script '<key>', but '<key>' is not defined in \`tasks\`, so nothing would ever run it`, then `Did you mean \`<near>\`?` and `Defined tasks: <list>` |
-| Two workspaces with the same `name` | validation | `duplicate workspace name '<name>'. Every workspace name must be unique` |
-| Workspace `dependsOn` naming itself | validation | `workspace '<name>' lists itself in \`dependsOn\`` |
-| Workspace `dependsOn` naming an undeclared workspace | validation | `workspace '<name>' depends on '<dep>', which is not a declared workspace`, then `Did you mean \`<near>\`?` and `Declared workspaces: <list>` |
-| Task `dependsOn` naming itself | validation | `task '<task>' lists itself in \`dependsOn\`` |
-| Task `dependsOn` naming a task not in `tasks` (`^` stripped first) | validation | `task '<task>' depends on '<dep>', but '<dep>' is not defined in \`tasks\``, then `Did you mean \`<near>\`?` and `Defined tasks: <list>` |
-| String-form engine that is not well-known | validation | names the engine and its scope, and shows the object form with `versionCmd` |
-| Workspace `path` is not an existing directory | discovery | `workspace path '<path>' does not point to a directory. A workspace path is one literal directory, not a glob` |
-| Two workspaces resolving to one directory | discovery | `duplicate workspace path '<path>' in lattice.json` |
-| Workspace `path` resolving outside the repo through a symlink | discovery | `workspace path '<path>' resolves to <resolved>, which is outside the repo root. A workspace directory has to be inside the repo` |
-| `latticeVersion` that is not a version | before the handover | `lattice.json pins \`latticeVersion\` as "<value>", which is not a version. Write it like 0.2.0, or run \`lattice upgrade <version>\` to set it` |
-| A workspace name passed to `lattice setup` that is not declared | before provisioning | `workspace '<name>' is not declared in the \`workspaces\` array in lattice.json. Declared workspaces: <list>` |
-| Task name not present in `tasks` | after config loads | `task '<name>' is not defined in the \`tasks\` map in lattice.json. Defined tasks: <list>` |
-| `auto: false` workspace with no `scripts` entry for a requested task | graph construction | `workspace '<name>' has "auto": false and declares no command for task '<task>'. Add the command under this workspace's "scripts" map in lattice.json` |
-| Something depends on a persistent task | graph construction | `task '<task>' in workspace '<ws>' is persistent, so no other task may depend on it` |
-| Cycle through `dependsOn` | graph construction | `the task graph has a cycle` |
-| An engine that cannot be version-checked | first real run | `engine '<name>' has a version constraint but no way to check the installed version. '<name>' is not a well-known engine, so add a \`versionCmd\` to it` |
-| `lattice prune` with no size limit anywhere | after config loads | `no cache size limit set. Pass --max-size, or set settings.maxCacheSize in lattice.json` |
-
-Nothing runs when any of these fires. Validation happens before the first task
-is spawned.
+Nothing runs when any of these fires.
 
 ## Complete example
 
@@ -369,39 +322,29 @@ is spawned.
 {
   "$schema": ".lattice/schema.json",
   "latticeVersion": "1.1.1",
-  "workspaces": [
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=20.0.0" } },
-    { "name": "api", "path": "services/api", "dependsOn": ["shared"] },
-    {
-      "name": "shared",
-      "path": "libs/shared",
-      "auto": false,
-      "scripts": {
-        "build": "python3 -m build",
-        "test": "python3 -m pytest",
-        "lint": "python3 -m ruff check ."
-      }
-    }
-  ],
-  "engines": { "rust": ">=1.75.0" },
+  "workspaces": ["services/*", "tools/codegen"],
+  "exclude": ["services/legacy"],
+  "engines": { "node": ">=22", "rust": ">=1.85" },
   "globalDependencies": ["tsconfig.base.json", "proto/**"],
   "globalEnv": ["NODE_ENV"],
   "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "Cargo.toml", "package.json"],
-      "ignore": ["**/*.test.*"],
-      "outputs": ["dist/**", "target/release/**"]
+    "build": { "ignore": ["**/*.test.*"] },
+    "test": { "dependsOn": ["build"], "env": ["DATABASE_URL"], "timeout": "10m" }
+  },
+  "overrides": {
+    "web": {
+      "dependsOn": ["api"],
+      "tasks": {
+        "build": { "outputs": ["dist/**", ".astro/**"] },
+        "e2e": { "run": "playwright test", "dependsOn": ["build"], "cache": false }
+      }
     },
-    "test": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*", "tests/**/*"],
-      "env": ["DATABASE_URL"],
-      "timeout": "10m"
+    "tools/codegen": {
+      "name": "codegen",
+      "driver": "none",
+      "tasks": { "build": { "run": "make proto", "outputs": ["gen/**"] } }
     },
-    "lint": { "inputs": ["src/**/*"] },
-    "dev": { "persistent": true },
-    "clean": {}
+    "services/*": { "engines": { "go": ">=1.23" } }
   },
   "settings": { "maxCacheSize": "10GB" }
 }

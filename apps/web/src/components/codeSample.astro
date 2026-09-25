@@ -1,22 +1,20 @@
 ---
-// A short demo, framed as the payoff for the reader: one file, one command, and
-// the parts that didn't change come back from cache instead of rebuilding.
-//
-// The workspace names in the terminal card match the config card beside it, so the
-// transcript is shaped rather than captured. Every line is a real format string
-// from crates/lattice-output/src/lib.rs — the run-status lines, the `cache hit
-// [key]` form, and the summary. Re-check them there before editing this block.
+// The transcript is shaped rather than captured, so its lines follow the live
+// display's formats in crates/lattice-output/src/live.rs. Re-check them there
+// before editing this block. web depends on api, so web can only be a hit when
+// api's key did not move.
 ---
 
 <section class="px-3 py-5">
 	<div class="mx-auto" style="max-width: 72rem;">
 		<div class="mb-5" style="max-width: 40rem;">
 			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
-				Skip work you already did
+				Three languages, one short file
 			</h2>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
-				One file lists your workspaces and the tasks they share. Lattice runs the tasks that
-				changed and restores the rest from cache.
+				The Go service and the Python model sit outside the JavaScript workspace, so the
+				config lists them. The web app calls the API, which no manifest can say, so the
+				config says that too. Everything else comes from the repo.
 			</p>
 		</div>
 
@@ -31,14 +29,10 @@
 					</div>
 					<div class="card-body p-0">
 						<pre class="code-card__body mb-0"><code>{`{
-  "workspaces": [
-    { "name": "api", "path": "apps/api", "engines": { "go": ">=1.22" } },
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } },
-    { "name": "ml",  "path": "services/ml", "engines": { "python": ">=3.12" } }
-  ],
-  "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
-    "test":  { "dependsOn": ["build"] }
+  "workspaces": ["apps/api", "services/ml"],
+  "engines": { "node": ">=22", "go": ">=1.23" },
+  "overrides": {
+    "web": { "dependsOn": ["api"] }
   }
 }`}</code></pre>
 					</div>
@@ -55,12 +49,13 @@
 					</div>
 					<div class="card-body p-0">
 						<pre class="code-card__body mb-0"><code>{`$ lattice run build
-api:build: running
-ml:build: running
-web:build: `}<span class="lattice-accent">cache hit [d97c6e8a]</span>{`
-ml:build: done (0.44s)
-api:build: done (1.21s)
-lattice: 3 tasks, 1 cached, 0 failed, 1.26s, 0.83s saved
+❖ lattice  build  · 3 workspaces
+
+  `}<span class="lattice-accent">●</span>{` api   `}<span class="lattice-accent">cached</span>{` · 1.21s saved
+  `}<span class="lattice-accent">●</span>{` web   `}<span class="lattice-accent">cached</span>{` · 0.83s saved
+  ✓ ml    0.44s
+
+❖  3 tasks · 2 cached  0.46s · 2.04s saved
 `}</code></pre>
 					</div>
 				</div>

@@ -10,6 +10,82 @@ order: 4
 `latticeVersion` in `lattice.json` names the Lattice build this repo runs on.
 `lattice upgrade` writes that pin. Every other command only reads it.
 
+## Upgrading to 2.0
+
+2.0 changes the shape of `lattice.json`. A 1.x config listed every workspace as
+an object with a `name` and a `path`, wrote every dependency edge by hand, and
+chose a workspace's tool through `auto`, `scripts` and placeholder `engines`
+entries. 2.0 reads workspaces, their dependencies and their tasks from the
+repo's own manifests, and `lattice.json` holds only what those cannot say. A 1.x
+config does not load:
+
+```text
+error: lattice.json is written for Lattice 1.x, which listed every workspace as an object with a name and a path. Run `lattice migrate` to rewrite it for this version
+```
+
+From the repo root, with a 2.0 binary:
+
+```sh
+lattice migrate --dry-run   # print the new lattice.json, write nothing
+lattice migrate             # rewrite it
+```
+
+`migrate` runs discovery against your repo and writes down only where the result
+would differ from what the 1.x config said, so every workspace keeps its name,
+every ordering holds, and every command you wrote still runs:
+
+| 1.x had | 2.0 gets |
+| --- | --- |
+| A workspace no workspace file names | Its path in `workspaces` |
+| A workspace file member the config left out | Its path in `exclude` |
+| A name that differs from the manifest's | `overrides.<path>.name` |
+| A `dependsOn` a manifest already states | Nothing; the edge is read from the manifest |
+| A `dependsOn` no manifest states | `overrides.<name>.dependsOn` |
+| `scripts` | `overrides.<name>.tasks` |
+| `auto: false` | `"driver": "none"` |
+| An engine like `"pnpm": ">=0.0.0"` that only chose a tool | `overrides.<name>.driver`, and the engine dropped |
+| Workspace `engines` | `overrides.<name>.engines` |
+| `tasks`, `engines`, `globalDependencies`, `globalEnv`, `settings` | Kept as they were |
+
+Before writing, `migrate` parses the new file and discovers the repo with it. It
+then says what it dropped:
+
+```text
+✓ rewrote lattice.json 64 lines → 21
+· dropped the `pnpm` engine: its constraint matched any version, so it only chose a driver, and drivers are chosen with `driver` now
+· web: dropped dependsOn ui — its manifest already says so
+```
+
+`migrate` always runs as the binary you invoked, even in a repo that pins a 1.x
+`latticeVersion`, and it sets `latticeVersion` to its own version. Commit the new
+`lattice.json` and `.lattice/schema.json` together.
+
+Things to check afterwards:
+
+- **Run `lattice run build --dry-run`.** Every workspace and command should be
+  the one you had.
+- **Tasks you never declared now run.** A task no longer has to be listed under
+  `tasks`: any script a package declares, and any verb its tool has (`lint` is
+  `cargo clippy` in a crate), runs by name. `lattice run lint` in a Cargo crate
+  used to run `cargo lint`, which does not exist.
+- **`build` caches the tool's build directory by default.** An npm, uv, poetry
+  or pdm workspace's `build` stores `dist/**`, Gradle's `**/build/**`, Maven's
+  `**/target/**`, .NET's `**/bin/Debug/**` and `**/bin/Release/**`, unless
+  `outputs` says otherwise. A cache hit
+  clears those directories before restoring them.
+- **`dev`, `start`, `serve` and `watch` are persistent** unless a task setting
+  says `"persistent": false`.
+- **`-v` no longer switches to the line stream.** It adds the trace to either
+  display. Scripts that relied on `-v` for parseable output should pass
+  `--stream`, or run where stdout is not a terminal, as CI does.
+- **Workspaces added later take their manifest's name**, such as `@acme/ui` for
+  a scoped package, which is what `--filter` matches.
+- **A Gradle, Maven or .NET build is one workspace.** A 1.x config that listed
+  Gradle subprojects separately keeps them as listed; list the build root
+  instead once you are ready, so one `./gradlew` orders them.
+
+The first run on 2.0 misses the cache everywhere, as every version change does.
+
 ## Move the repo to a version
 
 ```sh
@@ -106,7 +182,7 @@ the version you invoked:
 ❖ lattice 0.1.0 · this repo pins 0.2.0 · run `lattice upgrade 0.2.0`
 ```
 
-That line never blocks the run, and it never appears in CI or raw output. See
+That line never blocks the run, and it never appears in CI or the plain stream. See
 [Output and logging][output-modes] for how the mode is chosen.
 
 ### Turn the check off
@@ -127,14 +203,14 @@ With any of these set, a command runs as invoked. No switch, no advisory line.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "0.2.0",
-  "workspaces": []
+  "latticeVersion": "0.2.0"
 }
 ```
 
 `latticeVersion` is read straight out of the JSON before `lattice.json` is
 parsed or validated, so a config written for a newer schema can still say which
-version is able to read it.
+version is able to read it. That is how a repo on 2.0 hands a 1.x binary Lattice
+installed over to 2.0 before the older binary ever tries to read the new format.
 
 It does not pin or validate anything about the schema `lattice.json` is written
 against. There is no per-version schema compatibility check beyond what the

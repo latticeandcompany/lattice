@@ -193,6 +193,9 @@ pub struct ScanResult {
 	/// Projects no workspace file names, offered for the config to list.
 	pub candidates: Vec<WorkspaceCandidate>,
 	pub pins: Vec<EnginePin>,
+	/// The repo root when it is not offered as a workspace; its task runner's
+	/// settings are imported all the same.
+	pub root_settings: Option<WorkspaceCandidate>,
 }
 
 pub fn scan_for_init(dir: &Path) -> Result<ScanResult> {
@@ -203,6 +206,7 @@ pub fn scan_for_init(dir: &Path) -> Result<ScanResult> {
 		native: proposal.native,
 		candidates: proposal.extra,
 		pins: proposal.pins,
+		root_settings: proposal.root,
 	})
 }
 
@@ -215,6 +219,8 @@ pub struct InitSelection {
 	/// Every candidate path the scan offered, kept or not, so siblings that were
 	/// all kept can collapse into one glob.
 	pub offered: Vec<String>,
+	/// The scan's `root_settings`, passed back so the file matches `lattice init`.
+	pub root_settings: Option<WorkspaceCandidate>,
 }
 
 /// The exact text `write_init` would write, so the wizard can show it first.
@@ -226,15 +232,16 @@ pub fn preview_init(selection: &InitSelection) -> Result<String> {
 fn config_value(selection: &InitSelection) -> serde_json::Value {
 	let candidates: Vec<&WorkspaceCandidate> = selection.candidates.iter().collect();
 	let pins: Vec<&EnginePin> = selection.pins.iter().collect();
-	if candidates.is_empty() && pins.is_empty() {
-		return scaffold::default_skeleton(BIN_VERSION);
-	}
 	let offered: Vec<&str> = if selection.offered.is_empty() {
 		candidates.iter().map(|c| c.path.as_str()).collect()
 	} else {
 		selection.offered.iter().map(String::as_str).collect()
 	};
-	scaffold::build_config(&candidates, &offered, &pins, BIN_VERSION)
+	let mut config = scaffold::build_config(&candidates, &offered, &pins, BIN_VERSION);
+	if let Some(root) = &selection.root_settings {
+		scaffold::import_settings(&mut config, &[root]);
+	}
+	config
 }
 
 // ---------- migration ----------
@@ -601,6 +608,7 @@ mod tests {
 			}],
 			pins: Vec::new(),
 			offered: Vec::new(),
+			root_settings: None,
 		};
 		let preview = preview_init(&selection).unwrap();
 

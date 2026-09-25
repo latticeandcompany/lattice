@@ -17,7 +17,7 @@
       "tasks": {
         "build": "mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh",
         "test": "test -x dist/serve.sh",
-        "serve": { "run": "sh dist/serve.sh", "dependsOn": ["build"], "cache": false },
+        "serve": { "run": "sh dist/serve.sh", "dependsOn": ["build"], "persistent": false, "cache": false },
         "clean": "rm -rf dist"
       }
     }

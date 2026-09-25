@@ -9,11 +9,12 @@ order: 8
 
 ### Ambiguity
 
-The state in which Lattice cannot name a single [driver](#driver) for an `auto`
-[workspace](#workspace), either because two tools of the same [role](#role) both
-have evidence or because the workspace shows only a bare ecosystem marker with
-no tool-unique signal. The run halts before any task starts and prints a
-copy-pasteable `engines` fix. See [Driver detection](/lattice/docs/drivers).
+The state in which Lattice cannot name a single [driver](#driver) for a
+[workspace](#workspace): a `package.json` or `pyproject.toml` with no lockfile
+or `packageManager` field here or above, or two tools of the same [role](#role)
+tied on equal evidence. The run halts before any task starts and prints the
+[override](#override) that fixes it. See [Driver
+detection](/lattice/docs/drivers#when-lattice-stops-to-ask).
 
 ### Cache hit
 
@@ -49,12 +50,21 @@ The `^` that turns a task's `dependsOn` entry into a cross-workspace edge, so
 depends on. A `dependsOn` entry with no `^` names a task in the same workspace.
 See [Task graph](/lattice/docs/task-graph).
 
+### Check mode
+
+The [engine](#engine) mode that applies when a constraint has a version but no
+`installCmd`, in which Lattice runs a version command against whatever is on
+`PATH` and fails before any task starts if the result does not satisfy the
+constraint. Nothing is installed. See [Engines and
+provisioning](/lattice/docs/engines).
+
 ### `dependsOn`
 
-The name of two different fields. On a [workspace](#workspace) it lists other
-workspaces by name, and it takes effect only where a task's `dependsOn` uses the
-[caret prefix](#caret-prefix). On a [task](#task) it lists other tasks, with `^`
-for a cross-workspace edge and a bare name for a same-workspace edge. See [Task
+The name of two different fields. On a [task](#task) it lists other tasks: `^`
+for the same task in each workspace this one depends on, a bare name for a task
+in the same workspace. In an [override](#override) it lists workspaces this one
+depends on beyond what its manifest says, such as an edge between languages.
+Edges within one ecosystem come from the manifests. See [Task
 graph](/lattice/docs/task-graph).
 
 ### Drift
@@ -68,20 +78,22 @@ nothing. See [Upgrading](/lattice/docs/upgrading).
 
 ### Driver
 
-The tool that turns a workspace's named task into a real shell command, such as
-`pnpm`, `cargo`, `go`, or `gradle`. Lattice ships 34 drivers, all but `pip` and
-`kotlin` identified by a fingerprint file in the workspace directory. A driver
-runs tasks. An [engine](#engine) is a versioned tool a task needs, and the two
-resolve independently. See [Driver detection](/lattice/docs/drivers).
+The tool that runs a workspace's tasks, such as `pnpm`, `cargo`, `go`, or
+`gradle`. Lattice ships 34 and picks one per workspace from the files it holds,
+from a lockfile above it for a JavaScript or Python package, or from a manifest
+only one tool reads. `overrides.<ws>.driver` names one outright. The driver
+decides which tasks a workspace has and what command each runs. An
+[engine](#engine) is a versioned tool, and never selects a driver. See [Driver
+detection](/lattice/docs/drivers).
 
 ### Engine
 
-A versioned tool named under `engines`, written either as a bare constraint
-string for one of the 40 well-known names or as an object with `version`,
-`versionCmd`, `installCmd`, and `bin`. The shape of the constraint, not its
-name, selects [host mode](#host-mode), [validate-only](#validate-only), or
-[provisioning](#provisioning). See [Engines and
-provisioning](/lattice/docs/engines).
+A versioned tool named under `engines`, written as a bare constraint string for
+one of the 40 well-known names or as an object with `version`, `versionCmd`,
+`installCmd`, and `bin`. The shape, not the name, selects [host
+mode](#host-mode), [check mode](#check-mode), or [provisioning](#provisioning).
+Root `engines` apply to every workspace; an [override](#override)'s win per name.
+See [Engines and provisioning](/lattice/docs/engines).
 
 ### Eviction
 
@@ -93,10 +105,10 @@ finishes. See [Cache internals](/lattice/docs/cache-internals).
 ### Filter
 
 The `-f`/`--filter <PATTERN>` flag on `lattice run`, which selects the
-workspaces whose `name` contains `PATTERN` as a substring. The matched
-workspaces are the roots of the run: the graph also holds everything they depend
-on, transitively, and nothing that depends on them. A filter that matches
-nothing is not an error. See [Selecting what runs](/lattice/docs/filtering).
+workspaces whose name contains `PATTERN` as a substring. The matched workspaces
+are the roots of the run: the graph also holds everything they depend on, and
+nothing that depends on them. It replaces the [scope](#scope) a run gets from
+its directory. See [Selecting what runs](/lattice/docs/filtering).
 
 ### Host mode
 
@@ -113,13 +125,11 @@ match. See [Caching](/lattice/docs/caching).
 
 ### Lockfile evidence
 
-A lockfile or wrapper file that only one tool produces, such as
-`pnpm-lock.yaml`, `bun.lockb`, `Cargo.lock`, `poetry.lock`, or `turbo.json`. It
-is the lowest rung of the [driver](#driver) evidence ladder, below a declaration
-and a native file. The same files also feed every task's [cache
-key](#cache-key), so a dependency bump invalidates the cache even when the
-lockfile is not listed in `inputs`. See [Driver
-detection](/lattice/docs/drivers).
+A lockfile or file only one tool produces, such as `pnpm-lock.yaml`,
+`bun.lockb`, `Cargo.lock`, `poetry.lock`, or `turbo.json`, used to pick a
+workspace's [driver](#driver). A file a developer wrote to name a tool, such as a
+`packageManager` field, outranks it. Lockfiles also feed every task's [cache
+key](#cache-key). See [Driver detection](/lattice/docs/drivers).
 
 ### Manifest
 
@@ -138,12 +148,12 @@ false hit. See [Cache internals](/lattice/docs/cache-internals).
 
 ### Output mode
 
-Which of two presentations `lattice run` uses: **interactive**, a live terminal
-display that settles into a summary, or **raw**, a plain stream of
-`workspace:task:` lines. Lattice picks raw when stdout is not a terminal, when
-`CI` is set, when `-v`/`--verbose` or `settings.loquacious` applies, or when
-the run pulls in a [persistent task](#persistent-task). See [Output and
-logging](/lattice/docs/output-modes).
+Which of two presentations `lattice run` uses: the **live display**, which
+settles finished tasks into lines while a region redraws with running tasks and
+their latest output, or the **stream**, one plain `workspace:task:` line per
+event. The stream is used when stdout is not a terminal, when `CI` is set, with
+`--stream`, or when the run includes a [persistent task](#persistent-task). `-v`
+adds detail to either. See [Output and logging](/lattice/docs/output-modes).
 
 ### Outputs
 
@@ -155,13 +165,20 @@ saved, and a failed task is never cached whatever it matched. See
 
 ### Persistent task
 
-A task declared with `persistent: true`, meaning it is not expected to exit. It
-is never cached whatever `cache` says, it must be a leaf in the [task
-graph](#task-graph) because nothing can wait on a task that never finishes, and
-pulling one into a run forces [raw output](#output-mode) so its stream stays
-visible. Lattice does not hold the scheduler for it, but it does watch it: an
-exit is reported, and a non-zero exit fails the run. See [Persistent
-tasks](/lattice/docs/persistent-tasks).
+A task that is not expected to exit, such as a dev server. `dev`, `start`,
+`serve` and `watch` are persistent unless told otherwise; any task becomes one
+with `persistent: true`. It is never cached, it must be a leaf in the [task
+graph](#task-graph), and a run that includes one uses the stream. Lattice
+watches it: an exit is reported, and a non-zero exit fails the run. See
+[Persistent tasks](/lattice/docs/persistent-tasks).
+
+### Override
+
+An entry under `overrides` in the [root config](#root-config), keyed by a
+workspace name or by a glob over workspace paths, holding settings for the
+workspaces it matches: a `name`, a `driver`, `engines`, extra `dependsOn`, and
+`tasks` written out as commands or settings. See
+[Configuration](/lattice/docs/configuration#overrides).
 
 ### Pin
 
@@ -181,13 +198,11 @@ opens a project. See [The desktop app](/lattice/docs/desktop-app).
 
 ### Provisioning
 
-The [engine](#engine) mode that applies when a constraint has an `installCmd`,
-in which Lattice runs that command into
-`.lattice/toolchains/<engine>/<version>-<installHash>/`, version-checks the
-result, writes a [pin](#pin), and prepends the resulting `bin` directory to the
-task's `PATH`. Reusing an existing pin means one install per distinct
-`installCmd`, not one per run. See [Engines and
-provisioning](/lattice/docs/engines).
+The [engine](#engine) mode that applies when an engine has an `installCmd`: Lattice
+runs that command into `.lattice/toolchains/<engine>/<version>-<installHash>/`,
+checks the version of what it installed, writes a [pin](#pin), and prepends the
+install's `bin` to each task's `PATH`. One install per distinct `installCmd`. See
+[Engines and provisioning](/lattice/docs/engines).
 
 ### Role
 
@@ -202,12 +217,11 @@ detection](/lattice/docs/drivers).
 
 ### Root config
 
-The single `lattice.json` at the repo root, which declares every
-[workspace](#workspace), the root `engines`, the `tasks` map,
-`globalDependencies`, `globalEnv`, and repo-wide `settings`. Lattice walks up
-from the current directory to find it, so any subdirectory can run `lattice`
-commands. A workspace may add its own `scripts` and `engines`, and nothing else.
-See [Configuration](/lattice/docs/configuration).
+The single `lattice.json` at the repo root. It holds what the repo's own
+manifests cannot say: extra workspace directories, `exclude`, `engines`, the
+`tasks` map, [overrides](#override), `globalDependencies`, `globalEnv`, and
+`settings`. Every key is optional. Lattice walks up from the current directory
+to find it. See [Configuration](/lattice/docs/configuration).
 
 ### Run ledger
 
@@ -235,6 +249,13 @@ finishes, and how many prerequisites are still outstanding. The runner drives
 execution from the schedule alone and never touches the graph. See [Task
 graph](/lattice/docs/task-graph).
 
+### Scope
+
+The workspace a run is narrowed to because it was started inside that
+workspace's directory. The run covers the workspace and everything it depends
+on, and says so. A [filter](#filter) replaces it. See [Selecting what
+runs](/lattice/docs/filtering#run-from-inside-a-workspace).
+
 ### Stacked run
 
 A single `lattice run` invocation naming more than one task, such as
@@ -246,42 +267,36 @@ runs](/lattice/docs/filtering).
 
 ### Task
 
-A named unit of work declared under `tasks` in the [root config](#root-config),
-resolved to one concrete shell command per workspace by that workspace's
-[driver](#driver) or its own `scripts` entry. `build`, `test`, and `lint` are
-names you choose, and Lattice reserves none. See [Task
+A name such as `build`, resolved to one shell command in each workspace that
+has it: a script its manifest declares, a verb its [driver](#driver) has, or a
+command an [override](#override) writes out. A task needs no entry in the `tasks`
+map to run; that map configures how it behaves. `build`, `dev`, `start`, `serve`,
+`watch`, `clean`, `deploy`, `publish` and `release` come with defaults. See [Task
 graph](/lattice/docs/task-graph).
 
 ### Task graph
 
-The expansion of one or more named tasks across every resolved workspace into a
-directed graph of concrete task instances, built from each task's `dependsOn`
-and each workspace's `dependsOn`. Lattice runs the graph in dependency order, in
-parallel wherever the graph allows. See [Task graph](/lattice/docs/task-graph).
+The expansion of one or more named tasks across every workspace that has them
+into a directed graph of `workspace:task` nodes, linked by each task's
+`dependsOn` and the dependencies between workspaces. Lattice runs it in
+dependency order, in parallel wherever it allows. See [Task
+graph](/lattice/docs/task-graph).
 
 ### Toolchain
 
-The set of [engines](#engine) Lattice has resolved for a run, recording for each
-whether it came from [host mode](#host-mode), [validate-only](#validate-only),
-or [provisioning](#provisioning), and combined into a `PATH` prefix plus one
-identity string that feeds every affected task's [cache key](#cache-key).
-Resolution happens once per distinct merged engine map and is reused by every
-workspace that shares one. See [Engines and
-provisioning](/lattice/docs/engines).
+The set of [engines](#engine) Lattice resolved for a workspace, recording for
+each whether it came from [host mode](#host-mode), [check mode](#check-mode), or
+[provisioning](#provisioning), combined into a `PATH` prefix and an identity
+string that feeds every affected task's [cache key](#cache-key). See [Engines
+and provisioning](/lattice/docs/engines).
 
-### Validate-only
-
-The [engine](#engine) mode that applies when a constraint has a version but no
-`installCmd`, in which Lattice runs a version command against whatever is on
-`PATH` and fails before any task starts if the result does not satisfy the
-constraint. Nothing is installed either way. See [Engines and
-provisioning](/lattice/docs/engines).
 
 ### Workspace
 
-One directory Lattice runs tasks in: a directory with its own manifest, declared
-by `name` and a literal `path` in the [root config](#root-config)'s `workspaces`
-list. A workspace is the unit of [driver](#driver) detection, task running, and
-caching, and it is one part of a [project](#project) rather than the whole repo.
-`auto: false` opts a workspace out of driver detection, leaving `scripts` as the
-only source of its commands. See [Workspaces](/lattice/docs/workspaces).
+One directory Lattice runs tasks in, named by a workspace file at the repo root
+(`package.json` `workspaces`, `pnpm-workspace.yaml`, Cargo `[workspace]`,
+`go.work`, uv, deno) or by `workspaces` in the [root config](#root-config), or
+the repo root itself when nothing names any. It is named by its manifest. A
+workspace is the unit of [driver](#driver) detection, task running, and caching,
+and a Gradle, Maven or .NET build is one workspace however many subprojects it
+has. See [Workspaces](/lattice/docs/workspaces).

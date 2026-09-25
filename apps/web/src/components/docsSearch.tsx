@@ -145,7 +145,7 @@ const DocsSearch = () => {
 				onClick={show}
 			>
 				<i className="bi bi-search" aria-hidden="true" />
-				<span className="tw:flex-1 tw:text-left">Search the docs</span>
+				<span className="flex-grow-1 text-start">Search the docs</span>
 				<kbd className="doc-search-kbd">⌘K</kbd>
 			</button>
 

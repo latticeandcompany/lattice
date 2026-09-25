@@ -85,9 +85,10 @@ pub struct Proposal {
 	/// Directories no workspace file names, which the config has to list.
 	pub extra: Vec<WorkspaceCandidate>,
 	pub pins: Vec<EnginePin>,
-	/// The repo root, when nothing else is a workspace and the root is one on
-	/// its own. It needs no entry, but its task runner's settings are imported.
-	pub single_project: Option<WorkspaceCandidate>,
+	/// The repo root, when it is not offered as a workspace: a single project
+	/// that needs no entry, or a monorepo root. Either way its task runner's
+	/// settings — a root `turbo.json`'s outputs and dependencies — are imported.
+	pub root: Option<WorkspaceCandidate>,
 }
 
 /// Read `root` for everything a config could say.
@@ -125,14 +126,14 @@ pub fn propose(root: &Path) -> Proposal {
 		.cloned()
 		.collect();
 
-	let mut single_project = None;
+	let mut root_settings = None;
 	if let Some(root_candidate) = root_candidate {
 		if native.is_empty() && !extra.is_empty() {
 			let mut offered = root_candidate.clone();
 			offered.default_selected = false;
 			extra.insert(0, offered);
-		} else if native.is_empty() && root_candidate.driver.is_some() {
-			single_project = Some(root_candidate.clone());
+		} else if root_candidate.driver.is_some() {
+			root_settings = Some(root_candidate.clone());
 		}
 	}
 
@@ -140,7 +141,7 @@ pub fn propose(root: &Path) -> Proposal {
 		native,
 		extra,
 		pins: scan_engine_pins(root),
-		single_project,
+		root: root_settings,
 	}
 }
 
@@ -388,6 +389,24 @@ mod tests {
 	}
 
 	#[test]
+	fn a_monorepo_roots_turbo_settings_are_imported() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let root = dir.path();
+		write(root, "package.json", r#"{"workspaces": ["packages/*"], "packageManager": "npm@11.0.0"}"#);
+		write(
+			root,
+			"turbo.json",
+			r#"{"tasks": {"build": {"dependsOn": ["^build"], "outputs": ["dist/**", ".next/**"]}}}"#,
+		);
+		write(root, "packages/ui/package.json", r#"{"name": "ui"}"#);
+		let p = propose(root);
+		let settings = p.root.expect("the root's turbo.json is a settings source");
+		let mut config = build_config(&[], &[], &[], "2.0.0");
+		import_settings(&mut config, &[&settings]);
+		assert_eq!(config["tasks"]["build"]["outputs"], json!(["dist/**", ".next/**"]));
+	}
+
+	#[test]
 	fn a_gradle_build_is_proposed_as_one_project() {
 		let dir = tempfile::TempDir::new().unwrap();
 		let root = dir.path();
@@ -397,7 +416,7 @@ mod tests {
 		let p = propose(root);
 		assert!(p.extra.is_empty(), "{:?}", p.extra);
 		assert!(p.native.is_empty());
-		assert_eq!(p.single_project.unwrap().driver.as_deref(), Some("gradle"));
+		assert_eq!(p.root.unwrap().driver.as_deref(), Some("gradle"));
 	}
 
 	#[test]

@@ -11,56 +11,46 @@ A scheduler is built around a question: has this task finished? Everything
 downstream of a task waits on the answer, the exit code decides success, and the
 output is worth collapsing because there will be a last line eventually.
 
-A dev server never answers. Neither does a file watcher or a log tailer. Set
-`persistent: true` on a task and you are telling Lattice that this one is in that
-category, and four separate assumptions have to be dropped for it.
+A dev server never answers. Neither does a file watcher or a log tailer. A
+persistent task is one Lattice knows is in that category, and four separate
+assumptions have to be dropped for it.
+
+`dev`, `start`, `serve` and `watch` are persistent without saying so, because
+that is what those names mean in almost every repo. Any other task opts in, and
+any of those four opts out, in the `tasks` map or for particular workspaces in
+`overrides`:
 
 ```json
 {
   "tasks": {
-    "build": { "outputs": ["dist/**"] },
-    "dev": {
-      "dependsOn": ["build"],
-      "persistent": true
-    }
+    "dev": { "dependsOn": ["build"] },
+    "tail-logs": { "persistent": true }
+  },
+  "overrides": {
+    "cli": { "tasks": { "start": { "persistent": false } } }
   }
 }
 ```
 
-`persistent` sits on the task definition, and there is no per-workspace
-override. A task either is the kind of thing that keeps running or it is not, and
-that is a property of the task rather than of where it runs.
-
 ## Where its command comes from
 
-Declaring the task is half of it. Each workspace still has to produce a command
-for `dev`, and a persistent task is the one case where Lattice is careful about
-inferring one:
-
-| The workspace's driver | What happens |
-| --- | --- |
-| Reads a script map — `npm`, `pnpm`, `yarn`, `bun`, `deno` | Runs the script if the manifest declares one by that name. No script, no `dev` node in that workspace |
-| Is a task runner — `just`, `task`, `turbo`, `nx`, `rake`, `mix` | Infers the command. `dev` in a `turbo.json` workspace resolves to `turbo run dev` |
-| Anything else — `cargo`, `go`, `gradle`, `poetry`, `composer` | Infers nothing. There is no `cargo dev`, so guessing would produce a command that fails |
-
-The last row is why a Rust or Go workspace needs the command spelled out:
+A persistent task runs where a workspace defines it, like any other task: a
+`dev` script in `package.json`, a `dev` recipe in a justfile, a `dev` task in
+`turbo.json` (run as `turbo run dev`). Build tools have no such verb — there is
+no `cargo dev` — so a Rust or Go workspace gets its command written out:
 
 ```json
 {
-  "workspaces": [
-    {
-      "name": "api",
-      "path": "services/api",
-      "scripts": { "dev": "cargo watch -x run" }
-    }
-  ]
+  "overrides": {
+    "api": { "tasks": { "dev": "cargo watch -x run" } }
+  }
 }
 ```
 
-A `scripts` entry always beats inference, so it works in any of the three rows.
-A workspace that produces no command is skipped and the run carries on with the
-ones that did — a `dev` task can cover the two workspaces that have a dev server
-and leave the rest alone.
+A Gradle application gets `run`, and a Spring Boot one `bootRun`, from the build
+itself; neither is persistent unless you say so. A workspace with no `dev` sits
+the run out, so a `dev` run covers the workspaces that have a dev server and
+leaves the rest alone.
 
 ## It cannot be cached, and not because caching was hard
 
@@ -109,21 +99,28 @@ past that node, so a dead dev server never halts the rest of the graph. It is
 reported, and the run exits non-zero, but the fail-fast behavior you get from an
 ordinary task does not apply.
 
-## It forces raw output for the entire run
+## It forces the stream for the entire run
 
 If any task in the transitive closure of what you asked for is persistent,
-Lattice drops the live TUI and uses the same line-by-line output CI gets, even
-on a terminal. The decision is made before anything starts and it applies to the
-whole run rather than to the persistent task alone.
+Lattice uses the plain line-by-line stream CI gets instead of the live display,
+even on a terminal. The decision is made before anything starts and it applies
+to the whole run.
 
 A progress display works by owning a region of the terminal and redrawing it.
 Streaming output works by appending lines forever. You cannot have both in one
 terminal, and a dev server's log is the reason the run is open, so the log wins.
 
-Inside that raw stream, a persistent task's lines print unconditionally, with or
-without `-v`. Other tasks stream only under `-v` and are otherwise
-buffered and shown on failure. See
-[Output and logging](/lattice/docs/output-modes).
+Every task's lines stream as they arrive, each under its `workspace:task` label.
+See [Output and logging](/lattice/docs/output-modes).
+
+## It cannot read the keyboard
+
+Every task runs with an empty stdin and no controlling terminal, so a dev server
+that listens for keypresses — `r` to restart, `q` to quit — sees none. A task
+that shared the terminal could be stopped by the shell the moment it read from
+it, and a stopped task never exits, so the run would wait forever. Restart a
+server by stopping the run and starting it again, or by the server's own file
+watching.
 
 ## An unexpected exit is reported either way
 
@@ -211,7 +208,6 @@ plausible last line of output.
 
 ## Where to look next
 
-Running a dev server day to day is
-[Dev servers and watchers](/lattice/docs/dev-servers). Why the output mode
+Running a dev server day to day is [Run dev servers](/lattice/docs/dev-servers). Why the output mode
 switched is [Output and logging](/lattice/docs/output-modes). The exact text of
 every message here is in [Errors](/lattice/docs/errors).

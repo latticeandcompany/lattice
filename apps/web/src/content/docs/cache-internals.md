@@ -23,7 +23,8 @@ digests are hashed together in this fixed order to produce the key.
 The two-stage form exists so a miss can name a cause. A key alone reports that
 something changed. Comparing components against the ones the task last resolved
 to reports which. That comparison produces `cache miss: inputs changed`, which
-prints in the raw stream under `-v` and nowhere else.
+prints under `-v`: in the stream as its own line, and on the live display on
+the task's settled line.
 
 1. `environment`. The running Lattice version, the platform as `<os>-<arch>`,
    the shell (`sh -c` or `cmd /C`), the workspace's declared name, and the task
@@ -31,7 +32,8 @@ prints in the raw stream under `-v` and nowhere else.
    command with nothing else to distinguish them do not share one entry. The
    Lattice version is included so a release that changes this list never reads
    an entry keyed under the old one.
-2. `command`. The fully resolved shell command for this task in this workspace.
+2. `command`. The fully resolved shell command for this task in this workspace,
+   including any arguments passed after `--`.
 3. `toolchain`. The identity string of the workspace's resolved toolchains, empty
    when the workspace declares no engines. One part per engine, in the order the
    merged `engines` map holds them: `<name>=host` for an engine trusted on

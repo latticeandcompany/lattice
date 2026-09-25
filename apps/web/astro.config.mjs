@@ -1,5 +1,4 @@
 import { defineConfig } from 'astro/config';
-import tailwindcss from '@tailwindcss/vite';
 import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
 import mdx from '@astrojs/mdx';
@@ -13,7 +12,6 @@ export default defineConfig({
 	base: '/lattice',
 	integrations: [react(), sitemap(), mdx()],
 	vite: {
-		plugins: [tailwindcss()],
 		// The /desktop hero renders the desktop app's own components from source rather
 		// than copies of them, so the dev server has to be allowed to read outside this
 		// project, and their bare imports have to resolve to this project's copies.

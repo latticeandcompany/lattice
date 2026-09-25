@@ -228,6 +228,8 @@ export interface ScanResult {
 	/** Projects no workspace file names, offered for the config to list. */
 	candidates: WorkspaceCandidate[];
 	pins: EnginePin[];
+	/** The root when it is not offered as a workspace; its task settings are imported anyway. */
+	rootSettings: WorkspaceCandidate | null;
 }
 
 /** Which of a scan's findings were kept. */
@@ -236,6 +238,7 @@ export interface InitSelection {
 	pins: EnginePin[];
 	/** Every candidate path the scan offered, so kept siblings collapse into one glob. */
 	offered: string[];
+	rootSettings: WorkspaceCandidate | null;
 }
 
 // ---------- migration, toolchains, cache ----------
