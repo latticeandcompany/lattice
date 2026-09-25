@@ -394,7 +394,7 @@ Prints a completion script: `bash`, `elvish`, `fish`, `powershell`, `zsh`.
 Prints the splash, or with `--json`:
 
 ```json
-{"version":"1.1.1","target":"aarch64-apple-darwin","arch":"aarch64"}
+{"version":"2.0.0","target":"aarch64-apple-darwin","arch":"aarch64"}
 ```
 
 `upgrade`, `version`, `completions` and `migrate` run as the binary invoked.

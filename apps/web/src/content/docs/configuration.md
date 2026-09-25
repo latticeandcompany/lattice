@@ -95,7 +95,7 @@ Keep one of them: the second replaces the first, so only the last would take eff
 ## `latticeVersion`
 
 ```json
-{ "latticeVersion": "1.1.1" }
+{ "latticeVersion": "2.0.0" }
 ```
 
 The version of Lattice this repo runs. `lattice upgrade` writes it. See
@@ -372,7 +372,7 @@ Nothing runs when any of these fails.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["services/*", "tools/codegen"],
   "exclude": ["services/legacy"],
   "engines": { "node": ">=22", "rust": ">=1.85" },

@@ -1,6 +1,6 @@
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["apps/*", "packages/npm"],
   "engines": {
     "cargo": ">=1.88.0"

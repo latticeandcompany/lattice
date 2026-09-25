@@ -68,7 +68,7 @@ Open `lattice.json`:
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1"
+  "latticeVersion": "2.0.0"
 }
 ```
 

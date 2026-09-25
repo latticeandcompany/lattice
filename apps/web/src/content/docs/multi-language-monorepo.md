@@ -34,7 +34,7 @@ cannot:
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["apps/*", "libs/*", "services/*"],
   "tasks": {
     "build": { "ignore": ["**/*.test.*", "**/README.md"] },

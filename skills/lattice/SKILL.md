@@ -13,10 +13,10 @@ description: >
   (5) a task is missing the cache or hitting it when it should not,
   (6) wiring `lattice` into CI, or moving a 1.x config to this version.
 license: ISC
-compatibility: lattice 1.1.1+
+compatibility: lattice 2.0.0+
 metadata:
   author: latticeandcompany
-  version: "1.1.1"
+  version: "2.0.0"
 allowed-tools: Bash(lattice:*), Read, Write, Edit, Glob, Grep
 ---
 
@@ -227,7 +227,7 @@ files say everything.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["services/*", "tools/gen"],
   "exclude": ["services/legacy"],
   "engines": { "node": ">=22", "go": ">=1.22" },

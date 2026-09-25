@@ -30,7 +30,7 @@ services/api/          a directory of shell scripts that serves site's bundle
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["frontend", "services/api"],
   "overrides": {
     "frontend": {

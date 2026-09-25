@@ -4,7 +4,7 @@ import CopyCommand from '../components/copyCommand';
 import { installCommand, releasesUrl } from '../lib/nav';
 import { withBase } from '../lib/base';
 
-// Every terminal transcript on this page was captured from lattice 1.1.1
+// Every terminal transcript on this page was captured from lattice 2.0.0
 // running against a two-package npm repo. Re-capture them rather than editing by hand.
 const initOutput = `✓ wrote lattice.json
 ✓ wrote .lattice/schema.json
@@ -18,7 +18,7 @@ next: lattice run build`;
 
 const config = `{
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1"
+  "latticeVersion": "2.0.0"
 }`;
 
 const dryRun = `❖ lattice  dry run · build
@@ -121,7 +121,7 @@ const next = [
 				<div class="step__body">
 					<h2 class="step__title">Check that it runs</h2>
 					<pre class="step__code"><code>lattice --version</code></pre>
-					<pre class="step__code step__code--out"><code>lattice 1.1.1</code></pre>
+					<pre class="step__code step__code--out"><code>lattice 2.0.0</code></pre>
 					<p class="mb-0">
 						If your shell can't find <code>lattice</code>, open a new terminal so the
 						<code>PATH</code> line takes effect.

@@ -694,7 +694,7 @@ pinned build. Fatal, and it names the field and the file rather than failing on 
 download of a release that cannot exist. The indented lines carry the
 message shown above this one, `'1.x' is not a version. Write it like 0.2.0`, with
 the parser's complaint under that. Lattice accepts a `v` prefix and strips it, so
-`"v1.1.1"` and `"1.1.1"` pin the same release. When that release is the running
+`"v2.0.0"` and `"2.0.0"` pin the same release. When that release is the running
 build there is no handover to make, and the pin does nothing. A repo whose own
 tags carry the `v` prefix used to fail here on a download.
 
@@ -850,7 +850,7 @@ rather than a symlink, and the message is `failed to copy <from> to <to>`.
 
 ```text
 this repo pins lattice 0.4.0. That version is not installed, and Lattice could not download it.
-Run with --no-version-check to use lattice 1.1.1 instead
+Run with --no-version-check to use lattice 2.0.0 instead
 ```
 
 A binary Lattice installed under `.lattice/bin` hands the invocation to the

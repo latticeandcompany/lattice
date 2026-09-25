@@ -321,7 +321,7 @@ Nothing runs when any of these fires.
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["services/*", "tools/codegen"],
   "exclude": ["services/legacy"],
   "engines": { "node": ">=22", "rust": ">=1.85" },

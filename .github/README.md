@@ -149,7 +149,7 @@ manifest can:
 
 ```json
 {
-  "latticeVersion": "1.1.1",
+  "latticeVersion": "2.0.0",
   "workspaces": ["services/*", "tools/codegen"],
   "engines": { "node": ">=22", "go": ">=1.23" },
   "tasks": {
