@@ -1232,10 +1232,11 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			cmd.env(name, value);
 		}
 	}
-	cmd.stdout(std::process::Stdio::piped())
+	cmd.stdin(std::process::Stdio::null())
+		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::piped());
 	#[cfg(unix)]
-	cmd.process_group(0);
+	detach_from_terminal(&mut cmd);
 
 	let mut child = match cmd.spawn() {
 		Ok(c) => c,
@@ -1585,6 +1586,28 @@ fn build_shell_command(command: &str) -> tokio::process::Command {
 fn windows_shell_arg(cmd: &mut tokio::process::Command, command: &str) {
 	use std::os::windows::process::CommandExt;
 	cmd.as_std_mut().raw_arg(format!("/S /C \"{command}\""));
+}
+
+/// Start the task in a session of its own, which also makes it a process group
+/// leader for [`signal_group`].
+///
+/// A task in a background process group that still shares Lattice's terminal
+/// is stopped by SIGTTIN the moment anything in it reads that terminal — the
+/// Gradle client does, `sudo` and `ssh` prompts do through `/dev/tty` — and a
+/// stopped task never exits, so the run waited forever. Without a controlling
+/// terminal those reads fail instead, and the task reports its own error.
+#[cfg(unix)]
+fn detach_from_terminal(cmd: &mut tokio::process::Command) {
+	// SAFETY: `setsid` is async-signal-safe and touches no memory, which is all
+	// a `pre_exec` hook is allowed to do between fork and exec.
+	unsafe {
+		cmd.pre_exec(|| {
+			if libc::setsid() == -1 {
+				return Err(std::io::Error::last_os_error());
+			}
+			Ok(())
+		});
+	}
 }
 
 /// Prepend `prepend` dirs to the child's `PATH`, affecting that child only.

@@ -308,6 +308,66 @@ fn a_task_that_overruns_its_timeout_is_stopped() {
 	);
 }
 
+/// Run `lattice <args>` in `dir` on a pseudo-terminal, the way someone at a
+/// shell prompt does. Every other test pipes stdio, and a bug that only exists
+/// with a terminal attached — a task stopped by SIGTTIN — never shows there.
+#[cfg(unix)]
+fn run_on_a_terminal(dir: &std::path::Path, args: &str) -> std::process::Output {
+	let bin = assert_cmd::cargo::cargo_bin("lattice");
+	let line = format!("{} {args}", bin.display());
+	let mut cmd = std::process::Command::new("script");
+	if cfg!(target_os = "macos") {
+		cmd.args(["-q", "/dev/null", "sh", "-c", &line]);
+	} else {
+		cmd.args(["-qec", &line, "/dev/null"]);
+	}
+	let mut child = cmd
+		.current_dir(dir)
+		.env("NO_COLOR", "1")
+		.env_remove("CI")
+		.stdin(std::process::Stdio::piped())
+		.stdout(std::process::Stdio::piped())
+		.stderr(std::process::Stdio::piped())
+		.spawn()
+		.expect("spawn script(1)");
+
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+	while child.try_wait().expect("poll script(1)").is_none() {
+		if std::time::Instant::now() > deadline {
+			child.kill().ok();
+			panic!("`lattice {args}` on a terminal did not finish within 30s");
+		}
+		std::thread::sleep(std::time::Duration::from_millis(100));
+	}
+	child.wait_with_output().expect("collect script(1)")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_task_that_reads_stdin_finishes_when_run_from_a_terminal() {
+	let fx = Fixture::new();
+	fx.mkdir("app");
+	fx.config_from(
+		r#"{
+          "workspaces": [{ "name": "app", "path": "app", "auto": false,
+                           "scripts": { "build": @build@ } }],
+          "tasks": { "build": { "cache": false } }
+        }"#,
+		&[(
+			"build",
+			sh::then([sh::read_stdin(), sh::touch("finished.txt")]),
+		)],
+	);
+
+	let out = run_on_a_terminal(fx.root(), "run build");
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stdout)
+	);
+	assert!(fx.exists("app/finished.txt"));
+}
+
 #[test]
 fn a_timeout_a_task_stays_inside_is_not_enforced() {
 	let fx = Fixture::new();
