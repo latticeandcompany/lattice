@@ -392,7 +392,11 @@ mod tests {
 	fn a_monorepo_roots_turbo_settings_are_imported() {
 		let dir = tempfile::TempDir::new().unwrap();
 		let root = dir.path();
-		write(root, "package.json", r#"{"workspaces": ["packages/*"], "packageManager": "npm@11.0.0"}"#);
+		write(
+			root,
+			"package.json",
+			r#"{"workspaces": ["packages/*"], "packageManager": "npm@11.0.0"}"#,
+		);
 		write(
 			root,
 			"turbo.json",
@@ -403,7 +407,10 @@ mod tests {
 		let settings = p.root.expect("the root's turbo.json is a settings source");
 		let mut config = build_config(&[], &[], &[], "2.0.0");
 		import_settings(&mut config, &[&settings]);
-		assert_eq!(config["tasks"]["build"]["outputs"], json!(["dist/**", ".next/**"]));
+		assert_eq!(
+			config["tasks"]["build"]["outputs"],
+			json!(["dist/**", ".next/**"])
+		);
 	}
 
 	#[test]

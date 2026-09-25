@@ -358,14 +358,22 @@ mod tests {
 		let root = dir.path();
 		write(root, "Cargo.toml", "[workspace]\nmembers = [\"core\"]\n");
 		write(root, "core/Cargo.toml", "[package]\nname = \"core\"\n");
-		write(root, "web/package.json", r#"{"scripts": {"build": "vite build"}}"#);
+		write(
+			root,
+			"web/package.json",
+			r#"{"scripts": {"build": "vite build"}}"#,
+		);
 		write(root, "web/package-lock.json", "{}");
 		let v1 = r#"{
 		  "workspaces": [{ "name": "core", "path": "core" }, { "name": "web", "path": "web" }],
 		  "engines": { "cargo": ">=1.88.0", "npm": ">=0.0.0" }
 		}"#;
 		let m = migrate(root, v1, "2.0.0").unwrap();
-		assert!(m.config.overrides.values().all(|o| o.driver.is_none()), "{}", m.text);
+		assert!(
+			m.config.overrides.values().all(|o| o.driver.is_none()),
+			"{}",
+			m.text
+		);
 		let ws = discover_workspaces(root, &m.config).unwrap();
 		let web = ws.iter().find(|w| w.name == "web").unwrap();
 		assert_eq!(web.command_for("build"), Some("npm run build"));
@@ -376,7 +384,11 @@ mod tests {
 	#[test]
 	fn a_declaration_that_settled_an_ambiguity_carries_over() {
 		let dir = tempfile::TempDir::new().unwrap();
-		write(dir.path(), "tool/package.json", r#"{"scripts": {"build": "tsc"}}"#);
+		write(
+			dir.path(),
+			"tool/package.json",
+			r#"{"scripts": {"build": "tsc"}}"#,
+		);
 		let v1 = r#"{
 		  "workspaces": [{ "name": "tool", "path": "tool", "engines": { "pnpm": ">=0.0.0" } }]
 		}"#;
