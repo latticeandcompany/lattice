@@ -253,7 +253,8 @@ fn which(cmd: &str, extra: Option<&Path>, cwd: Option<&Path>) -> Option<PathBuf>
 		let path = cwd
 			.map(|c| c.join(program))
 			.unwrap_or_else(|| PathBuf::from(program));
-		return path.is_file().then_some(path);
+		let tidy: PathBuf = path.components().collect();
+		return tidy.is_file().then_some(tidy);
 	}
 	let exts: &[&str] = if cfg!(windows) {
 		&["", ".exe", ".cmd", ".bat"]
@@ -641,10 +642,22 @@ pub fn provision_and_resolve_in(
 				let found = which(&vc, None, cwd);
 				let checked = run_capture(&vc, None, cwd, &[])?;
 				let cons = constraint.clone().unwrap_or_default();
-				let install_hint = format!(
-					"install {name} {cons}, or give the engine an installCmd so Lattice installs it \
-					 for this repo"
-				);
+				let install_hint = if vc.contains("gradlew") {
+					format!(
+						"move the project's wrapper to a version matching {cons}: \
+						 `./gradlew wrapper --gradle-version <version>`"
+					)
+				} else if vc.contains("mvnw") {
+					format!(
+						"move the project's wrapper to a version matching {cons}: \
+						 `./mvnw wrapper:wrapper -Dmaven=<version>`"
+					)
+				} else {
+					format!(
+						"install {name} {cons}, or give the engine an installCmd so Lattice installs \
+						 it for this repo"
+					)
+				};
 				if checked.not_found() || (!checked.ok && found.is_none()) {
 					return Err(engine_error(
 						name,

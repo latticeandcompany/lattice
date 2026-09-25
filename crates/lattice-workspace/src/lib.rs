@@ -1195,7 +1195,7 @@ pub fn discover_workspaces(root: &Path, config: &LatticeConfig) -> Result<Vec<Wo
 			None => IndexMap::new(),
 		};
 		let tool = driver.as_ref().map(|d| d.tool.as_str()).unwrap_or("");
-		let resolved = resolve_tasks(config, &f.merged, native, tool);
+		let resolved = resolve_tasks(config, &f.merged, native, tool, &f.dir, root);
 
 		keys.push((f.identity.keys.clone(), manifest::canonical(&f.dir)));
 		dep_refs.push(f.identity.deps.clone());
@@ -1224,6 +1224,8 @@ fn resolve_tasks(
 	merged: &Merged,
 	native: IndexMap<String, tasks::NativeTask>,
 	tool: &str,
+	dir: &Path,
+	root: &Path,
 ) -> IndexMap<String, WorkspaceTask> {
 	let mut names: Vec<String> = native.keys().cloned().collect();
 	for name in merged.tasks.keys() {
@@ -1248,7 +1250,7 @@ fn resolve_tasks(
 		};
 		let mut layered = builtin_task_defaults(&name);
 		if name == "build" && origin != TaskOrigin::Config {
-			layered.outputs = tasks::default_build_outputs(tool);
+			layered.outputs = tasks::default_build_outputs(tool, dir, root);
 		}
 		if let Some(root_task) = config.tasks.get(&name) {
 			layered = layered.layer(root_task);
@@ -1596,7 +1598,7 @@ mod tests {
 		);
 		assert_eq!(
 			build.config.outputs.as_deref(),
-			Some(&["build/**".to_string()][..])
+			Some(&["**/build/**".to_string()][..])
 		);
 	}
 

@@ -2204,6 +2204,7 @@ sed -i.bak 's/Gradle 8.10.2/Gradle 7.6/' "$WRAP/gradlew" && rm -f "$WRAP/gradlew
 lat "$WRAP" run build --force ; t_bad "a wrapper below the pinned version fails the run"
 t_has "the failure names the wrapper it checked" "ran      ../../gradlew --version"
 t_has "the failure names the version it found"   "found    7.6.0"
+t_has "the fix is to move the wrapper"          "./gradlew wrapper --gradle-version"
 
 # =========================================================================
 # 14. Distribution: the installer, `upgrade`, and the pinned-version handover.

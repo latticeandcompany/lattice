@@ -49,7 +49,7 @@ impl NativeTasks {
 			self.tasks.entry(name).or_insert_with(|| NativeTask {
 				command,
 				source: source.to_string(),
-				args_after_separator: prefix == "npm run",
+				args_after_separator: matches!(prefix, "npm run" | "task"),
 			});
 		}
 	}
@@ -195,17 +195,35 @@ pub fn native_tasks(tool: &str, dir: &Path, root: &Path, package: Option<&str>) 
 	out
 }
 
-/// Outputs a `build` gets when nothing says otherwise: the one directory each
-/// tool writes its build into by convention and never puts sources in.
-pub fn default_build_outputs(tool: &str) -> Option<Vec<String>> {
+/// Outputs a `build` gets when nothing says otherwise: the directory each tool
+/// writes its build into by convention and never puts sources in.
+///
+/// A Gradle, Maven or .NET workspace is a whole multi-project build, and each
+/// subproject writes its own, so those match at any depth. A .NET project's
+/// `bin` is only its configuration directories: a bare `bin` could be a folder
+/// of scripts, and a cache hit clears what the outputs match before restoring.
+/// A uv workspace member builds into the workspace root's `dist`, outside its
+/// own directory, so it gets none.
+pub fn default_build_outputs(tool: &str, dir: &Path, root: &Path) -> Option<Vec<String>> {
 	let dirs: &[&str] = match tool {
+		"uv" if inside_uv_workspace(dir, root) => return None,
 		"npm" | "pnpm" | "yarn" | "bun" | "deno" | "uv" | "poetry" | "pdm" => &["dist/**"],
-		"maven" => &["target/**"],
-		"gradle" => &["build/**"],
-		"dotnet" => &["bin/**"],
+		"maven" => &["**/target/**"],
+		"gradle" => &["**/build/**"],
+		"dotnet" => &["**/bin/Debug/**", "**/bin/Release/**"],
 		_ => return None,
 	};
 	Some(dirs.iter().map(|d| d.to_string()).collect())
+}
+
+fn inside_uv_workspace(dir: &Path, root: &Path) -> bool {
+	dir.ancestors()
+		.skip(1)
+		.take_while(|a| a.starts_with(root))
+		.any(|a| {
+			read::toml(&a.join("pyproject.toml"))
+				.is_some_and(|m| read::toml_path(&m, &["tool", "uv", "workspace"]).is_some())
+		})
 }
 
 /// `command` with `args` appended, each quoted for the platform shell.
@@ -713,6 +731,45 @@ mod tests {
 		let tasks = native_tasks("turbo", dir.path(), dir.path(), None).tasks;
 		assert_eq!(tasks.keys().collect::<Vec<_>>(), ["build"]);
 		assert_eq!(tasks["build"].command, "turbo run build");
+	}
+
+	#[test]
+	fn a_uv_member_builds_into_the_workspace_root_so_it_claims_no_output() {
+		let dir = tempfile::TempDir::new().unwrap();
+		write(
+			dir.path(),
+			"pyproject.toml",
+			"[project]\nname = \"root\"\n[tool.uv.workspace]\nmembers = [\"lib\"]\n",
+		);
+		write(
+			dir.path(),
+			"lib/pyproject.toml",
+			"[project]\nname = \"lib\"\n",
+		);
+		assert_eq!(
+			default_build_outputs("uv", &dir.path().join("lib"), dir.path()),
+			None
+		);
+		assert_eq!(
+			default_build_outputs("uv", dir.path(), dir.path()),
+			Some(vec!["dist/**".to_string()])
+		);
+	}
+
+	#[test]
+	fn taskfile_arguments_go_after_a_separator() {
+		let dir = tempfile::TempDir::new().unwrap();
+		write(
+			dir.path(),
+			"Taskfile.yml",
+			"version: '3'\ntasks:\n  test:\n    cmds: [go test]\n",
+		);
+		let tasks = native_tasks("task", dir.path(), dir.path(), None).tasks;
+		let test = &tasks["test"];
+		assert_eq!(
+			append_args(&test.command, &["-v".into()], test.args_after_separator),
+			"task test -- -v"
+		);
 	}
 
 	#[test]

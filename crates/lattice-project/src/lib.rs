@@ -117,6 +117,11 @@ impl Project {
 			} else {
 				message.push_str(&format!("\nTasks: {}", known.join(", ")));
 			}
+			// A manifest that would not parse lists nothing, and is the likeliest
+			// reason a task is missing.
+			for problem in self.workspaces.iter().flat_map(|ws| &ws.problems) {
+				message.push_str(&format!("\n{problem}"));
+			}
 			bail!(message);
 		}
 		Ok(())
