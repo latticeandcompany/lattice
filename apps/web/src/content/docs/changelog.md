@@ -123,6 +123,21 @@ miss and the first run after an upgrade re-runs everything. Run
   `FAILED` line, so the explanation still shows when the task had already
   streamed output
 
+## `init` and Lattice Desktop — 2026-09-25
+
+- `lattice init` writes only what discovery cannot find: projects no
+  workspace file names, as globs where every sibling is one, and the tool
+  versions the repo already pins. The task settings a `turbo.json` spells out
+  come over from a proposed workspace, a single-project root, or a monorepo
+  root. It lists what it found when it is done
+- Lattice Desktop covers what the CLI does. Tasks shows a live tail of every
+  running task and what each queued one waits on. Toolchains checks every
+  pinned tool and prints a failure the way the CLI does. Cache shows its size
+  against the limit and the time it has saved, and prunes or empties it. Config
+  edits the 2.0 schema, the setup wizard writes the same file as `lattice init`,
+  and a 1.x config opens into a migration with a before and after
+- Lattice Desktop and the website are styled with Bootstrap alone
+
 ## Lattice 1.1.1 — 2026-09-10
 
 - A task that leaves a process running behind it no longer holds the run open
