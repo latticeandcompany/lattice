@@ -79,12 +79,13 @@ fn path_injection_makes_provisioned_tool_available_during_run() {
 	fx.config(&format!(
 		r#"{{
   "latticeVersion": "0.1.0",
-  "workspaces": [
-    {{ "name": "app", "path": "app", "auto": false,
+  "workspaces": ["app"],
+  "overrides": {{
+    "app": {{
       "engines": {{ "faketool": {} }},
-      "scripts": {{ "build": "faketool --version" }} }}
-  ],
-  "tasks": {{ "build": {{}} }}
+      "tasks": {{ "build": "faketool --version" }}
+    }}
+  }}
 }}
 "#,
 		faketool_engine()
@@ -96,4 +97,30 @@ fn path_injection_makes_provisioned_tool_available_during_run() {
 		.success()
 		.stdout(predicate::str::contains("faketool 1.2.3"))
 		.stdout(predicate::str::contains("0 failed"));
+}
+
+/// `lattice env` hands the PATH a task sees to the user's own shell, so the
+/// pinned tool answers there too.
+#[test]
+fn env_prints_the_pinned_toolchain_for_the_shell() {
+	let fx = Fixture::new();
+	fx.config(&format!(
+		r#"{{
+  "latticeVersion": "0.1.0",
+  "engines": {{ "faketool": {} }}
+}}
+"#,
+		faketool_engine()
+	));
+
+	let out = fx
+		.lattice()
+		.args(["env", "--shell", "posix"])
+		.assert()
+		.success();
+	let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+	assert!(stdout.starts_with("export PATH=\""), "{stdout}");
+	assert!(stdout.trim_end().ends_with(":$PATH\""), "{stdout}");
+	assert!(stdout.contains("toolchains"), "{stdout}");
+	assert!(stdout.contains("faketool"), "{stdout}");
 }

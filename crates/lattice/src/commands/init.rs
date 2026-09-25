@@ -62,7 +62,10 @@ impl InitArgs {
 			confirm(&proposal)?
 		};
 
-		let config = scaffold::build_config(&workspaces, &all, &pins, BIN_VERSION);
+		let mut config = scaffold::build_config(&workspaces, &all, &pins, BIN_VERSION);
+		if let Some(root) = &proposal.single_project {
+			scaffold::import_settings(&mut config, &[root]);
+		}
 		scaffold::write_artifacts(&cwd, &config)?;
 		print_result(&cwd, &proposal);
 		Ok(())

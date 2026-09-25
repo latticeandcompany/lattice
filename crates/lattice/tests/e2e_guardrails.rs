@@ -25,13 +25,13 @@ fn a_workspace_dep_that_names_nothing_is_rejected() {
 	two_workspace_repo(
 		&fx,
 		r#"{
-          "workspaces": [
-            { "name": "lib", "path": "lib", "auto": false, "scripts": { "build": @lib@ } },
-            { "name": "app", "path": "app", "auto": false, "dependsOn": ["libb"],
-              "scripts": { "build": @app@ } }
-          ],
-          "tasks": { "build": { "dependsOn": ["^build"] } }
-        }"#,
+		    "workspaces": ["lib", "app"],
+		    "tasks": { "build": { "dependsOn": ["^build"] } },
+		    "overrides": {
+		      "lib": { "tasks": { "build": @lib@ } },
+		      "app": { "dependsOn": ["libb"], "tasks": { "build": @app@ } }
+		    }
+		}"#,
 		&[("lib", sh::echo("lib")), ("app", sh::echo("app"))],
 	);
 
@@ -56,10 +56,10 @@ fn a_task_dep_that_names_nothing_is_rejected() {
 	fx.mkdir("app");
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "tasks": { "build": { "dependsOn": ["codegen"] } }
-        }"#,
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "dependsOn": ["codegen"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::echo("app"))],
 	);
 
@@ -70,7 +70,10 @@ fn a_task_dep_that_names_nothing_is_rejected() {
 		.failure();
 	let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
 	assert!(stderr.contains("codegen"), "{stderr}");
-	assert!(stderr.contains("Defined tasks: build"), "{stderr}");
+	assert!(
+		stderr.contains("no workspace has a 'codegen' task"),
+		"{stderr}"
+	);
 }
 
 #[test]
@@ -78,10 +81,10 @@ fn a_workspace_path_outside_the_repo_is_rejected() {
 	let fx = Fixture::new();
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "esc", "path": "../outside", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "tasks": { "build": {} }
-        }"#,
+		    "workspaces": ["../outside"],
+		    "tasks": { "build": {} },
+		    "overrides": { "../outside": { "name": "esc", "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::echo("x"))],
 	);
 
@@ -105,11 +108,11 @@ fn a_global_dependency_change_invalidates_the_cache() {
 	fx.write("shared.config.json", r#"{"mode":"one"}"#);
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "globalDependencies": ["shared.config.json"],
-          "tasks": { "build": { "outputs": ["out.txt"] } }
-        }"#,
+		    "workspaces": ["app"],
+		    "globalDependencies": ["shared.config.json"],
+		    "tasks": { "build": { "outputs": ["out.txt"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::copy("../shared.config.json", "out.txt"))],
 	);
 
@@ -137,11 +140,11 @@ fn a_miss_says_which_part_of_the_key_moved() {
 	fx.write("shared.json", "one");
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "globalDependencies": ["shared.json"],
-          "tasks": { "build": { "outputs": ["out.txt"] } }
-        }"#,
+		    "workspaces": ["app"],
+		    "globalDependencies": ["shared.json"],
+		    "tasks": { "build": { "outputs": ["out.txt"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::write("out.txt", "hi"))],
 	);
 
@@ -167,11 +170,11 @@ fn prune_leaves_everything_that_is_not_a_cache_entry() {
 	fx.mkdir("app");
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "tasks": { "build": { "outputs": ["out.txt"] } },
-          "settings": { "cacheDir": ".lattice", "maxCacheSize": "1B" }
-        }"#,
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "outputs": ["out.txt"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } },
+		    "settings": { "cacheDir": ".lattice", "maxCacheSize": "1B" }
+		}"#,
 		&[("build", sh::write("out.txt", "hi"))],
 	);
 	fx.write(
@@ -232,9 +235,9 @@ fn max_cache_size_is_held_without_running_prune() {
 		fx.config_from(
 			&format!(
 				r#"{{
-          "workspaces": [{{ "name": "app", "path": "app", "auto": false,
-                           "scripts": {{ "build": @build@ }} }}],
+          "workspaces": ["app"],
           "tasks": {{ "build": {{ "outputs": ["out.txt"] }} }},
+          "overrides": {{ "app": {{ "tasks": {{ "build": @build@ }} }} }},
           "settings": {{ {settings} }}
         }}"#
 			),
@@ -279,10 +282,10 @@ fn a_task_that_overruns_its_timeout_is_stopped() {
 	fx.mkdir("app");
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "tasks": { "build": { "timeout": "1s" } }
-        }"#,
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "timeout": "1s" } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[(
 			"build",
 			sh::then([sh::sleep(60), sh::touch("finished.txt")]),
@@ -349,10 +352,10 @@ fn a_task_that_reads_stdin_finishes_when_run_from_a_terminal() {
 	fx.mkdir("app");
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "tasks": { "build": { "cache": false } }
-        }"#,
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "cache": false } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[(
 			"build",
 			sh::then([sh::read_stdin(), sh::touch("finished.txt")]),
@@ -374,10 +377,10 @@ fn a_timeout_a_task_stays_inside_is_not_enforced() {
 	fx.mkdir("app");
 	fx.config_from(
 		r#"{
-          "workspaces": [{ "name": "app", "path": "app", "auto": false,
-                           "scripts": { "build": @build@ } }],
-          "tasks": { "build": { "timeout": "5m", "outputs": ["out.txt"] } }
-        }"#,
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "timeout": "5m", "outputs": ["out.txt"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::write("out.txt", "hi"))],
 	);
 

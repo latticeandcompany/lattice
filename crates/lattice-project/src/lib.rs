@@ -98,6 +98,11 @@ impl Project {
 	/// Fail if no workspace can run one of `tasks`, naming the ones there are.
 	/// A run is refused before anything is provisioned or spawned.
 	pub fn require_known_tasks(&self, tasks: &[String]) -> Result<()> {
+		// A repo with no workspaces has nothing to run, which the plan says
+		// without calling any task unknown.
+		if self.workspaces.is_empty() {
+			return Ok(());
+		}
 		let known = known_tasks(&self.workspaces);
 		for task in tasks {
 			if known.contains(task) {
@@ -123,8 +128,12 @@ impl Project {
 	/// Called once per run rather than on open: opening a project is something a
 	/// front end does whenever it likes, and a reload is not news.
 	pub fn report_skipped_tasks(&self, tasks: &[String], reporter: &dyn Reporter) {
-		for note in skipped_task_notes(&self.workspaces, tasks) {
-			reporter.note(&note);
+		let skipped = skipped_task_notes(&self.workspaces, tasks);
+		for warning in &skipped.warnings {
+			reporter.warn(warning);
+		}
+		for note in &skipped.notes {
+			reporter.note(note);
 		}
 	}
 
@@ -410,9 +419,11 @@ mod tests {
 		fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
 		fn run_summary(&self, _summary: RunSummary) {}
 		fn note(&self, msg: &str) {
-			self.0.lock().unwrap().push(msg.to_string());
+			self.0.lock().unwrap().push(format!("note: {msg}"));
 		}
-		fn warn(&self, _msg: &str) {}
+		fn warn(&self, msg: &str) {
+			self.0.lock().unwrap().push(format!("warn: {msg}"));
+		}
 		fn finish(&self) {}
 	}
 
@@ -449,7 +460,11 @@ mod tests {
 		project.report_skipped_tasks(&["build".to_string()], &reporter);
 
 		let notes = reporter.0.lock().unwrap().clone();
-		assert_eq!(notes, ["web has no 'build' task. Did you mean 'biuld'?"]);
+		assert_eq!(
+			notes,
+			["warn: web has no 'build' task. Did you mean 'biuld'?"],
+			"a near miss is worth a warning; nothing sat out, so there is no note"
+		);
 	}
 
 	#[test]

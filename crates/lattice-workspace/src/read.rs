@@ -8,9 +8,9 @@ use serde_json::Value;
 
 pub(crate) fn json(file: &Path) -> Option<Value> {
 	let raw = std::fs::read_to_string(file).ok()?;
-	let jsonc = file
-		.extension()
-		.is_some_and(|ext| ext == "jsonc" || file.ends_with("deno.json"));
+	let jsonc = file.extension().is_some_and(|ext| {
+		ext == "jsonc" || file.ends_with("deno.json") || file.ends_with("turbo.json")
+	});
 	let text = if jsonc {
 		crate::strip_json_comments(&raw)
 	} else {

@@ -85,6 +85,9 @@ pub struct Proposal {
 	/// Directories no workspace file names, which the config has to list.
 	pub extra: Vec<WorkspaceCandidate>,
 	pub pins: Vec<EnginePin>,
+	/// The repo root, when nothing else is a workspace and the root is one on
+	/// its own. It needs no entry, but its task runner's settings are imported.
+	pub single_project: Option<WorkspaceCandidate>,
 }
 
 /// Read `root` for everything a config could say.
@@ -122,11 +125,14 @@ pub fn propose(root: &Path) -> Proposal {
 		.cloned()
 		.collect();
 
+	let mut single_project = None;
 	if let Some(root_candidate) = root_candidate {
 		if native.is_empty() && !extra.is_empty() {
 			let mut offered = root_candidate.clone();
 			offered.default_selected = false;
 			extra.insert(0, offered);
+		} else if native.is_empty() && root_candidate.driver.is_some() {
+			single_project = Some(root_candidate.clone());
 		}
 	}
 
@@ -134,6 +140,7 @@ pub fn propose(root: &Path) -> Proposal {
 		native,
 		extra,
 		pins: scan_engine_pins(root),
+		single_project,
 	}
 }
 
@@ -195,21 +202,29 @@ pub fn build_config(
 		root.insert("engines".into(), Value::Object(engines));
 	}
 
-	let globals = union_globals(workspaces, |d| &d.global_dependencies);
+	let mut config = Value::Object(root);
+	import_settings(&mut config, workspaces);
+	config
+}
+
+/// Add the shared files, env and task settings `candidates`' task runners
+/// already declare to `config`.
+pub fn import_settings(config: &mut Value, candidates: &[&WorkspaceCandidate]) {
+	let Some(root) = config.as_object_mut() else {
+		return;
+	};
+	let globals = union_globals(candidates, |d| &d.global_dependencies);
 	if !globals.is_empty() {
 		root.insert("globalDependencies".into(), json!(globals));
 	}
-	let global_env = union_globals(workspaces, |d| &d.global_env);
+	let global_env = union_globals(candidates, |d| &d.global_env);
 	if !global_env.is_empty() {
 		root.insert("globalEnv".into(), json!(global_env));
 	}
-
-	let tasks = imported_tasks(workspaces);
+	let tasks = imported_tasks(candidates);
 	if !tasks.is_empty() {
 		root.insert("tasks".into(), Value::Object(tasks));
 	}
-
-	Value::Object(root)
 }
 
 /// The task settings a workspace's own task runner already spells out, such as
@@ -382,6 +397,7 @@ mod tests {
 		let p = propose(root);
 		assert!(p.extra.is_empty(), "{:?}", p.extra);
 		assert!(p.native.is_empty());
+		assert_eq!(p.single_project.unwrap().driver.as_deref(), Some("gradle"));
 	}
 
 	#[test]

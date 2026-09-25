@@ -1363,14 +1363,21 @@ fn check_declared_dependencies(workspaces: &[Workspace], config: &LatticeConfig)
 	Ok(())
 }
 
-/// What the developer should hear about the tasks a run asked for that some
-/// workspaces do not have: which workspaces sat it out, and a "did you mean"
-/// where a workspace declares something one typo away. Empty when every
-/// workspace has every task.
-pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> Vec<String> {
-	let mut notes = Vec::new();
+/// What a run should say about the tasks it asked for that some workspaces do
+/// not have.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SkippedTasks {
+	/// Worth seeing on every run: a manifest discovery could not read, and a
+	/// workspace that declares a name one typo away from the task.
+	pub warnings: Vec<String>,
+	/// Which workspaces sat a task out, for a run that asked to hear everything.
+	pub notes: Vec<String>,
+}
+
+pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> SkippedTasks {
+	let mut out = SkippedTasks::default();
 	for ws in workspaces {
-		notes.extend(ws.problems.iter().cloned());
+		out.warnings.extend(ws.problems.iter().cloned());
 	}
 	for task in tasks {
 		let mut without: Vec<&str> = Vec::new();
@@ -1380,7 +1387,7 @@ pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> Vec<Str
 			}
 			let declared: Vec<String> = ws.tasks.keys().cloned().collect();
 			if let Some(near) = closest_field(task, &declared) {
-				notes.push(format!(
+				out.warnings.push(format!(
 					"{} has no '{task}' task. Did you mean '{near}'?",
 					ws.name
 				));
@@ -1389,13 +1396,13 @@ pub fn skipped_task_notes(workspaces: &[Workspace], tasks: &[String]) -> Vec<Str
 			}
 		}
 		if !without.is_empty() && without.len() < workspaces.len() {
-			notes.push(format!(
+			out.notes.push(format!(
 				"no '{task}' task in {}, so they sit this one out",
 				without.join(", ")
 			));
 		}
 	}
-	notes
+	out
 }
 
 #[cfg(test)]
@@ -1653,12 +1660,19 @@ mod tests {
 	fn skipped_tasks_name_who_sat_out_and_catch_a_typo() {
 		let dir = pnpm_monorepo();
 		let ws = discover_workspaces(dir.path(), &config("{}")).unwrap();
-		let notes = skipped_task_notes(&ws, &["lint".to_string()]);
-		assert_eq!(notes, ["no 'lint' task in web, so they sit this one out"]);
-		let notes = skipped_task_notes(&ws, &["biuld".to_string()]);
+		let skipped = skipped_task_notes(&ws, &["lint".to_string()]);
+		assert_eq!(
+			skipped.notes,
+			["no 'lint' task in web, so they sit this one out"]
+		);
+		assert!(skipped.warnings.is_empty());
+		let skipped = skipped_task_notes(&ws, &["biuld".to_string()]);
 		assert!(
-			notes.iter().any(|n| n.contains("Did you mean 'build'?")),
-			"{notes:?}"
+			skipped
+				.warnings
+				.iter()
+				.any(|n| n.contains("Did you mean 'build'?")),
+			"{skipped:?}"
 		);
 	}
 }

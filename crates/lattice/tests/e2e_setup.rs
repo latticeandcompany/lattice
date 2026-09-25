@@ -31,11 +31,10 @@ fn hoisted_repo() -> Fixture {
 	fx.write("package-lock.json", "{}");
 	fx.config(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [ { "name": "web", "path": "apps/web", "auto": false } ],
-  "tasks": {}
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["apps/web"],
+		    "tasks": {}
+		}"#,
 	);
 	fx.install_stub_bin("release-stub", "npm");
 	fx
@@ -132,7 +131,7 @@ fn an_unknown_workspace_name_is_refused_rather_than_selecting_nothing() {
 		.assert()
 		.failure()
 		.stderr(predicate::str::contains("no-such-workspace"))
-		.stderr(predicate::str::contains("Declared workspaces: web"))
+		.stderr(predicate::str::contains("Workspaces: web"))
 		.stdout(predicate::str::contains("setup complete").not());
 
 	assert!(!fx.exists(WEB_MARKER), "nothing should have been installed");
@@ -240,21 +239,25 @@ fn workspaces_whose_paths_would_flatten_together_get_distinct_markers() {
 	fx.write("package-lock.json", "{}");
 	fx.config(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "nested", "path": "apps/web", "auto": false },
-    { "name": "sibling", "path": "apps-web", "auto": false }
-  ],
-  "tasks": {}
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["apps/web", "apps-web"],
+		    "tasks": {},
+		    "overrides": { "apps/web": { "name": "nested" }, "./apps-web": { "name": "sibling" } }
+		}"#,
 	);
 	fx.install_stub_bin("release-stub", "npm");
 
-	setup(&fx).assert().success();
+	let out = stdout_of(setup(&fx).assert().success());
 
 	assert!(fx.exists(WEB_MARKER));
 	assert!(fx.exists(".lattice/setup/apps-web.marker"));
+	assert_eq!(
+		out.lines()
+			.filter(|l| l.contains("●") && l.contains("npm install"))
+			.count(),
+		1,
+		"both share the root lockfile, so one install covers the tree:\n{out}"
+	);
 	assert_eq!(
 		file_names_under(&fx, ".lattice/setup").len(),
 		2,

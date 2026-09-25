@@ -10,20 +10,17 @@ use common::Fixture;
 use lattice_testkit as sh;
 use predicates::prelude::*;
 
-/// A single `auto:false` workspace whose `build` writes an output file, with a
+/// A single workspace whose written-out `build` writes an output file, with a
 /// task that declares inputs and outputs so the run is cacheable.
 fn single_ws_repo(fx: &Fixture) {
 	fx.write("app/src/f.txt", "hello\n");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false,
-      "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[(
 			"build",
 			sh::all([sh::mkdirs("dist"), sh::write("dist/out.txt", "hi")]),
@@ -104,14 +101,14 @@ fn filter_runs_only_matching_workspace() {
 	fx.mkdir("b");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @a@ } },
-    { "name": "beta",  "path": "b", "auto": false, "scripts": { "build": @b@ } }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a", "b"],
+		    "tasks": { "build": {} },
+		    "overrides": {
+		      "./a": { "name": "alpha", "tasks": { "build": @a@ } },
+		      "./b": { "name": "beta", "tasks": { "build": @b@ } }
+		    }
+		}"#,
 		&[
 			("a", sh::write("marker.txt", "A")),
 			("b", sh::write("marker.txt", "B")),
@@ -140,17 +137,15 @@ fn chain_repo(fx: &Fixture) {
 	}
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "base", "path": "base", "auto": false, "scripts": { "build": @base@ } },
-    { "name": "mid",  "path": "mid",  "auto": false, "dependsOn": ["base"],
-      "scripts": { "build": @mid@ } },
-    { "name": "top",  "path": "top",  "auto": false, "dependsOn": ["mid"],
-      "scripts": { "build": @top@ } }
-  ],
-  "tasks": { "build": { "dependsOn": ["^build"] } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["base", "mid", "top"],
+		    "tasks": { "build": { "dependsOn": ["^build"] } },
+		    "overrides": {
+		      "base": { "tasks": { "build": @base@ } },
+		      "mid": { "dependsOn": ["base"], "tasks": { "build": @mid@ } },
+		      "top": { "dependsOn": ["mid"], "tasks": { "build": @top@ } }
+		    }
+		}"#,
 		&[
 			("base", sh::write("marker.txt", "B")),
 			("mid", sh::write("marker.txt", "M")),
@@ -211,19 +206,116 @@ fn filtered_dry_run_marks_pulled_in_dependencies() {
 		.stdout(predicate::str::contains("top:build (dependency)").not());
 }
 
+/// A run started inside a workspace is for that workspace, and still builds
+/// what it depends on, the way cargo scopes itself to the member it is run in.
+#[test]
+fn a_run_from_inside_a_workspace_is_scoped_to_it() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+	fx.mkdir("mid/src");
+
+	fx.lattice()
+		.current_dir(fx.join("mid/src"))
+		.args(["run", "build"])
+		.assert()
+		.success();
+
+	assert!(fx.exists("base/marker.txt"), "mid's dependency ran");
+	assert!(
+		fx.exists("mid/marker.txt"),
+		"the workspace the run started in ran"
+	);
+	assert!(
+		!fx.exists("top/marker.txt"),
+		"a workspace outside the one the run started in stays out"
+	);
+}
+
+/// Arguments after `--` belong to the task that was asked for, not to the
+/// builds it pulls in on the way.
+#[test]
+fn arguments_after_a_double_dash_reach_only_the_requested_task() {
+	let fx = Fixture::new();
+	for dir in ["lib", "app"] {
+		fx.mkdir(dir);
+	}
+	fx.config_from(
+		r#"{
+		    "workspaces": ["lib", "app"],
+		    "tasks": { "test": { "dependsOn": ["build"] } },
+		    "overrides": {
+		      "lib": { "tasks": { "build": @build@ } },
+		      "app": { "dependsOn": ["lib"], "tasks": { "build": @build@, "test": @test@ } }
+		    }
+		}"#,
+		&[("build", sh::succeed()), ("test", sh::echo("tested"))],
+	);
+
+	let out = fx
+		.lattice()
+		.args(["run", "test", "--dry-run", "--", "--only", "fast"])
+		.assert()
+		.success();
+	let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+	let line = |label: &str| {
+		stdout
+			.lines()
+			.find(|l| l.contains(label))
+			.unwrap_or_else(|| panic!("no {label} line:\n{stdout}"))
+			.to_string()
+	};
+	assert!(line("app:test").ends_with("--only fast"), "{stdout}");
+	assert!(!line("app:build").contains("--only"), "{stdout}");
+	assert!(!line("lib:build").contains("--only"), "{stdout}");
+}
+
+/// A task no workspace defines is refused before anything runs, and a near
+/// miss is named.
+#[test]
+fn a_task_no_workspace_has_suggests_the_one_it_nearly_matches() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+	fx.lattice()
+		.args(["run", "biuld"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains("no workspace has a 'biuld' task"))
+		.stderr(predicate::str::contains("Did you mean 'build'?"));
+	assert!(!fx.exists("base/marker.txt"));
+}
+
+/// An override for a workspace that does not exist would change nothing and
+/// say nothing, which is what a typo in a key looks like.
+#[test]
+fn an_override_that_matches_no_workspace_is_refused() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+	let config = fx.read("lattice.json").replacen(
+		r#""overrides": {"#,
+		r#""overrides": { "tpo": { "dependsOn": ["base"] },"#,
+		1,
+	);
+	fx.config(&config);
+
+	fx.lattice()
+		.args(["run", "build", "--dry-run"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains("'tpo' names no workspace"))
+		.stderr(predicate::str::contains("Did you mean `top`?"));
+}
+
 #[test]
 fn dry_run_lists_tasks_without_executing() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @a@ } }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "build": {} },
+		    "overrides": { "./a": { "name": "alpha", "tasks": { "build": @a@ } } }
+		}"#,
 		&[("a", sh::write("marker.txt", "A"))],
 	);
 
@@ -248,21 +340,16 @@ fn stacked_tasks_run_as_one_graph() {
 	// build once (before test) and lint too.
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": @lint@,
-      "build": @build@,
-      "test": @test@
-    } }
-  ],
-  "tasks": {
-    "lint": {},
-    "build": {},
-    "test": { "dependsOn": ["build"] }
-  }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "lint": {}, "build": {}, "test": { "dependsOn": ["build"] } },
+		    "overrides": {
+		      "./a": {
+		        "name": "app",
+		        "tasks": { "lint": @lint@, "build": @build@, "test": @test@ }
+		      }
+		    }
+		}"#,
 		&[
 			("lint", sh::write("lint.txt", "LINTED")),
 			("build", sh::write("build.txt", "BUILT")),
@@ -289,14 +376,11 @@ fn stacked_dry_run_lists_all_tasks() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": @lint@, "build": @build@ } }
-  ],
-  "tasks": { "lint": {}, "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "lint": {}, "build": {} },
+		    "overrides": { "./a": { "name": "app", "tasks": { "lint": @lint@, "build": @build@ } } }
+		}"#,
 		&[("lint", sh::echo("L")), ("build", sh::echo("B"))],
 	);
 
@@ -317,21 +401,16 @@ fn sequentially_runs_each_task_phase_in_order() {
 	// listed order (lint, then test — which drags in its build dep — then build).
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": @lint@,
-      "build": @build@,
-      "test": @test@
-    } }
-  ],
-  "tasks": {
-    "lint": {},
-    "build": {},
-    "test": { "dependsOn": ["build"] }
-  }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "lint": {}, "build": {}, "test": { "dependsOn": ["build"] } },
+		    "overrides": {
+		      "./a": {
+		        "name": "app",
+		        "tasks": { "lint": @lint@, "build": @build@, "test": @test@ }
+		      }
+		    }
+		}"#,
 		&[
 			("lint", sh::append("order.txt", "lint")),
 			("build", sh::append("order.txt", "build")),
@@ -358,16 +437,11 @@ fn sequentially_stops_at_first_failed_phase() {
 	// lint fails; --sequentially fail-fast must not reach the build phase.
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": @lint@,
-      "build": @build@
-    } }
-  ],
-  "tasks": { "lint": {}, "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "lint": {}, "build": {} },
+		    "overrides": { "./a": { "name": "app", "tasks": { "lint": @lint@, "build": @build@ } } }
+		}"#,
 		&[
 			("lint", sh::exit(1)),
 			("build", sh::write("build.txt", "built")),
@@ -391,14 +465,11 @@ fn sequentially_dry_run_lists_each_phase() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": {
-      "lint": @lint@, "build": @build@ } }
-  ],
-  "tasks": { "lint": {}, "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "lint": {}, "build": {} },
+		    "overrides": { "./a": { "name": "app", "tasks": { "lint": @lint@, "build": @build@ } } }
+		}"#,
 		&[("lint", sh::echo("L")), ("build", sh::echo("B"))],
 	);
 
@@ -417,14 +488,14 @@ fn keep_going_runs_independent_and_reports_failure() {
 	fx.mkdir("b");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "good", "path": "a", "auto": false, "scripts": { "build": @good@ } },
-    { "name": "bad",  "path": "b", "auto": false, "scripts": { "build": @bad@ } }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a", "b"],
+		    "tasks": { "build": {} },
+		    "overrides": {
+		      "./a": { "name": "good", "tasks": { "build": @good@ } },
+		      "./b": { "name": "bad", "tasks": { "build": @bad@ } }
+		    }
+		}"#,
 		&[
 			("good", sh::echo("GOOD-RAN")),
 			("bad", sh::then([sh::echo_err("boom"), sh::exit(1)])),
@@ -451,14 +522,11 @@ fn persistent_task_that_exits_immediately_is_reported() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false,
-      "scripts": { "dev": @dev@ } }
-  ],
-  "tasks": { "dev": { "persistent": true } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "dev": { "persistent": true } },
+		    "overrides": { "./a": { "name": "app", "tasks": { "dev": @dev@ } } }
+		}"#,
 		&[(
 			"dev",
 			sh::then([sh::echo_err("port already in use"), sh::exit(1)]),
@@ -480,13 +548,11 @@ fn persistent_task_that_finishes_cleanly_says_so() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "a", "auto": false, "scripts": { "dev": @dev@ } }
-  ],
-  "tasks": { "dev": { "persistent": true } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "dev": { "persistent": true } },
+		    "overrides": { "./a": { "name": "app", "tasks": { "dev": @dev@ } } }
+		}"#,
 		&[("dev", sh::succeed())],
 	);
 
@@ -505,13 +571,11 @@ fn undefined_task_fails_cleanly() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "build": {} },
+		    "overrides": { "./a": { "name": "alpha", "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::succeed())],
 	);
 
@@ -519,9 +583,8 @@ fn undefined_task_fails_cleanly() {
 		.args(["run", "nope"])
 		.assert()
 		.failure()
-		.stderr(predicate::str::contains("not defined"))
-		.stderr(predicate::str::contains("Defined tasks"))
-		.stderr(predicate::str::contains("build"))
+		.stderr(predicate::str::contains("no workspace has a 'nope' task"))
+		.stderr(predicate::str::contains("Tasks: build"))
 		// An error, not a panic or backtrace.
 		.stderr(predicate::str::contains("panicked").not())
 		.stderr(predicate::str::contains("RUST_BACKTRACE").not());
@@ -535,14 +598,12 @@ fn unknown_top_level_key_fails_before_anything_runs() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "projects": {},
-  "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "projects": {},
+		    "workspaces": ["a"],
+		    "tasks": { "build": {} },
+		    "overrides": { "./a": { "name": "alpha", "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::succeed())],
 	);
 
@@ -565,13 +626,11 @@ fn a_misspelled_outputs_key_names_the_task_and_the_fix() {
 	fx.mkdir("a");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": { "output": ["dist/**"] } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a"],
+		    "tasks": { "build": { "output": ["dist/**"] } },
+		    "overrides": { "./a": { "name": "alpha", "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::succeed())],
 	);
 
@@ -585,22 +644,22 @@ fn a_misspelled_outputs_key_names_the_task_and_the_fix() {
 		.stderr(predicate::str::contains("Did you mean `outputs`?"));
 }
 
-/// Workspace entries are indexed, so the message points at one of several.
+/// An override's key is part of the message, so it points at one of several.
 #[test]
-fn an_unknown_workspace_key_indexes_the_entry() {
+fn an_unknown_override_key_names_the_override() {
 	let fx = Fixture::new();
 	fx.mkdir("a");
 	fx.mkdir("b");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "alpha", "path": "a", "auto": false, "scripts": { "build": @build@ } },
-    { "name": "beta", "path": "b", "auto": false, "glob": "b/*" }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["a", "b"],
+		    "tasks": { "build": {} },
+		    "overrides": {
+		      "./a": { "name": "alpha", "tasks": { "build": @build@ } },
+		      "b": { "dependOn": ["alpha"] }
+		    }
+		}"#,
 		&[("build", sh::succeed())],
 	);
 
@@ -609,8 +668,9 @@ fn an_unknown_workspace_key_indexes_the_entry() {
 		.assert()
 		.failure()
 		.stderr(predicate::str::contains(
-			"unknown field `glob` in workspaces[1]",
-		));
+			"unknown field `dependOn` in overrides.b",
+		))
+		.stderr(predicate::str::contains("Did you mean `dependsOn`?"));
 }
 
 /// A workspace whose `build` takes a measurable second, so the entry it writes
@@ -619,14 +679,11 @@ fn slow_ws_repo(fx: &Fixture) {
 	fx.write("app/src/f.txt", "hello\n");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false,
-      "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[(
 			"build",
 			sh::all([

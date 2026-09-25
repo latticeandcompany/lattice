@@ -15,13 +15,11 @@ fn build_only_repo_needs_no_toolchain_machinery() {
 	// Workspaces + tasks, but no `engines`: runs on the host PATH.
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false, "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": {} }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["app"],
+		    "tasks": { "build": {} },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[("build", sh::echo("built"))],
 	);
 
@@ -44,14 +42,11 @@ fn prune_evicts_cached_artifacts() {
 	fx.write("app/src/f.txt", "hello\n");
 	fx.config_from(
 		r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false,
-      "scripts": { "build": @build@ } }
-  ],
-  "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } }
-}
-"#,
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["app"],
+		    "tasks": { "build": { "inputs": ["src/**/*"], "outputs": ["dist/**/*"] } },
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
 		&[(
 			"build",
 			sh::all([sh::mkdirs("dist"), sh::write("dist/out.txt", "hi")]),

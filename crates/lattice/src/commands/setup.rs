@@ -13,7 +13,7 @@ use lattice_runner::DRAIN_GRACE;
 use lattice_workspace::{discover_workspaces, Workspace};
 use lattice_workspace::{tasks, toolchain};
 
-use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag};
+use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag, OutputFlags};
 
 #[derive(Args, Debug)]
 #[command(
@@ -33,7 +33,7 @@ pub struct SetupArgs {
 }
 
 impl SetupArgs {
-	pub async fn execute(&self, flag_loq: bool, no_version_check: bool) -> Result<()> {
+	pub async fn execute(&self, flags: OutputFlags, no_version_check: bool) -> Result<()> {
 		let cwd = std::env::current_dir()?;
 		let root = find_root(&cwd).ok_or_else(|| {
 			anyhow::anyhow!(
@@ -48,8 +48,8 @@ impl SetupArgs {
 		let declared: Vec<&str> = workspaces.iter().map(|w| w.name.as_str()).collect();
 		require_known_workspaces(&self.workspaces, &declared)?;
 
-		let effective_loq = effective_loquacious(flag_loq, config.settings.loquacious);
-		let mode = detect_output_mode(effective_loq);
+		let effective_loq = effective_loquacious(flags.verbose, config.settings.loquacious);
+		let mode = detect_output_mode(flags.stream);
 		apply_color_policy(mode);
 		let reporter = make_reporter(mode, effective_loq);
 
@@ -82,8 +82,12 @@ impl SetupArgs {
 				hit.clone()
 			} else {
 				reporter.note(&format!("provisioning toolchains for '{}'", ws.name));
-				let resolved =
-					toolchain::provision_and_resolve(&root, &merged, &mut |m| reporter.note(m))?;
+				let resolved = toolchain::provision_and_resolve_in(
+					&root,
+					&merged,
+					Some(&ws.path),
+					&mut |m| reporter.note(m),
+				)?;
 				memo.insert(key, resolved.path_prepend.clone());
 				resolved.path_prepend
 			};
@@ -91,7 +95,7 @@ impl SetupArgs {
 		}
 
 		let mut any_failed = false;
-		let mut installed: Vec<(PathBuf, String)> = Vec::new();
+		let mut installed_trees: Vec<(PathBuf, String)> = Vec::new();
 
 		for ws in &selected {
 			// No driver and no engines → nothing to do, skip quietly.
@@ -125,14 +129,19 @@ impl SetupArgs {
 
 			// A package manager installs a whole workspace tree from the directory
 			// its lockfile is in, so members of one tree share a single install.
+			// Markers stay per workspace, so selecting one member still knows
+			// whether it is installed.
 			let install_dir = install_dir(&root, &ws.path);
-			if installed.contains(&(install_dir.clone(), install_cmd.clone())) {
+			let tree = (install_dir.clone(), install_cmd.clone());
+			if installed_trees.contains(&tree) {
+				if let Err(e) = touch_marker(&root, &ws.path) {
+					reporter.warn(&format!("{}: {e}", ws.name));
+				}
 				continue;
 			}
-			installed.push((install_dir.clone(), install_cmd.clone()));
 
 			// Keep the lockfile-mtime "up to date" skip unless --force.
-			if !self.force && !lockfile_changed(&root, &install_dir) {
+			if !self.force && !lockfile_changed(&root, &ws.path) {
 				println!(
 					"{} {} {}",
 					paint_teal("●"),
@@ -152,12 +161,13 @@ impl SetupArgs {
 			let prepend = ws_prepend.get(&ws.name).cloned().unwrap_or_default();
 			match run_install(&install_cmd, &install_dir, &prepend).await {
 				Ok(true) => {
-					if let Err(e) = touch_marker(&root, &install_dir) {
+					installed_trees.push(tree);
+					if let Err(e) = touch_marker(&root, &ws.path) {
 						reporter.warn(&format!(
 							"{}: dependencies installed, but {} could not be written, so the \
 							 next `lattice setup` will install again: {e}",
 							ws.name,
-							marker_relative(&root, &install_dir)
+							marker_relative(&root, &ws.path)
 						));
 					}
 				}

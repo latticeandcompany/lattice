@@ -262,8 +262,7 @@ pub fn wrapper(dir: &Path, root: &Path, script: &str, fallback: &str) -> String 
 	} else {
 		script.to_string()
 	};
-	let mut ups = 0usize;
-	for ancestor in dir.ancestors() {
+	for (ups, ancestor) in dir.ancestors().enumerate() {
 		if ancestor.join(&file).is_file() {
 			let sep = if cfg!(windows) { "\\" } else { "/" };
 			let prefix = if ups == 0 {
@@ -276,7 +275,6 @@ pub fn wrapper(dir: &Path, root: &Path, script: &str, fallback: &str) -> String 
 		if ancestor == root {
 			break;
 		}
-		ups += 1;
 	}
 	fallback.to_string()
 }
@@ -702,6 +700,19 @@ mod tests {
 		assert_eq!(tasks["lint"].command, "uv run ruff check .");
 		assert_eq!(tasks["build"].command, "uv build");
 		assert!(!tasks.contains_key("check"));
+	}
+
+	#[test]
+	fn a_turbo_json_with_comments_still_lists_its_tasks() {
+		let dir = tempfile::TempDir::new().unwrap();
+		write(
+			dir.path(),
+			"turbo.json",
+			"{\n  // turbo reads this as JSONC\n  \"tasks\": { \"build\": {}, \"web#lint\": {} }\n}",
+		);
+		let tasks = native_tasks("turbo", dir.path(), dir.path(), None).tasks;
+		assert_eq!(tasks.keys().collect::<Vec<_>>(), ["build"]);
+		assert_eq!(tasks["build"].command, "turbo run build");
 	}
 
 	#[test]
