@@ -66,8 +66,8 @@ impl InitArgs {
 		if let Some(root) = &proposal.single_project {
 			scaffold::import_settings(&mut config, &[root]);
 		}
-		scaffold::write_artifacts(&cwd, &config)?;
-		print_result(&cwd, &proposal);
+		let written = scaffold::write_artifacts(&cwd, &config)?;
+		print_result(&cwd, &proposal, &written);
 		Ok(())
 	}
 }
@@ -109,11 +109,14 @@ fn confirm(proposal: &Proposal) -> Result<(Vec<&WorkspaceCandidate>, Vec<&Engine
 	Ok((workspaces, pins))
 }
 
-fn print_result(root: &std::path::Path, proposal: &Proposal) {
+fn print_result(root: &std::path::Path, proposal: &Proposal, written: &[String]) {
 	let check = teal().apply_to("✓");
 	println!();
 	println!("{check} {}", style("wrote lattice.json").bold());
 	println!("{check} {}", style("wrote .lattice/schema.json").bold());
+	if written.iter().any(|w| w == ".gitignore") {
+		println!("{check} {}", style("updated .gitignore").bold());
+	}
 
 	let project = match Project::open_root(root) {
 		Ok(project) => project,
