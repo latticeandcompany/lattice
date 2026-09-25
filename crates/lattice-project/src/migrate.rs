@@ -91,15 +91,42 @@ fn real_engines(engines: &EngineMap) -> EngineMap {
 		.collect()
 }
 
-/// The driver a 1.x workspace declared through `engines`, if it declared one.
-fn declared_driver(ws: &V1Workspace, root_engines: &EngineMap) -> Option<String> {
-	ws.engines
+/// The driver 1.x picked for a workspace by declaration, where this version
+/// would pick another.
+///
+/// Naming a tool in 1.x `engines` only ever broke a tie: role decided first, so
+/// a declared build tool never beat a package manager the workspace's own
+/// lockfile named, and a root `cargo` pin did not make a Node app a Cargo one.
+/// So a declaration carries over only when detection now lands on a different
+/// tool of the same role, or cannot decide between tools the declaration
+/// names one of.
+fn declared_driver(
+	root: &Path,
+	dir: &Path,
+	ws: &V1Workspace,
+	root_engines: &EngineMap,
+) -> Option<String> {
+	let declared: Vec<&String> = ws
+		.engines
 		.keys()
 		.chain(root_engines.keys())
-		.find(|name| {
+		.filter(|name| {
 			DriverRegistry::get(name).is_some_and(|spec| spec.drive_role() != Role::Runtime)
 		})
-		.cloned()
+		.collect();
+	match detect_driver(root, dir, &ws.name) {
+		Ok(detected) => declared
+			.into_iter()
+			.find(|name| {
+				**name != detected.tool
+					&& DriverRegistry::get(name).is_some_and(|s| s.drive_role() == detected.role)
+			})
+			.cloned(),
+		Err(ambiguous) => declared
+			.into_iter()
+			.find(|name| ambiguous.candidates.contains(name))
+			.cloned(),
+	}
 }
 
 pub fn migrate(root: &Path, v1_text: &str, version: &str) -> Result<Migration> {
@@ -163,12 +190,8 @@ pub fn migrate(root: &Path, v1_text: &str, version: &str) -> Result<Migration> {
 		};
 		if !ws.auto {
 			over.driver = Some(NO_DRIVER.to_string());
-		} else if let Some(declared) = declared_driver(ws, &v1.engines) {
-			let dir = root.join(rel);
-			let detected = detect_driver(root, &dir, &ws.name).ok().map(|d| d.tool);
-			if detected.as_deref() != Some(declared.as_str()) {
-				over.driver = Some(declared);
-			}
+		} else {
+			over.driver = declared_driver(root, &root.join(rel), ws, &v1.engines);
 		}
 		by_path.insert(path_key(rel), over);
 	}
@@ -327,6 +350,38 @@ mod tests {
 		assert_eq!(over.driver.as_deref(), Some("none"));
 		assert!(m.text.contains("\"build\": \"make\""), "{}", m.text);
 		assert_eq!(m.config.lattice_version, None);
+	}
+
+	#[test]
+	fn a_root_build_tool_pin_does_not_become_every_workspace_driver() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let root = dir.path();
+		write(root, "Cargo.toml", "[workspace]\nmembers = [\"core\"]\n");
+		write(root, "core/Cargo.toml", "[package]\nname = \"core\"\n");
+		write(root, "web/package.json", r#"{"scripts": {"build": "vite build"}}"#);
+		write(root, "web/package-lock.json", "{}");
+		let v1 = r#"{
+		  "workspaces": [{ "name": "core", "path": "core" }, { "name": "web", "path": "web" }],
+		  "engines": { "cargo": ">=1.88.0", "npm": ">=0.0.0" }
+		}"#;
+		let m = migrate(root, v1, "2.0.0").unwrap();
+		assert!(m.config.overrides.values().all(|o| o.driver.is_none()), "{}", m.text);
+		let ws = discover_workspaces(root, &m.config).unwrap();
+		let web = ws.iter().find(|w| w.name == "web").unwrap();
+		assert_eq!(web.command_for("build"), Some("npm run build"));
+		let core = ws.iter().find(|w| w.name == "core").unwrap();
+		assert_eq!(core.command_for("build"), Some("cargo build"));
+	}
+
+	#[test]
+	fn a_declaration_that_settled_an_ambiguity_carries_over() {
+		let dir = tempfile::TempDir::new().unwrap();
+		write(dir.path(), "tool/package.json", r#"{"scripts": {"build": "tsc"}}"#);
+		let v1 = r#"{
+		  "workspaces": [{ "name": "tool", "path": "tool", "engines": { "pnpm": ">=0.0.0" } }]
+		}"#;
+		let m = migrate(dir.path(), v1, "2.0.0").unwrap();
+		assert_eq!(m.config.overrides["tool"].driver.as_deref(), Some("pnpm"));
 	}
 
 	#[test]
