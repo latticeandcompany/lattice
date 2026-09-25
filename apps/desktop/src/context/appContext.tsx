@@ -29,7 +29,7 @@ import type {
 	RecentProject,
 } from '../lib/types.ts';
 
-export type View = 'tasks' | 'graph' | 'config' | 'setup';
+export type View = 'tasks' | 'graph' | 'toolchains' | 'cache' | 'config' | 'setup' | 'migrate';
 
 interface State {
 	info: AppInfo | null;
@@ -37,6 +37,8 @@ interface State {
 	project: ProjectView | null;
 	configText: string | null;
 	diagnostics: ConfigDiagnostic[];
+	/** The open directory's config is written for Lattice 1.x. */
+	needsMigration: boolean;
 	recents: RecentProject[];
 	view: View;
 	/** Set while a command is in flight, so the shell can say so. */
@@ -64,6 +66,7 @@ const initial: State = {
 	project: null,
 	configText: null,
 	diagnostics: [],
+	needsMigration: false,
 	recents: [],
 	view: 'tasks',
 	busy: false,
@@ -79,14 +82,20 @@ const reduce = (state: State, action: Action): State => {
 			return { ...state, catalog: action.catalog };
 		case 'snapshot': {
 			const { snapshot } = action;
+			const landing = (): View => {
+				if (snapshot.needsMigration) return 'migrate';
+				if (!snapshot.project) return 'setup';
+				return state.view === 'setup' || state.view === 'migrate' ? 'tasks' : state.view;
+			};
 			return {
 				...state,
 				project: snapshot.project,
 				configText: snapshot.configText,
 				diagnostics: snapshot.diagnostics,
+				needsMigration: snapshot.needsMigration,
 				// A directory with no config is the wizard's starting point, not an error.
 				pendingRoot: snapshot.project ? null : (action.root ?? state.pendingRoot),
-				view: snapshot.project ? (state.view === 'setup' ? 'tasks' : state.view) : 'setup',
+				view: landing(),
 				error: null,
 			};
 		}
@@ -119,6 +128,8 @@ interface AppValue extends State {
 	setConfigText: (text: string) => void;
 	/** False when the write failed; the error is already on screen. */
 	saveConfig: (text: string) => Promise<boolean>;
+	/** Rewrite the open directory's 1.x config and open the result. */
+	migrate: () => Promise<boolean>;
 	dismissError: () => void;
 }
 
@@ -198,6 +209,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 		[guard],
 	);
 
+	const migrate = useCallback(
+		() =>
+			guard(async () => {
+				const root = state.project?.root ?? state.pendingRoot;
+				if (!root) return;
+				const snapshot = await api.migrateApply(root);
+				dispatch({ type: 'snapshot', snapshot, root });
+			}),
+		[guard, state.project, state.pendingRoot],
+	);
+
 	useEffect(() => {
 		void (async () => {
 			try {
@@ -236,9 +258,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 			forget,
 			setConfigText: (text) => dispatch({ type: 'configText', text }),
 			saveConfig,
+			migrate,
 			dismissError: () => dispatch({ type: 'error', error: null }),
 		}),
-		[state, openProject, pickAndOpen, reload, close, forget, saveConfig],
+		[state, openProject, pickAndOpen, reload, close, forget, saveConfig, migrate],
 	);
 
 	return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -1,0 +1,148 @@
+// The run bar and the controls that live in it.
+
+.run-bar {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	padding: 0.75rem 1.75rem;
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--surface);
+}
+
+.run-bar__row {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	flex-wrap: wrap;
+}
+
+.run-bar__status {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	font-size: 0.8125rem;
+	color: var(--text-subtle);
+}
+
+.run-bar__summary {
+	font-family: var(--mono);
+	font-size: 0.75rem;
+}
+
+.run-bar__notes {
+	margin: 0.6rem 0 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.78rem;
+	color: var(--text-muted);
+
+	li + li {
+		margin-top: 0.15rem;
+	}
+}
+
+.run-bar__warn {
+	color: var(--text-subtle);
+
+	.bi {
+		color: var(--fail);
+	}
+}
+
+// The tasks a run is for, as one control: the ones most workspaces have are pressed
+// directly, the rest are a menu away. Picked tasks invert, which is the one fill in
+// the bar apart from Run itself.
+.picker {
+	display: inline-flex;
+	align-items: stretch;
+	padding: 2px;
+	border: 1px solid var(--border);
+	border-radius: var(--bs-border-radius);
+	gap: 2px;
+}
+
+.picker__option {
+	padding: 0.2rem 0.65rem;
+	border: 0;
+	border-radius: var(--bs-border-radius-sm);
+	background: transparent;
+	color: var(--text-subtle);
+	font-weight: 500;
+	font-size: 0.8125rem;
+
+	&:hover:not(:disabled):not([aria-pressed='true']) {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+
+	&[aria-pressed='true'] {
+		background: var(--text);
+		color: var(--surface);
+	}
+
+	&:disabled {
+		opacity: 0.5;
+	}
+}
+
+.picker__more {
+	max-width: 10rem;
+	border: 0;
+	background-color: transparent;
+	font-size: 0.8125rem;
+}
+
+.run-options {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.6rem 1.25rem;
+	margin-top: 0.75rem;
+	padding-top: 0.75rem;
+	border-top: 1px dashed var(--border-subtle);
+}
+
+.run-options__field {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+
+	.form-control,
+	.form-select {
+		width: auto;
+		min-width: 9rem;
+	}
+}
+
+.run-options__hint {
+	flex-basis: 100%;
+	margin: 0;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+// A plain disclosure: the options a run rarely needs, a click away.
+.disclosure {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3rem;
+	padding: 0.2rem 0.4rem;
+	border: 0;
+	border-radius: var(--bs-border-radius-sm);
+	background: transparent;
+	color: var(--text-muted);
+	font-size: 0.8125rem;
+
+	&:hover {
+		color: var(--text);
+	}
+
+	.bi {
+		transition: transform 0.15s ease;
+	}
+
+	&[aria-expanded='true'] .bi {
+		transform: rotate(90deg);
+	}
+}

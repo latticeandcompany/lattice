@@ -1,0 +1,140 @@
+// Setting a project up, and migrating one: both are sequences, so both keep their
+// steps in order down a thread.
+
+.step {
+	display: grid;
+	grid-template-columns: 2rem 1fr;
+	column-gap: 1.1rem;
+	padding-bottom: 2rem;
+}
+
+.step__num {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 2rem;
+	height: 2rem;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	font-family: var(--mono);
+	font-size: 0.8rem;
+	color: var(--focus);
+}
+
+.step:not(:last-child) .step__num::after {
+	content: '';
+	position: absolute;
+	top: 2rem;
+	bottom: -2rem;
+	left: 50%;
+	width: 1px;
+	background: var(--border-subtle);
+}
+
+.step__body {
+	min-width: 0;
+
+	h2 {
+		margin: 0.3rem 0 0.35rem;
+	}
+}
+
+.step__hint {
+	max-width: 36rem;
+	color: var(--text-subtle);
+	font-size: 0.8125rem;
+}
+
+.pick-row {
+	display: flex;
+	align-items: center;
+	gap: 0.65rem;
+	padding: 0.45rem 0;
+	border-bottom: 1px solid var(--border-subtle);
+
+	&:last-child {
+		border-bottom: 0;
+	}
+
+	label {
+		min-width: 0;
+		flex: 1;
+	}
+}
+
+.native-list {
+	margin: 0 0 0.9rem;
+	padding: 0;
+	list-style: none;
+	columns: 2 14rem;
+	font-family: var(--mono);
+	font-size: 0.76rem;
+	color: var(--text-subtle);
+
+	li::before {
+		content: '✓ ';
+		color: var(--focus);
+	}
+}
+
+.file-preview {
+	max-height: 24rem;
+	margin: 0 0 1rem;
+	padding: 0.8rem 1rem;
+	overflow: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--bs-border-radius);
+	background: var(--surface-2);
+	font-family: var(--mono);
+	font-size: 0.78rem;
+	line-height: 1.6;
+	white-space: pre;
+}
+
+// A unified line diff. The gutter carries the meaning; the tint only helps the eye
+// find it, so it stays faint in both themes.
+.diff {
+	max-height: 30rem;
+	margin: 0 0 1rem;
+	overflow: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--bs-border-radius);
+	font-family: var(--mono);
+	font-size: 0.76rem;
+	line-height: 1.55;
+}
+
+.diff__line {
+	display: grid;
+	grid-template-columns: 1.6rem 1fr;
+	white-space: pre;
+
+	&::before {
+		content: attr(data-mark);
+		padding-left: 0.5rem;
+		color: var(--text-muted);
+	}
+}
+
+.diff__line--removed {
+	color: var(--text-muted);
+	background: color-mix(in srgb, var(--fail) 8%, transparent);
+	text-decoration: line-through;
+	text-decoration-color: color-mix(in srgb, var(--text-muted) 50%, transparent);
+}
+
+.diff__line--added {
+	background: color-mix(in srgb, var(--focus) 9%, transparent);
+}
+
+.notes-list {
+	max-width: 44rem;
+	padding-left: 1.1rem;
+	font-size: 0.8125rem;
+	color: var(--text-subtle);
+
+	li + li {
+		margin-top: 0.25rem;
+	}
+}

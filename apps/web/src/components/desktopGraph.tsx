@@ -6,9 +6,11 @@ import { useReducedMotion } from '../../../desktop/src/hooks/useReducedMotion.ts
 import { useTaskViewsRev } from '../../../desktop/src/hooks/useRunStore.ts';
 import { useThemeTokens } from '../../../desktop/src/hooks/useThemeTokens.ts';
 import { closure } from '../../../desktop/src/lib/graphLayout.ts';
-import { buildGraphOption, type NodeState } from '../../../desktop/src/lib/graphOption.ts';
+import { buildGraphOption, declaredEdges, type NodeState } from '../../../desktop/src/lib/graphOption.ts';
 import { runStore } from '../../../desktop/src/lib/runStore.ts';
-import { graph } from '../lib/desktopDemo.ts';
+import { graph, workspaces } from '../lib/desktopDemo.ts';
+
+const declared = declaredEdges(graph, workspaces);
 
 // The app's GraphView itself cannot be imported: it fetches its dump over Tauri and
 // reads the open project from context. Everything below that fetch can be, and is —
@@ -55,7 +57,7 @@ const DesktopGraph = () => {
 	const focus = useMemo(() => (focused ? closure(graph, focused) : undefined), [focused]);
 
 	const option = useMemo(() => {
-		const built = buildGraphOption({ dump: graph, states, tokens, focus, reducedMotion });
+		const built = buildGraphOption({ dump: graph, states, tokens, focus, reducedMotion, declared });
 		if (boxWidth === 0) return built;
 
 		const [series] = built.series as Record<string, unknown>[];
@@ -92,10 +94,10 @@ const DesktopGraph = () => {
 		<div className="d-flex flex-column gap-3">
 			{/* The app's frame is a window's worth of height; in a page column that
 			    leaves a four-layer graph stranded in empty space. */}
-			<div className="border rounded-3 bg-body tw:h-[clamp(19rem,42vh,28rem)]" ref={setBox}>
-				<div ref={hostRef} className="w-100 h-100" />
+			<div className="graph-frame graph-frame--short" ref={setBox}>
+				<div ref={hostRef} className="graph-host" />
 			</div>
-			<GraphLegend />
+			<GraphLegend declared={declared.size > 0} />
 		</div>
 	);
 };

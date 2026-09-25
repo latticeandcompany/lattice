@@ -1,0 +1,302 @@
+// The run sheet: every workspace as a ruled section, every task a row that says what
+// it is doing in a glyph and a word, and a running task's last lines under it the way
+// the CLI's live display shows them.
+//
+// Shared with the website's /desktop page, so it reads the brand through custom
+// properties only and assumes nothing about which Bootstrap build is underneath.
+
+.ws {
+	padding: 0.85rem 0 0.35rem;
+	border-top: 1px solid var(--border-subtle);
+
+	&:first-child {
+		border-top: 0;
+		padding-top: 0.25rem;
+	}
+}
+
+.ws__head {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	min-width: 0;
+	margin-bottom: 0.35rem;
+}
+
+.ws__name {
+	font-weight: 700;
+	font-size: 0.95rem;
+	letter-spacing: -0.01em;
+	white-space: nowrap;
+}
+
+.ws__path,
+.ws__driver {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ws__driver {
+	margin-left: auto;
+	flex: 0 0 auto;
+}
+
+.ws__after {
+	margin: 0 0 0.35rem 2.2rem;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+.ws__declared {
+	color: var(--text-subtle);
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
+
+.ws__problem {
+	margin: 0 0 0.35rem 2.2rem;
+	padding-left: 0.6rem;
+	border-left: 2px solid var(--fail);
+	font-size: 0.78rem;
+	color: var(--text-subtle);
+}
+
+.task-row {
+	display: grid;
+	grid-template-columns: minmax(5rem, 10rem) minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 0.75rem;
+	margin-left: 2.2rem;
+	padding: 0.3rem 0.4rem;
+	border-radius: 0.25rem;
+
+	&:hover,
+	&:focus-within {
+		background: var(--surface-2);
+
+		.task-row__actions {
+			opacity: 1;
+		}
+	}
+}
+
+.task-row__name {
+	font-weight: 500;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.task-row__command {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.74rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.task-row__right {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+}
+
+// Controls appear when the row is pointed at or reached by keyboard; a list of forty
+// rows each with three buttons is mostly buttons.
+.task-row__actions {
+	display: flex;
+	gap: 0.15rem;
+	opacity: 0;
+	transition: opacity 0.12s ease;
+}
+
+.task-row__tag {
+	margin-left: 0.4rem;
+	font-weight: 400;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+}
+
+.icon-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.7rem;
+	height: 1.7rem;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: 0.25rem;
+	background: transparent;
+	color: var(--text-muted);
+
+	&:hover:not(:disabled) {
+		border-color: var(--border);
+		color: var(--text);
+	}
+
+	&:disabled {
+		opacity: 0.4;
+	}
+}
+
+// Status is a glyph and a word together, so it never depends on colour alone.
+.task-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	min-width: 6.5rem;
+	font-size: 0.78rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+
+	.spinner-border {
+		width: 0.75rem;
+		height: 0.75rem;
+		border-width: 0.12em;
+	}
+}
+
+.task-status--running,
+.task-status--done,
+.task-status--exited {
+	color: var(--text);
+}
+
+.task-status--cached .bi {
+	color: var(--focus);
+}
+
+.task-status--failed {
+	color: var(--fail);
+}
+
+.task-status__time {
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+}
+
+// The last lines a running task printed, set under it behind a rule the way the
+// CLI's live display does it.
+.task-tail {
+	margin: 0 0 0.25rem 2.95rem;
+	padding-left: 0.6rem;
+	border-left: 1px solid var(--border);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.72rem;
+	line-height: 1.55;
+	color: var(--text-muted);
+
+	span {
+		display: block;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+}
+
+.task-miss {
+	margin: -0.1rem 0 0.2rem 2.95rem;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+}
+
+.task-log {
+	margin: 0.2rem 0 0.6rem 2.2rem;
+}
+
+// A task's whole output. Capped rather than unbounded: a compiler emits more lines
+// than a window holds, and the interesting ones are at the bottom.
+.log-pane {
+	max-height: 18rem;
+	margin: 0;
+	padding: 0.65rem 0.85rem;
+	overflow: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: 0.375rem;
+	background: var(--surface-2);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.76rem;
+	line-height: 1.55;
+	color: var(--text);
+	white-space: pre;
+	tab-size: 2;
+}
+
+.log-pane--failed {
+	border-left: 2px solid var(--fail);
+}
+
+.log-line {
+	display: block;
+}
+
+// stderr is dimmed rather than coloured: it is not necessarily an error, and
+// spending the failure colour on it would make the real one mean less.
+.log-line--err {
+	color: var(--text-muted);
+}
+
+// Workspaces that have none of the tasks picked, said once at the end the way the
+// CLI says who sat a run out.
+.sat-out {
+	margin: 0.75rem 0 0;
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--border-subtle);
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.lang-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.6rem;
+	height: 1.6rem;
+	flex: 0 0 auto;
+	border: 1px solid var(--border);
+	border-radius: 0.25rem;
+	background: var(--surface);
+	font-family: 'DM Mono', ui-monospace, monospace;
+	font-size: 0.66rem;
+	color: var(--text-muted);
+	overflow: hidden;
+}
+
+// Every logo is drawn for a light background, so a fixed paper plate shows all of
+// them in their own colours in either theme.
+.lang-mark--art {
+	border-color: var(--border-subtle);
+	background: var(--paper);
+	padding: 2px;
+}
+
+.lang-mark img {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+}
+
+.lang-mark--none {
+	border-style: dashed;
+}
+
+@media (max-width: 760px) {
+	.task-row {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+
+	.task-row__command {
+		display: none;
+	}
+
+	.task-tail,
+	.task-miss {
+		margin-left: 2.2rem;
+	}
+}

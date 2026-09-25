@@ -1,81 +1,93 @@
 import { useApp } from '../context/appContext.tsx';
 import { useFullPower } from '../hooks/useFullPower.ts';
 import { useReconnect } from '../hooks/useReconnect.ts';
+import CacheView from './cacheView.tsx';
 import ConfigView from './configView.tsx';
 import GraphView from './graphView.tsx';
+import MigrateView from './migrateView.tsx';
 import ProjectSwitcher from './projectSwitcher.tsx';
 import Rosette from './rosette.tsx';
 import SetupWizard from './setupWizard.tsx';
 import SidebarNav from './sidebarNav.tsx';
 import Spinner from './spinner.tsx';
-import TaskListView from './taskListView.tsx';
+import TasksView from './tasksView.tsx';
 import ThemeControl from './themeControl.tsx';
+import ToolchainsView from './toolchainsView.tsx';
+import UnreadableConfig from './unreadableConfig.tsx';
+
+const Screen = () => {
+	const { project, view, needsMigration, configText } = useApp();
+
+	if (needsMigration) return <MigrateView />;
+	if (!project) return configText !== null ? <UnreadableConfig /> : <SetupWizard />;
+	switch (view) {
+		case 'graph':
+			return <GraphView />;
+		case 'toolchains':
+			return <ToolchainsView />;
+		case 'cache':
+			return <CacheView />;
+		case 'config':
+			return <ConfigView />;
+		case 'setup':
+			return <SetupWizard />;
+		default:
+			return <TasksView />;
+	}
+};
 
 const AppShell = () => {
-	const { project, view, info, error, dismissError, reload, busy } = useApp();
+	const { project, info, error, dismissError, reload, busy } = useApp();
 	useReconnect(project);
 	useFullPower();
 
 	return (
 		<div className="app-shell">
 			<aside className="app-rail" data-tauri-drag-region>
-				<div className="app-rail__head">
-					<Rosette size="1.6rem" />
-					<span className="app-rail__wordmark">
+				<div className="rail-head">
+					<Rosette size="1.5rem" />
+					<span className="rail-wordmark">
 						lattice <span className="wordmark__product">desktop</span>
 					</span>
 					{busy && <Spinner label="Working…" quiet className="ms-auto" />}
 				</div>
 
-				<div>
-					<div className="app-rail__group">Project</div>
-					<ProjectSwitcher />
-					{project && (
-						<button
-							type="button"
-							className="rail-link nav-link nav-link--quiet mt-1"
-							onClick={() => void reload()}
-							disabled={busy}
-						>
-							<i className="bi bi-arrow-repeat" aria-hidden="true" />
-							<span>Reload from disk</span>
-						</button>
-					)}
-				</div>
-
+				<ProjectSwitcher />
 				<SidebarNav />
 
-				<div className="app-rail__foot">
-					<span className="font-monospace text-body-secondary tw:text-[0.68rem]">
-						{info?.latticeVersion ?? ''}
-					</span>
+				<div className="rail-foot">
+					{project ? (
+						<button
+							type="button"
+							className="icon-btn"
+							onClick={() => void reload()}
+							disabled={busy}
+							title="Read lattice.json and the workspaces again"
+							aria-label="Reload the project from disk"
+						>
+							<i className="bi bi-arrow-repeat" aria-hidden="true" />
+						</button>
+					) : (
+						<span />
+					)}
+					<span className="datum">{info?.latticeVersion ?? ''}</span>
 					<ThemeControl />
 				</div>
 			</aside>
 
 			<main className="app-main">
 				{error && (
-					<div className="run-bar">
-						<div
-							className="alert alert-danger alert-dismissible d-flex align-items-start gap-2 mb-0"
-							role="alert"
-						>
+					<div className="app-banner">
+						<div className="alert alert-danger alert-dismissible d-flex align-items-start gap-2" role="alert">
 							<i className="bi bi-exclamation-triangle" aria-hidden="true" />
-							<div className="flex-grow-1 selectable">{error}</div>
+							<div className="flex-grow-1 selectable" style={{ whiteSpace: 'pre-wrap' }}>
+								{error}
+							</div>
 							<button type="button" className="btn-close" aria-label="Dismiss" onClick={dismissError} />
 						</div>
 					</div>
 				)}
-
-				{!project || view === 'setup' ? (
-					<SetupWizard />
-				) : view === 'tasks' ? (
-					<TaskListView />
-				) : view === 'graph' ? (
-					<GraphView />
-				) : (
-					<ConfigView />
-				)}
+				<Screen />
 			</main>
 		</div>
 	);

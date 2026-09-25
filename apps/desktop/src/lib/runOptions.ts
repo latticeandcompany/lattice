@@ -76,3 +76,41 @@ export const effectiveSelection = (
 	const kept = selected.filter((task) => tasks.includes(task));
 	return kept.length > 0 ? kept : defaultSelection(tasks);
 };
+
+/**
+ * Every task any workspace can run, the ones most workspaces share first.
+ *
+ * A task no longer has to be declared in lattice.json to run, so the names come from
+ * the workspaces themselves: `build` in fourteen of them outranks a script only the
+ * docs site has.
+ */
+export const taskNamesOf = (workspaces: readonly { tasks: readonly { task: string }[] }[]): string[] => {
+	const counts = new Map<string, number>();
+	for (const workspace of workspaces) {
+		for (const { task } of workspace.tasks) counts.set(task, (counts.get(task) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+		.map(([task]) => task);
+};
+
+/** The tasks pressed directly and the ones a menu away. A picked task is always shown. */
+export const splitPicker = (
+	tasks: readonly string[],
+	selected: readonly string[],
+	shown = 6,
+): { direct: string[]; more: string[] } => {
+	const direct = tasks.slice(0, shown);
+	for (const task of selected) {
+		if (!direct.includes(task) && tasks.includes(task)) direct.push(task);
+	}
+	return { direct, more: tasks.filter((task) => !direct.includes(task)) };
+};
+
+/** `--nocapture -q` as the argument list a run passes through. Quotes group words. */
+export const parseArgs = (text: string): string[] => {
+	const args: string[] = [];
+	const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+	for (const match of text.matchAll(pattern)) args.push(match[1] ?? match[2] ?? match[3]);
+	return args;
+};

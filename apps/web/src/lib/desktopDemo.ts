@@ -16,7 +16,7 @@ import type {
 	WorkspaceView,
 } from '../../../desktop/src/lib/types.ts';
 
-const declared = { kind: 'declaration' } as const;
+const lockfile = (file: string) => ({ kind: 'lockfile', file }) as const;
 
 const engine = (name: string, version: string) => ({
 	name,
@@ -31,35 +31,38 @@ export const workspaces: WorkspaceView[] = [
 	{
 		name: 'api',
 		path: 'services/api',
-		auto: true,
 		dependsOn: [],
-		driver: { tool: 'cargo', role: 'build', language: 'rust', via: declared },
+		inferredDeps: [],
+		problems: [],
+		driver: { tool: 'cargo', role: 'buildTool', language: 'rust', via: lockfile('Cargo.lock') },
 		engines: [engine('rust', '1.84.0')],
 		tasks: [
-			{ task: 'build', command: 'cargo build --release', persistent: false, cacheable: true },
-			{ task: 'test', command: 'cargo test --all-features', persistent: false, cacheable: true },
+			{ task: 'build', command: 'cargo build', persistent: false, cacheable: true, source: 'cargo' },
+			{ task: 'test', command: 'cargo test', persistent: false, cacheable: true, source: 'cargo' },
 		],
 	},
 	{
 		name: 'web',
 		path: 'apps/web',
-		auto: true,
 		dependsOn: ['api'],
-		driver: { tool: 'npm', role: 'build', language: 'node', via: declared },
+		inferredDeps: ['api'],
+		problems: [],
+		driver: { tool: 'npm', role: 'packageManager', language: 'node', via: lockfile('package-lock.json') },
 		engines: [engine('node', '24.4.0')],
 		tasks: [
-			{ task: 'build', command: 'npm run build', persistent: false, cacheable: true },
-			{ task: 'lint', command: 'npm run lint', persistent: false, cacheable: true },
+			{ task: 'build', command: 'npm run build', persistent: false, cacheable: true, source: 'package.json' },
+			{ task: 'lint', command: 'npm run lint', persistent: false, cacheable: true, source: 'package.json' },
 		],
 	},
 	{
 		name: 'worker',
 		path: 'services/worker',
-		auto: true,
 		dependsOn: ['api'],
-		driver: { tool: 'pytest', role: 'test', language: 'python', via: declared },
+		inferredDeps: [],
+		problems: [],
+		driver: { tool: 'uv', role: 'packageManager', language: 'python', via: lockfile('uv.lock') },
 		engines: [engine('python', '3.13.1')],
-		tasks: [{ task: 'test', command: 'pytest -q', persistent: false, cacheable: true }],
+		tasks: [{ task: 'test', command: 'uv run pytest', persistent: false, cacheable: true, source: 'pytest' }],
 	},
 ];
 
@@ -72,10 +75,10 @@ const node = (id: string, command: string) => {
 
 export const graph: GraphDump = {
 	nodes: [
-		node('api:build', 'cargo build --release'),
-		node('api:test', 'cargo test --all-features'),
+		node('api:build', 'cargo build'),
+		node('api:test', 'cargo test'),
 		node('web:build', 'npm run build'),
-		node('worker:test', 'pytest -q'),
+		node('worker:test', 'uv run pytest'),
 		node('web:lint', 'npm run lint'),
 	],
 	edges: [
@@ -98,7 +101,17 @@ const line = (workspace: string, task: string, text: string): RunMessage => ({
 
 // Two hits, two misses that name what moved, one first run: the shape of an ordinary
 // second build, where most of the work is already done.
+const plan: RunMessage = {
+	kind: 'plan',
+	tasks: graph.nodes.map((n) => ({
+		workspace: n.workspace,
+		task: n.task,
+		waitsOn: graph.edges.filter((edge) => edge.to === n.id).map((edge) => edge.from),
+	})),
+};
+
 const beats: Beat[] = [
+	{ at: 150, message: plan },
 	{ at: 400, message: { kind: 'event', event: { type: 'cacheHit', workspace: 'api', task: 'build', key: 'a3f1b97c2e4088d1', savedMs: 42_800 } } },
 	{ at: 900, message: { kind: 'event', event: { type: 'cacheMiss', workspace: 'api', task: 'test', miss: { kind: 'changed', components: ['inputs'] } } } },
 	{ at: 1000, message: { kind: 'event', event: { type: 'started', workspace: 'api', task: 'test' } } },

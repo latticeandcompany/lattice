@@ -29,16 +29,20 @@ export interface EngineSpecObject {
 	bin?: string;
 }
 
-export interface WorkspaceConfig {
-	name: string;
-	path: string;
-	auto?: boolean;
+/** One `overrides` entry, keyed by a workspace name or a path glob. */
+export interface WorkspaceOverride {
+	name?: string;
+	/** A tool Lattice knows, or `"none"` for a workspace whose tasks are all written out. */
+	driver?: string;
 	engines?: Record<string, EngineSpec>;
 	dependsOn?: string[];
-	scripts?: Record<string, string>;
+	/** A command string, or a task object whose `run` is the command. */
+	tasks?: Record<string, string | PipelineTask>;
 }
 
 export interface PipelineTask {
+	/** The command. Only valid inside an override. */
+	run?: string;
 	dependsOn?: string[];
 	inputs?: string[];
 	outputs?: string[];
@@ -60,11 +64,14 @@ export interface Settings {
 export interface LatticeConfig {
 	$schema?: string;
 	latticeVersion?: string;
-	workspaces?: WorkspaceConfig[];
+	/** Directories or globs, on top of the ones the repo's workspace files name. */
+	workspaces?: string[];
+	exclude?: string[];
 	engines?: Record<string, EngineSpec>;
 	globalDependencies?: string[];
 	globalEnv?: string[];
 	tasks?: Record<string, PipelineTask>;
+	overrides?: Record<string, WorkspaceOverride>;
 	settings?: Settings;
 }
 
@@ -75,7 +82,8 @@ export type DriverRole = 'runtime' | 'packageManager' | 'buildTool' | 'taskRunne
 export type Evidence =
 	| { kind: 'declaration' }
 	| { kind: 'nativeFile'; file: string }
-	| { kind: 'lockfile'; file: string };
+	| { kind: 'lockfile'; file: string }
+	| { kind: 'manifest'; file: string };
 
 export interface DriverView {
 	tool: string;
@@ -99,17 +107,24 @@ export interface WorkspaceTaskView {
 	command: string;
 	persistent: boolean;
 	cacheable: boolean;
+	/** The file or tool the task came from, or `lattice.json` for a written-out command. */
+	source: string;
 }
 
 export interface WorkspaceView {
 	name: string;
 	/** Repo-relative, forward-slashed on every platform. */
 	path: string;
-	auto: boolean;
+	/** Every workspace this one depends on. */
 	dependsOn: string[];
+	/** The part of `dependsOn` read from manifests rather than lattice.json. */
+	inferredDeps: string[];
 	driver: DriverView | null;
 	engines: EngineView[];
+	/** Every task this workspace can run. */
 	tasks: WorkspaceTaskView[];
+	/** What discovery could not read here. */
+	problems: string[];
 }
 
 export interface TaskDefView {
@@ -150,6 +165,8 @@ export interface ProjectSnapshot {
 	/** The file's bytes as text. The config editor's source of truth. */
 	configText: string | null;
 	diagnostics: ConfigDiagnostic[];
+	/** The config is written for Lattice 1.x and has to be migrated to load. */
+	needsMigration: boolean;
 }
 
 export interface ConfigDiagnostic {
@@ -206,8 +223,65 @@ export interface ScanResult {
 	root: string;
 	/** True when the directory already holds a lattice.json. */
 	alreadyInitialized: boolean;
+	/** Workspaces the repo's own workspace files name, which need no entry. */
+	native: string[];
+	/** Projects no workspace file names, offered for the config to list. */
 	candidates: WorkspaceCandidate[];
 	pins: EnginePin[];
+}
+
+/** Which of a scan's findings were kept. */
+export interface InitSelection {
+	candidates: WorkspaceCandidate[];
+	pins: EnginePin[];
+	/** Every candidate path the scan offered, so kept siblings collapse into one glob. */
+	offered: string[];
+}
+
+// ---------- migration, toolchains, cache ----------
+
+export interface MigrationPreview {
+	before: string;
+	after: string;
+	notes: string[];
+}
+
+export interface EngineStatus {
+	name: string;
+	wanted: string | null;
+	/** The engine has an installCmd, so Lattice installs it rather than checking the host. */
+	installs: boolean;
+	version: string | null;
+	/** The provisioned bin directory, or the host binary a check found. */
+	location: string | null;
+	provisioned: boolean;
+}
+
+/** Engines a set of workspaces share, as a check left them. */
+export interface ToolchainGroup {
+	workspaces: string[];
+	engines: EngineStatus[];
+	/** What went wrong, laid out the way the CLI prints it. */
+	error: string | null;
+}
+
+export interface CacheReport {
+	dir: string;
+	bytes: number;
+	entries: number;
+	maxBytes: number | null;
+	runs: number;
+	tasks: number;
+	hits: number;
+	savedMs: number;
+	recentSavedMs: number;
+	/** RFC 3339 timestamp of the oldest recorded run. */
+	since: string | null;
+}
+
+export interface PruneResult {
+	removed: number;
+	bytesFreed: number;
 }
 
 export interface DriverCatalogEntry {
@@ -259,11 +333,18 @@ export interface GraphDump {
 
 // ---------- running ----------
 
-export interface RunOptions {
+export interface PlanRequest {
 	tasks: string[];
 	/** Substring matched against workspace names, as `--filter` does. */
 	filter?: string;
+	/** Exact workspace names. Ignored when `filter` is set. */
+	workspaces?: string[];
+	/** Passed to the requested tasks' commands, as after `--`. */
+	args?: string[];
 	sequentially: boolean;
+}
+
+export interface RunOptions extends PlanRequest {
 	concurrency?: number;
 	keepGoing: boolean;
 	/** Skip cache lookups. Both Force and Ignore cache set this. */
@@ -345,8 +426,17 @@ export type RunOutcome =
  * `outputBatch` exists because a compiler emits lines faster than an IPC message
  * per line can carry them: the backend coalesces them on a timer.
  */
+/** A task the run will reach and what it waits on, sent once before anything starts. */
+export interface PlannedTask {
+	workspace: string;
+	task: string;
+	/** `workspace:task` labels of its prerequisites. */
+	waitsOn: string[];
+}
+
 export type RunMessage =
 	| { kind: 'runStarted'; runId: string; graph: GraphDump }
+	| { kind: 'plan'; tasks: PlannedTask[] }
 	| { kind: 'event'; event: TaskEvent }
 	| { kind: 'outputBatch'; lines: (OutputLine & { workspace: string; task: string })[] }
 	| { kind: 'failureOutput'; workspace: string; task: string; lines: OutputLine[] }

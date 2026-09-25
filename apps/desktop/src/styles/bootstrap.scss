@@ -1,23 +1,18 @@
-// Bootstrap, customized entirely through variable overrides (per .agents/CODESTYLE.md
-// styling priority: Bootstrap first, customize via variables). Structure is monochrome
-// and type is DM Sans / DM Mono; the one accent is crimson, Lattice Desktop's own
-// colour, which carries every primary action, focus ring, and the `desktop` product
-// word. Failure is amber (see _status.scss) so a broken row never looks pressable.
+// Bootstrap, configured for a desktop tool rather than a page.
 //
-// $danger is that same amber rather than Bootstrap's red, which is what makes
-// `.alert-danger` and `.text-danger` match the failure colour the rest of the app
-// already uses. Bootstrap derives its subtle/emphasis pairs for both themes from this
-// one value, so light and dark both follow. The literal is repeated from _status.scss
-// because that file emits `:root` rules a second entry point would duplicate.
+// The brand settings — palette, typefaces, heading weight, no gradients or shadows —
+// match the website's copy, and scripts/checkBrandTokens.mjs holds them equal. The
+// rest is this app's own density: a 14px base, small controls sized for a toolbar,
+// hairline tables, and one accent. $primary is crimson, Lattice Desktop's colour, and it is
+// spent on the action you are meant to press and on focus.
 //
-// The accordion's open header is the one Bootstrap component that spends $primary on
-// something you are not meant to press. With four sections and one always open that
-// would put a permanent crimson band across the config form, so the open header takes
-// a surface shift instead and the accent stays on actions.
+// $danger is the amber failure colour from _status.scss rather than Bootstrap's red,
+// so an alert about a failed run matches the row that failed. $color-contrast-* make
+// the label Bootstrap picks for a filled accent brand ink or paper; on crimson that
+// resolves to paper, at 4.95:1.
 //
-// $color-contrast-* are overridden so the label Bootstrap picks for a filled accent is
-// the brand's ink or paper rather than pure #000 / #fff. On crimson it resolves to
-// paper, at 4.95:1, over ink's 3.79:1.
+// Focus is drawn by the global :focus-visible outline, so Bootstrap's own focus
+// shadows are turned off rather than stacked on top of it.
 
 @use '../../node_modules/bootstrap/scss/bootstrap' as bs with (
 	$prefix: 'bs-',
@@ -31,20 +26,78 @@
 	$body-bg-dark: #020d0c,
 	$body-color-dark: #fbf8ff,
 	$border-color: #b6bcbb,
+	$border-color-dark: #3a4443,
+	$body-secondary-bg: #e7e6e9,
+	$body-tertiary-bg: #e7e6e9,
+	$body-secondary-bg-dark: #141f1e,
+	$body-tertiary-bg-dark: #141f1e,
+	$body-secondary-color: #3a4443,
+	$body-secondary-color-dark: #b6bcbb,
 	$color-contrast-dark: #020d0c,
 	$color-contrast-light: #fbf8ff,
-	$border-radius: 0.5rem,
-	$border-radius-sm: 0.375rem,
-	$border-radius-lg: 0.625rem,
 	$font-family-sans-serif: ('DM Sans', system-ui, -apple-system, sans-serif),
 	$font-family-monospace: ('DM Mono', ui-monospace, monospace),
 	$headings-font-weight: 700,
 	$enable-gradients: false,
 	$enable-shadows: false,
+	$link-decoration: none,
+	$font-size-base: 0.875rem,
+	$small-font-size: 0.8125rem,
+	$h1-font-size: 1.5rem,
+	$h2-font-size: 1.125rem,
+	$h3-font-size: 1rem,
+	$headings-margin-bottom: 0.375rem,
+	$border-radius: 0.5rem,
+	$border-radius-sm: 0.375rem,
+	$border-radius-lg: 0.625rem,
+	$input-btn-focus-width: 0,
+	$input-btn-focus-box-shadow: none,
 	$btn-font-weight: 500,
 	$btn-padding-y: 0.6rem,
 	$btn-padding-x: 1.35rem,
-	$link-decoration: none,
+	$btn-padding-y-sm: 0.25rem,
+	$btn-padding-x-sm: 0.6rem,
+	$btn-font-size-sm: 0.8125rem,
+	$btn-disabled-opacity: 0.45,
+	$input-padding-y: 0.35rem,
+	$input-padding-x: 0.6rem,
+	$input-padding-y-sm: 0.2rem,
+	$input-padding-x-sm: 0.5rem,
+	$input-font-size-sm: 0.8125rem,
+	$input-focus-border-color: #ca2e55,
+	$input-focus-box-shadow: 0 0 0 1px #ca2e55,
+	$input-placeholder-color: #6e7776,
+	$form-select-focus-box-shadow: 0 0 0 1px #ca2e55,
+	$form-check-input-focus-box-shadow: none,
+	$form-switch-focus-color: #ca2e55,
+	$table-cell-padding-y: 0.5rem,
+	$table-cell-padding-x: 0.75rem,
+	$table-cell-padding-y-sm: 0.3rem,
+	$table-cell-padding-x-sm: 0.5rem,
+	$table-th-font-weight: 500,
+	$table-border-color: var(--border-subtle),
+	$table-bg: transparent,
+	$dropdown-padding-y: 0.3rem,
+	$dropdown-item-padding-y: 0.4rem,
+	$dropdown-item-padding-x: 0.75rem,
+	$dropdown-font-size: 0.875rem,
+	$dropdown-link-active-bg: #e7e6e9,
+	$dropdown-link-active-color: #020d0c,
+	$dropdown-dark-link-active-bg: #141f1e,
+	$alert-padding-y: 0.6rem,
+	$alert-padding-x: 0.85rem,
+	$alert-margin-bottom: 0,
+	$progress-height: 0.5rem,
+	$progress-bg: var(--surface-2),
+	$progress-border-radius: 999px,
+	$popover-max-width: 20rem,
+	$popover-font-size: 0.8125rem,
+	$popover-body-padding-y: 0.6rem,
+	$popover-body-padding-x: 0.75rem,
+	$card-border-color: var(--border-subtle),
+	$card-cap-bg: transparent,
+	$card-spacer-y: 0.75rem,
+	$card-spacer-x: 0.9rem,
 	$accordion-button-active-bg: #e7e6e9,
 	$accordion-button-active-color: #020d0c,
 	$accordion-icon-active-color: #020d0c
