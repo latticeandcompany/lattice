@@ -52,9 +52,9 @@ workspace you are in`. Run from the root, or pass `--filter`, to widen it.
 named tasks in the workspaces the run is for. A prerequisite pulled in as a
 dependency does not get them. For a script run through `npm run`, Lattice puts
 npm's own `--` in front, so `lattice run test -- --watch=false` runs `npm run
-test -- --watch=false`, and does the same for a Taskfile task (`task test --
---watch=false`); every other command gets them directly, so Cargo's test harness
-needs `lattice run test -- -- --nocapture`. Arguments are
+test -- --watch=false`, and does the same for a Taskfile task;
+every other command gets them directly, so Cargo's test harness needs
+`lattice run test -- -- --nocapture`. Arguments are
 part of the command, so they are part of the cache key.
 
 A filter that matches no workspace, and a repo with no workspaces at all, print
