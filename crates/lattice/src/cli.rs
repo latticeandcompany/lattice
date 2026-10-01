@@ -194,7 +194,10 @@ pub fn effective_loquacious(flag_loq: bool, setting_loq: bool) -> bool {
 /// Detect the output mode for this invocation, consulting the real terminal and
 /// `CI` env. `stream` forces [`OutputMode::Raw`].
 pub fn detect_output_mode(stream: bool) -> OutputMode {
-	let tty = console::user_attended() && console::Term::stdout().is_term();
+	// The live display draws on stderr, so both have to be a terminal for it.
+	let tty = console::user_attended()
+		&& console::Term::stdout().is_term()
+		&& console::Term::stderr().is_term();
 	let ci = std::env::var("CI").is_ok();
 	lattice_output::detect_mode(tty, stream, ci)
 }
