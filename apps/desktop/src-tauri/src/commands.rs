@@ -230,8 +230,14 @@ pub async fn toolchains_check(state: Shared<'_>) -> Result<Vec<ToolchainGroup>, 
 }
 
 #[tauri::command]
-pub fn cache_report(state: Shared<'_>) -> Result<CacheReport, String> {
-	service::cache_report(state.inner()).map_err(fail)
+pub async fn cache_report(state: Shared<'_>) -> Result<CacheReport, String> {
+	// Reads the whole run ledger and every entry's metadata, which grows with the
+	// cache, so it does not belong on the thread that draws the window.
+	let shared = Arc::clone(state.inner());
+	tauri::async_runtime::spawn_blocking(move || service::cache_report(&shared))
+		.await
+		.map_err(|e| format!("reading the cache panicked: {e}"))?
+		.map_err(fail)
 }
 
 #[tauri::command]
