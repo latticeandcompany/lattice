@@ -974,9 +974,13 @@ pub fn dependency_bin_dirs(root: &Path, ws_path: &Path) -> Vec<PathBuf> {
 	dirs
 }
 
-/// Whether an `overrides` key is matched against paths rather than names.
+/// Whether an `overrides` key is matched against paths rather than names. A
+/// scoped npm name like `@acme/ui` holds a slash and is still a name.
 pub fn is_path_key(key: &str) -> bool {
-	key == "." || key.contains('/') || members::has_glob(key)
+	if members::has_glob(key) {
+		return true;
+	}
+	key == "." || (key.contains('/') && !key.starts_with('@'))
 }
 
 /// The overrides that apply to one workspace, folded in declaration order.
@@ -1506,6 +1510,18 @@ mod tests {
 		let ui = find(&ws, "@acme/ui");
 		assert_eq!(ui.task("lint").unwrap().config.cache, Some(false));
 		assert!(ui.task("e2e").is_none());
+	}
+
+	#[test]
+	fn a_scoped_npm_name_is_an_override_key_like_any_other_name() {
+		let dir = pnpm_monorepo();
+		let ws = discover_workspaces(
+			dir.path(),
+			&config(r#"{"overrides": {"@acme/ui": {"tasks": {"lint": {"cache": false}}}}}"#),
+		)
+		.unwrap();
+		let lint = &find(&ws, "@acme/ui").task("lint").unwrap().config;
+		assert_eq!(lint.cache, Some(false));
 	}
 
 	#[test]

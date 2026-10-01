@@ -337,6 +337,27 @@ mod tests {
 	}
 
 	#[test]
+	fn a_scoped_npm_workspace_keeps_its_overrides() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let root = dir.path();
+		write(root, "package.json", r#"{"workspaces": ["packages/*"]}"#);
+		write(root, "package-lock.json", "{}");
+		write(
+			root,
+			"packages/web/package.json",
+			r#"{"name": "@acme/web", "scripts": {"build": "vite build"}}"#,
+		);
+		let v1 = r#"{
+		  "workspaces": [
+		    { "name": "@acme/web", "path": "packages/web", "scripts": { "e2e": "playwright test" } }
+		  ]
+		}"#;
+		let m = migrate(root, v1, "2.0.0").unwrap();
+		let web = &m.config.overrides["@acme/web"];
+		assert!(matches!(&web.tasks["e2e"], TaskOverride::Command(c) if c == "playwright test"));
+	}
+
+	#[test]
 	fn a_manual_v1_workspace_keeps_its_commands_and_no_driver() {
 		let dir = tempfile::TempDir::new().unwrap();
 		std::fs::create_dir_all(dir.path().join("tools")).unwrap();
