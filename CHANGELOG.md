@@ -16,6 +16,44 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### What a review of 2.0 turned up — 2026-10-01
+
+- A task's cache key now covers the files of every workspace it depends on,
+  directly or not, as a new `upstream` component. Before, an edit in a
+  dependency reached a dependent only through a `^task` edge, so editing a
+  package with no `build` left `web:build` and `web:test` hitting the cache
+- Gradle and Maven `build` outputs are the `build/**` or `target/**` beside
+  each build file, not `**/build/**` and `**/target/**`. Those matched source
+  packages named build or target, and a cache hit deleted edits there
+- `setup` installs from the nearest lockfile of the workspace's own driver. It
+  used to stop at any ecosystem's lockfile, so a Go module under a JS repo ran
+  `go mod download` at the root
+- A scoped npm name like `@acme/ui` is an `overrides` key naming a workspace,
+  as the error messages suggest. It used to be read as a path, and `migrate`
+  failed on any scoped workspace with overrides
+- `installCmd` and the root's version checks run from the repo root wherever
+  Lattice was started
+- A run from inside a workspace that has none of the tasks named fails rather
+  than running nothing and exiting 0
+- `lattice run … | head` no longer panics and leaves tasks running when the
+  reader goes away
+- The live display stays within the terminal's height, keeps animating in
+  every `--sequentially` phase with counts that start from zero, and is drawn
+  only when stderr is a terminal as well as stdout
+- Directories named `build`, `dist`, `out`, `vendor`, `target` or `venv` are
+  workspaces when a pattern names them directly
+- Swift, Elixir, Mix and Maven versions are read from the version itself, not
+  the first number their output prints
+- `lattice env` reads `$SHELL` before guessing PowerShell on Windows, writes
+  `/c/…` paths for Git Bash, and quotes each directory so a `$` or backtick in
+  it is taken literally
+- `migrate` notes each task whose meaning 2.0's defaults change, and moves a
+  1.x pin even when the config needs nothing else
+- Lattice Desktop: Reload on the "does not load" screen reopens that config
+  instead of the project before it; Toolchains, Cache and Migrate start over
+  when the project changes; a stopped run's late messages no longer land on the
+  next project; reading the cache no longer blocks the window
+
 ### Lattice 2.0 — 2026-09-25
 
 - `lattice.json` changed shape: workspaces, the dependencies between them and
