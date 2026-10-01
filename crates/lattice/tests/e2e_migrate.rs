@@ -88,6 +88,26 @@ fn migrate_dry_run_prints_the_config_and_writes_nothing() {
 	assert_eq!(fx.read("lattice.json"), before);
 }
 
+/// What 1.x `init` wrote in an empty directory reads as this version's shape,
+/// but its pin still names 1.x.
+#[test]
+fn an_empty_v1_config_gets_its_pin_moved() {
+	let fx = Fixture::new();
+	fx.config(r#"{ "latticeVersion": "1.1.1", "workspaces": [] }"#);
+	fx.lattice()
+		.arg("migrate")
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("pinned latticeVersion to"))
+		.stdout(predicate::str::contains("(was 1.1.1)"));
+	assert!(!fx.read("lattice.json").contains("1.1.1"));
+	fx.lattice()
+		.arg("migrate")
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("already written for this version"));
+}
+
 #[test]
 fn migrating_a_current_config_changes_nothing() {
 	let fx = v1_repo();

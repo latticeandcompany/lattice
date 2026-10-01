@@ -31,8 +31,30 @@ impl MigrateArgs {
 		let path = root.join(CONFIG_FILE);
 		let text = std::fs::read_to_string(&path)?;
 		if !lattice_config::is_v1_config(&text) {
-			lattice_config::parse_config(&text)?;
-			println!("lattice.json is already written for this version. Nothing to do.");
+			let mut config = lattice_config::parse_config(&text)?;
+			// 1.x `init` on an empty directory wrote `"workspaces": []`, which reads as
+			// this version's shape. Its pin still hands every run to 1.x.
+			let Some(old) = config
+				.lattice_version
+				.clone()
+				.filter(|pin| older_major(pin, BIN_VERSION))
+			else {
+				println!("lattice.json is already written for this version. Nothing to do.");
+				return Ok(());
+			};
+			config.lattice_version = Some(BIN_VERSION.to_string());
+			let migrated = lattice_config::to_config_text(&config);
+			if self.dry_run {
+				print!("{migrated}");
+				return Ok(());
+			}
+			std::fs::write(&path, migrated)?;
+			println!(
+				"{} {} {}",
+				teal().apply_to("✓"),
+				style(format!("pinned latticeVersion to {BIN_VERSION}")).bold(),
+				style(format!("(was {old}). Nothing else needed changing")).dim()
+			);
 			return Ok(());
 		}
 
@@ -61,4 +83,9 @@ impl MigrateArgs {
 		}
 		Ok(())
 	}
+}
+
+fn older_major(pin: &str, running: &str) -> bool {
+	let major = |v: &str| semver::Version::parse(v.trim_start_matches('v')).map(|v| v.major);
+	matches!((major(pin), major(running)), (Ok(pin), Ok(running)) if pin < running)
 }
