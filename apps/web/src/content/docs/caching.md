@@ -58,9 +58,10 @@ task should re-run too eagerly rather than too rarely.
 
 ## Why a change upstream re-runs everything downstream
 
-A task's key includes the keys of every task it depends on. Edit a library and
-every app that builds against it re-runs, whether or not the app reads the file
-you touched.
+A task's key includes the keys of every task it depends on, and the files of
+every workspace its own workspace depends on, directly or not. Edit a library
+and every app that builds against it re-runs, whether or not the app reads the
+file you touched, and whether or not the library has a task of the same name.
 
 This is coarse on purpose. A workspace is one node in the graph, so when its key
 moves, Lattice knows something in it changed and nothing more. It cannot tell

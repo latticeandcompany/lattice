@@ -376,7 +376,7 @@ Exit codes:
 
 ## Caching decisions
 
-The cache key is a sha256 over ten separately hashed components:
+The cache key is a sha256 over eleven separately hashed components:
 
 | Component | What goes in |
 | --- | --- |
@@ -384,6 +384,7 @@ The cache key is a sha256 over ten separately hashed components:
 | `command` | The resolved shell command, arguments after `--` included |
 | `toolchain` | The resolved toolchain identity |
 | `dependencies` | The cache key of every task this one depends on |
+| `upstream` | The files of every workspace this one depends on, directly or not: their tasks' `inputs` (all files when one has none), minus their `ignore` and `outputs` |
 | `patterns` | The `inputs`, `outputs`, and `ignore` lists themselves |
 | `env` | The names in the task's `env`, with their resolved values |
 | `globalEnv` | The names in `globalEnv`, with their resolved values |

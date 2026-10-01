@@ -17,7 +17,7 @@ today.
 ## Cache key composition
 
 A task's cache key is a 64-character lowercase hex SHA-256 digest. It is built
-in two stages. Each component below is hashed on its own, then the ten component
+in two stages. Each component below is hashed on its own, then the eleven component
 digests are hashed together in this fixed order to produce the key.
 
 The two-stage form exists so a miss can name a cause. A key alone reports that
@@ -44,16 +44,23 @@ the task's settled line.
    move once.
 4. `dependencies`. One entry per task this task depends on, each that task's own
    resolved cache key, sorted and deduplicated.
-5. `patterns`. The raw `inputs`, `outputs`, and `ignore` glob strings as
+5. `upstream`. One entry per workspace this one depends on, directly or
+   through others, sorted by name: the name and a digest of what that
+   workspace's tasks read. That is the union of their `inputs` when every task
+   declares some, and otherwise every file the applicable `.gitignore` files do
+   not exclude, minus whatever any of its tasks lists in `ignore` or `outputs`. `dependencies` only covers
+   prerequisites in the graph, and a dependency with no task of the same name
+   has none, so without this an edit there would leave the key where it was.
+6. `patterns`. The raw `inputs`, `outputs`, and `ignore` glob strings as
    declared, or the literal `<unset>` when a field is absent. Widening `outputs`
    therefore produces a different key rather than hitting an entry that captured
    the narrower set.
-6. `env`. One entry per name listed in the task's `env`, sorted by name. The name
+7. `env`. One entry per name listed in the task's `env`, sorted by name. The name
    is hashed whether or not the variable is set. A set variable contributes its
    resolved value and an unset one a distinct marker, so declaring a name is
    itself a change to the key.
-7. `globalEnv`. The same, for the names listed in the repo-level `globalEnv`.
-8. `inputs`. One entry per input file, sorted by path relative to the
+8. `globalEnv`. The same, for the names listed in the repo-level `globalEnv`.
+9. `inputs`. One entry per input file, sorted by path relative to the
    workspace. Each entry contributes the relative path, the file's executable
    bit, and then either the full contents of the file or, for a symlink, the
    path the link points at. The set is the files matched by `inputs`, or every
@@ -61,7 +68,7 @@ the task's settled line.
    when `inputs` is absent. In both cases anything matched by `ignore` or by the
    task's own `outputs` is removed first. `.lattice`, `.git`, `.hg`, `.svn`, and
    `.jj` are never walked.
-9. `manifests`. Three passes, in this order:
+10. `manifests`. Three passes, in this order:
    - One `name` and `content` pair for each manifest present in the workspace. A
      resolved command is usually an indirection: `npm run build` names a script
      in `package.json` and `make test` names a target in a `Makefile`, so the
@@ -70,7 +77,7 @@ the task's settled line.
      the fixed order listed below.
    - The same list again at the repo root, when the workspace is not itself the
      root.
-10. `globalDependencies`. A digest over the repo-level `globalDependencies`
+11. `globalDependencies`. A digest over the repo-level `globalDependencies`
     pattern list plus the path and contents of every repo-root-relative file it
     matches. The pattern list is hashed even when it matches nothing. This digest
     is the same for every task in a run and is computed once, before scheduling.
@@ -159,7 +166,7 @@ to:
 
 `<id>` is a truncated hash of the workspace and task names, so either half may
 contain a path separator. The file holds two keys: `key`, the cache key the pair
-last resolved to, and `components`, a map from each of the ten component names to
+last resolved to, and `components`, a map from each of the eleven component names to
 that component's digest.
 
 It is written after a task runs, staged and renamed like the metadata. On a miss,
@@ -429,7 +436,7 @@ it.
 
 ## Not part of the key
 
-The key is computed from the ten components above and nothing else. Six
+The key is computed from the eleven components above and nothing else. Six
 exclusions are worth stating.
 
 **A task's own output files.** They are excluded even when `inputs` matches them.

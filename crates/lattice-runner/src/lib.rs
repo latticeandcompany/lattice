@@ -26,8 +26,8 @@ use tokio::task::JoinSet;
 use chrono::Utc;
 use dagger::{build_schedule, ExecutionGraph, Schedule};
 use lattice_cache::{
-	compute_key_detailed, global_dependencies_digest, CacheMeta, CacheStore, HashInputs,
-	KeyBreakdown, LocalStore, RunRecord,
+	compute_key_detailed, global_dependencies_digest, workspace_source_digest, CacheMeta,
+	CacheStore, HashInputs, KeyBreakdown, LocalStore, RunRecord,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
 use lattice_events::{CacheMiss, PlannedTask, Reporter, RunSummary, TaskEvent};
@@ -401,6 +401,54 @@ struct TaskSpec {
 	path_prepend: Vec<PathBuf>,
 	/// This workspace's resolved toolchain identity (part of the cache key).
 	toolchain_identity: String,
+	/// Source digests of the workspaces this one depends on (part of the cache key).
+	upstream: Upstream,
+}
+
+/// Source digests of a workspace's dependencies, by dependency name.
+type Upstream = Arc<[(String, String)]>;
+
+/// For each workspace in the run, the source digest of every workspace it
+/// depends on, directly or not. Each is hashed once, however many depend on it.
+fn upstream_digests<'a>(
+	in_run: impl Iterator<Item = &'a str>,
+	ws_map: &HashMap<&'a str, &'a Workspace>,
+) -> Result<HashMap<String, Upstream>> {
+	let mut digests: HashMap<&str, String> = HashMap::new();
+	let mut out: HashMap<String, Upstream> = HashMap::new();
+	for name in in_run {
+		if out.contains_key(name) {
+			continue;
+		}
+		let mut seen: BTreeSet<&str> = BTreeSet::new();
+		let mut stack: Vec<&str> = ws_map
+			.get(name)
+			.map(|w| w.depends_on.iter().map(String::as_str).collect())
+			.unwrap_or_default();
+		while let Some(dep) = stack.pop() {
+			if dep == name || !seen.insert(dep) {
+				continue;
+			}
+			if let Some(w) = ws_map.get(dep) {
+				stack.extend(w.depends_on.iter().map(String::as_str));
+			}
+		}
+		let mut list = Vec::with_capacity(seen.len());
+		for dep in seen {
+			let Some(w) = ws_map.get(dep) else {
+				continue;
+			};
+			if !digests.contains_key(dep) {
+				let tasks: Vec<&PipelineTask> = w.tasks.values().map(|t| &t.config).collect();
+				let digest = workspace_source_digest(&w.path, &tasks)
+					.with_context(|| format!("could not hash workspace '{dep}'"))?;
+				digests.insert(dep, digest);
+			}
+			list.push((dep.to_string(), digests[dep].clone()));
+		}
+		out.insert(name.to_string(), Arc::from(list));
+	}
+	Ok(out)
 }
 
 /// Everything one spawned task needs. The shared handles are cheap to clone
@@ -724,6 +772,16 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let (node_indices, schedule) = build_schedule(graph);
 	let n = node_indices.len();
 
+	let upstream = upstream_digests(
+		node_indices
+			.iter()
+			.map(|&ni| graph.graph[ni].workspace_name.as_str()),
+		&ws_map,
+	)?;
+	// Computed before anything is drawn, so a failure here leaves no plan behind.
+	let global_digest: Arc<str> =
+		Arc::from(global_dependencies_digest(root, &config.global_dependencies)?.as_str());
+
 	let mut specs: Vec<Option<TaskSpec>> = Vec::with_capacity(n);
 	let mut task_names: BTreeSet<String> = BTreeSet::new();
 	for &ni in &node_indices {
@@ -743,6 +801,10 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 				pipeline_task,
 				path_prepend: ws_prepend.get(&ws.name).cloned().unwrap_or_default(),
 				toolchain_identity: ws_identity.get(&ws.name).cloned().unwrap_or_default(),
+				upstream: upstream
+					.get(&ws.name)
+					.cloned()
+					.unwrap_or_else(|| Arc::from([])),
 			}
 		});
 		specs.push(spec);
@@ -791,11 +853,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let persistent_watches: Arc<Mutex<Vec<PersistentWatch>>> = Arc::new(Mutex::new(Vec::new()));
 	let shutting_down = Arc::new(AtomicBool::new(false));
 
-	// The repo's shared files and env, resolved once: they are the same for every
-	// task in the run, and hashing a shared schema directory per task would mean
-	// reading it once per task.
-	let global_digest: Arc<str> =
-		Arc::from(global_dependencies_digest(root, &config.global_dependencies)?.as_str());
+	// The repo's shared env, resolved once: it is the same for every task in the run.
 	let mut global_env_values: Vec<(String, Option<String>)> = config
 		.global_env
 		.iter()
@@ -1177,6 +1235,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		toolchain_identity: &spec.toolchain_identity,
 		lattice_version: ctx.lattice_version.as_ref(),
 		dep_keys: &ctx.dep_keys,
+		upstream: &spec.upstream,
 		global_digest: ctx.global_digest.as_ref(),
 		global_env_values: &ctx.global_env,
 	}) {

@@ -175,6 +175,7 @@ lattice: web:build: cache miss: inputs changed
   or a tool's state directory. Narrow `inputs`, or add the path to `ignore`.
 - `env`: a value that differs between shells, such as an absolute path.
 - `dependencies`: a prerequisite's key moved. Look at the prerequisite.
+- `upstream`: a file changed in a workspace this one depends on.
 - `manifests`: a manifest or lockfile changed. Expected after a dependency bump.
 - `command`: the command changed, including arguments after `--`.
 

@@ -69,6 +69,45 @@ fn cold_then_cached_then_restores_outputs() {
 	);
 }
 
+/// `ui` has no `build`, so `web:build` has no prerequisite in the graph to carry
+/// an edit to `ui` into its key.
+#[test]
+fn an_edit_in_a_dependency_without_the_task_still_misses() {
+	let fx = Fixture::new();
+	fx.write("ui/src/button.txt", "v1\n");
+	fx.write("web/src/app.txt", "app\n");
+	fx.config_from(
+		r#"{
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["ui", "web"],
+		    "tasks": { "build": { "outputs": ["out.txt"] } },
+		    "overrides": {
+		      "ui": { "tasks": { "lint": @lint@ } },
+		      "web": { "dependsOn": ["ui"], "tasks": { "build": @build@ } }
+		    }
+		}"#,
+		&[
+			("build", sh::write("out.txt", "built")),
+			("lint", sh::write("lint.txt", "ok")),
+		],
+	);
+
+	fx.lattice().args(["run", "build", "-l"]).assert().success();
+	fx.lattice()
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("web:build: cache hit ["));
+
+	fx.write("ui/src/button.txt", "v2\n");
+	fx.lattice()
+		.args(["run", "build", "-l"])
+		.assert()
+		.success()
+		.stdout(predicate::str::contains("web:build: cache hit [").not())
+		.stdout(predicate::str::contains("0 cached"));
+}
+
 #[test]
 fn corrupt_tarball_is_a_miss_not_a_false_hit() {
 	let fx = Fixture::new();

@@ -27,11 +27,12 @@ digest](#output-digest). See [Caching](/lattice/docs/caching).
 ### Cache key
 
 The sha256 hash that identifies one task's result, computed over everything that
-can change what the task produces. Ten components feed it: the run environment
+can change what the task produces. Eleven components feed it: the run environment
 (Lattice version, platform, shell, workspace name, task name), the resolved
 command, the [toolchain](#toolchain) identity, the cache keys of the task's
-prerequisites, the `inputs`, `outputs`, and `ignore` pattern lists, the resolved
-`env` and `globalEnv` values, the contents of every matched input file, the
+prerequisites, the files of the workspaces it depends on, the `inputs`,
+`outputs`, and `ignore` pattern lists, the resolved `env` and `globalEnv`
+values, the contents of every matched input file, the
 [manifests](#manifest) and lockfiles present in the workspace and at the repo
 root, and the digest of `globalDependencies`. See [Cache
 internals](/lattice/docs/cache-internals).

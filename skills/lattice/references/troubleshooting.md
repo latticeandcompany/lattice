@@ -218,6 +218,7 @@ lattice: web:build: cache miss: inputs changed
 | `inputs` | A file that changes every run: a timestamp, `.DS_Store`, a tool's state directory. Narrow `inputs` or add to `ignore` |
 | `env` | A value that differs per shell, such as an absolute path |
 | `dependencies` | A prerequisite's key moved. Expected; look at the prerequisite |
+| `upstream` | A file changed in a workspace this one depends on. Expected |
 | `manifests` | A manifest or lockfile changed. Expected after a dependency bump |
 | `command` | The command changed, including arguments after `--` |
 | `environment` | A Lattice upgrade. One full miss per release |
