@@ -94,7 +94,11 @@ const reduce = (state: State, action: Action): State => {
 				diagnostics: snapshot.diagnostics,
 				needsMigration: snapshot.needsMigration,
 				// A directory with no config is the wizard's starting point, not an error.
-				pendingRoot: snapshot.project ? null : (action.root ?? state.pendingRoot),
+				// A config that stopped loading under an open project leaves that root as
+				// the one to retry.
+				pendingRoot: snapshot.project
+					? null
+					: (action.root ?? state.pendingRoot ?? state.project?.root ?? null),
 				view: landing(),
 				error: null,
 			};

@@ -2,8 +2,9 @@ import { useApp } from '../context/appContext.tsx';
 
 // A lattice.json that exists and does not load. The project cannot be shown until
 // it does, so this says why, in the parser's own words, and waits for a reload.
+// The backend never opened it, so reloading means opening it again.
 const UnreadableConfig = () => {
-	const { diagnostics, reload, pickAndOpen, busy } = useApp();
+	const { diagnostics, pendingRoot, openProject, pickAndOpen, busy } = useApp();
 
 	return (
 		<div className="app-scroll">
@@ -18,7 +19,12 @@ const UnreadableConfig = () => {
 					</pre>
 				))}
 				<div className="d-flex gap-2 mt-3">
-					<button type="button" className="btn btn-primary" onClick={() => void reload()} disabled={busy}>
+					<button
+						type="button"
+						className="btn btn-primary"
+						onClick={() => pendingRoot && void openProject(pendingRoot)}
+						disabled={busy || !pendingRoot}
+					>
 						Reload
 					</button>
 					<button type="button" className="btn btn-outline-secondary" onClick={() => void pickAndOpen()}>
