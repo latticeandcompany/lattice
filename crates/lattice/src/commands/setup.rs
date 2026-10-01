@@ -6,7 +6,7 @@ use clap::Args;
 use console::style;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use lattice_config::{find_root, resolve_engines, LOCKFILES};
+use lattice_config::{find_root, resolve_engines};
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, ROSETTE};
 use lattice_project::scaffold::{LEGACY_SETUP_MARKER, SETUP_MARKER_DIR};
 use lattice_runner::DRAIN_GRACE;
@@ -131,7 +131,8 @@ impl SetupArgs {
 			// its lockfile is in, so members of one tree share a single install.
 			// Markers stay per workspace, so selecting one member still knows
 			// whether it is installed.
-			let install_dir = install_dir(&root, &ws.path);
+			let lockfiles = lockfiles_for(&driver.tool);
+			let install_dir = install_dir(&root, &ws.path, lockfiles);
 			let tree = (install_dir.clone(), install_cmd.clone());
 			if installed_trees.contains(&tree) {
 				if let Err(e) = touch_marker(&root, &ws.path) {
@@ -141,7 +142,7 @@ impl SetupArgs {
 			}
 
 			// Keep the lockfile-mtime "up to date" skip unless --force.
-			if !self.force && !lockfile_changed(&root, &ws.path) {
+			if !self.force && !lockfile_changed(&root, &ws.path, lockfiles) {
 				println!(
 					"{} {} {}",
 					paint_teal("●"),
@@ -191,13 +192,42 @@ impl SetupArgs {
 	}
 }
 
-/// The nearest directory at or above `workspace_path` holding a lockfile, which
-/// is where its package manager installs from, or the workspace itself.
-fn install_dir(root: &Path, workspace_path: &Path) -> PathBuf {
+/// The nearest directory at or above `workspace_path` holding one of the driver's
+/// own lockfiles, which is where it installs from, or the workspace itself.
+fn install_dir(root: &Path, workspace_path: &Path, lockfiles: &[&str]) -> PathBuf {
 	lockfile_dirs(root, workspace_path)
 		.into_iter()
-		.find(|dir| LOCKFILES.iter().any(|lf| dir.join(lf).is_file()))
+		.find(|dir| lockfiles.iter().any(|lf| dir.join(lf).is_file()))
 		.unwrap_or_else(|| workspace_path.to_path_buf())
+}
+
+/// The lockfiles `tool` writes. Another ecosystem's lockfile further up the tree
+/// says nothing about where this one installs from.
+fn lockfiles_for(tool: &str) -> &'static [&'static str] {
+	match tool {
+		"npm" => &["package-lock.json", "npm-shrinkwrap.json"],
+		"pnpm" => &["pnpm-lock.yaml"],
+		"yarn" => &["yarn.lock"],
+		"bun" => &["bun.lockb", "bun.lock"],
+		"deno" => &["deno.lock"],
+		"cargo" => &["Cargo.lock"],
+		"go" => &["go.sum"],
+		"poetry" => &["poetry.lock"],
+		"uv" => &["uv.lock"],
+		"pdm" => &["pdm.lock"],
+		"pipenv" => &["Pipfile.lock"],
+		"pip" => &["requirements.txt"],
+		"bundler" => &["Gemfile.lock"],
+		"dotnet" | "nuget" => &["packages.lock.json"],
+		"pod" => &["Podfile.lock"],
+		"swift" => &["Package.resolved"],
+		"composer" => &["composer.lock"],
+		"mix" => &["mix.lock"],
+		"dart" => &["pubspec.lock"],
+		"stack" => &["stack.yaml.lock"],
+		"cabal" => &["cabal.project.freeze"],
+		_ => &[],
+	}
 }
 
 /// Map a detected driver tool to its native dependency-install command.
@@ -306,12 +336,12 @@ fn marker_time(root: &Path, workspace_path: &Path) -> Option<std::time::SystemTi
 		.or_else(|| modified(workspace_path.join(LEGACY_SETUP_MARKER)))
 }
 
-fn lockfile_changed(root: &Path, workspace_path: &Path) -> bool {
+fn lockfile_changed(root: &Path, workspace_path: &Path, lockfiles: &[&str]) -> bool {
 	let Some(marker_time) = marker_time(root, workspace_path) else {
 		return true;
 	};
 	for dir in lockfile_dirs(root, workspace_path) {
-		for lf in LOCKFILES {
+		for lf in lockfiles {
 			let modified = std::fs::metadata(dir.join(lf)).and_then(|m| m.modified());
 			if matches!(modified, Ok(lf_time) if lf_time > marker_time) {
 				return true;
@@ -572,16 +602,40 @@ mod tests {
 		let lockfile = root.join("package-lock.json");
 		std::fs::write(&lockfile, "{}").unwrap();
 
-		assert!(lockfile_changed(root, &ws), "there is no marker yet");
+		assert!(
+			lockfile_changed(root, &ws, lockfiles_for("npm")),
+			"there is no marker yet"
+		);
 
 		touch_marker(root, &ws).unwrap();
-		assert!(!lockfile_changed(root, &ws), "nothing has moved since");
+		assert!(
+			!lockfile_changed(root, &ws, lockfiles_for("npm")),
+			"nothing has moved since"
+		);
 
 		set_mtime(
 			&lockfile,
 			std::time::SystemTime::now() + Duration::from_secs(60),
 		);
-		assert!(lockfile_changed(root, &ws));
+		assert!(lockfile_changed(root, &ws, lockfiles_for("npm")));
+	}
+
+	/// A Go module with no dependencies has no `go.sum`, so the nearest lockfile
+	/// above it is the JS tree's. `go mod download` there finds no `go.mod`.
+	#[test]
+	fn another_ecosystems_lockfile_does_not_move_the_install() {
+		let dir = tempfile::tempdir().unwrap();
+		let root = dir.path();
+		let api = root.join("services").join("api");
+		std::fs::create_dir_all(&api).unwrap();
+		std::fs::write(api.join("go.mod"), "module api\n").unwrap();
+		std::fs::write(root.join("package-lock.json"), "{}").unwrap();
+
+		assert_eq!(install_dir(root, &api, lockfiles_for("go")), api);
+		assert_eq!(
+			install_dir(root, &root.join("apps").join("web"), lockfiles_for("npm")),
+			root
+		);
 	}
 
 	#[test]
@@ -594,13 +648,13 @@ mod tests {
 		std::fs::write(&lockfile, "").unwrap();
 
 		touch_marker(root, &ws).unwrap();
-		assert!(!lockfile_changed(root, &ws));
+		assert!(!lockfile_changed(root, &ws, lockfiles_for("cargo")));
 
 		set_mtime(
 			&lockfile,
 			std::time::SystemTime::now() + Duration::from_secs(60),
 		);
-		assert!(lockfile_changed(root, &ws));
+		assert!(lockfile_changed(root, &ws, lockfiles_for("cargo")));
 	}
 
 	#[test]
@@ -657,19 +711,19 @@ mod tests {
 		std::fs::write(root.join("package-lock.json"), "{}").unwrap();
 
 		assert!(
-			lockfile_changed(root, &ws),
+			lockfile_changed(root, &ws, lockfiles_for("npm")),
 			"there is no marker anywhere yet"
 		);
 
 		std::fs::write(ws.join(LEGACY_SETUP_MARKER), "").unwrap();
-		assert!(!lockfile_changed(root, &ws));
+		assert!(!lockfile_changed(root, &ws, lockfiles_for("npm")));
 
 		// And it is still only a marker: a lockfile newer than it reinstalls.
 		set_mtime(
 			&root.join("package-lock.json"),
 			std::time::SystemTime::now() + Duration::from_secs(60),
 		);
-		assert!(lockfile_changed(root, &ws));
+		assert!(lockfile_changed(root, &ws, lockfiles_for("npm")));
 	}
 
 	#[test]
