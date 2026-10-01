@@ -129,6 +129,43 @@ fn declared_driver(
 	}
 }
 
+/// Where this version's defaults for a task name change what a 1.x task did,
+/// because the 1.x config left that field unset.
+fn new_task_defaults(v1: &V1Config) -> Vec<String> {
+	let mut names: Vec<&String> = v1.tasks.keys().collect();
+	for ws in &v1.workspaces {
+		names.extend(ws.scripts.keys());
+	}
+	let mut seen = BTreeSet::new();
+	names.retain(|name| seen.insert(name.as_str()));
+
+	let mut notes = Vec::new();
+	for name in names {
+		let default = lattice_config::builtin_task_defaults(name);
+		let written = v1.tasks.get(name.as_str()).cloned().unwrap_or_default();
+		if default.persistent == Some(true) && written.persistent.is_none() {
+			notes.push(format!(
+				"`{name}` is now a persistent task, as every dev, start, serve and watch is: \
+				 never cached, and nothing can wait on it. Set \"persistent\": false on it \
+				 to keep the 1.x behavior"
+			));
+		}
+		if default.depends_on.is_some() && written.depends_on.is_none() {
+			notes.push(format!(
+				"`{name}` now waits on the {name} of every workspace it depends on \
+				 (\"^{name}\"). Set \"dependsOn\": [] on it to keep the 1.x behavior"
+			));
+		}
+		if default.cache == Some(false) && written.cache.is_none() {
+			notes.push(format!(
+				"`{name}` is no longer cached, as every clean, deploy, publish and release \
+				 is. Set \"cache\": true on it to keep the 1.x behavior"
+			));
+		}
+	}
+	notes
+}
+
 pub fn migrate(root: &Path, v1_text: &str, version: &str) -> Result<Migration> {
 	let v1: V1Config =
 		serde_json::from_str(v1_text).context("lattice.json could not be read as a 1.x config")?;
@@ -152,6 +189,8 @@ pub fn migrate(root: &Path, v1_text: &str, version: &str) -> Result<Migration> {
 			));
 		}
 	}
+
+	notes.extend(new_task_defaults(&v1));
 
 	let v1_paths: Vec<String> = v1
 		.workspaces
@@ -355,6 +394,29 @@ mod tests {
 		let m = migrate(root, v1, "2.0.0").unwrap();
 		let web = &m.config.overrides["@acme/web"];
 		assert!(matches!(&web.tasks["e2e"], TaskOverride::Command(c) if c == "playwright test"));
+	}
+
+	#[test]
+	fn a_task_this_version_treats_differently_is_noted() {
+		let dir = tempfile::TempDir::new().unwrap();
+		std::fs::create_dir_all(dir.path().join("web")).unwrap();
+		let v1 = r#"{
+		  "workspaces": [{ "name": "web", "path": "web", "auto": false,
+		                   "scripts": { "start": "node server.js", "deploy": "./ship" } }],
+		  "tasks": { "build": {}, "start": { "persistent": false } }
+		}"#;
+		let notes = migrate(dir.path(), v1, "2.0.0").unwrap().notes;
+		assert!(
+			notes.iter().any(|n| n.starts_with("`build` now waits")),
+			"{notes:?}"
+		);
+		assert!(
+			notes
+				.iter()
+				.any(|n| n.starts_with("`deploy` is no longer cached")),
+			"{notes:?}"
+		);
+		assert!(!notes.iter().any(|n| n.starts_with("`start`")), "{notes:?}");
 	}
 
 	#[test]
