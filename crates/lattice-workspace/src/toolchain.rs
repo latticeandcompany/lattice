@@ -328,6 +328,24 @@ pub fn parse_version(raw: &str) -> Option<semver::Version> {
 	))
 }
 
+/// [`parse_version`] for engine `name`, starting after the words its output puts
+/// before the version where an earlier number is something else: `swift
+/// --version` on macOS leads with the driver's version, `elixir --version` and
+/// `mix --version` with Erlang/OTP's, and a first Maven wrapper run with
+/// download URLs through `maven2`.
+pub fn parse_engine_version(name: &str, raw: &str) -> Option<semver::Version> {
+	let marker = match name {
+		"swift" => "Swift version ",
+		"elixir" => "Elixir ",
+		"mix" => "Mix ",
+		"maven" => "Apache Maven ",
+		_ => return parse_version(raw),
+	};
+	raw.find(marker)
+		.and_then(|at| parse_version(&raw[at + marker.len()..]))
+		.or_else(|| parse_version(raw))
+}
+
 /// Whether `v` satisfies a (possibly loose) constraint such as `">=20.0.0"`,
 /// `"^1.75"`, or a bare `"1.22"`.
 pub fn satisfies(v: &semver::Version, constraint: &str) -> bool {
@@ -386,7 +404,8 @@ fn find_verified_pin(
 		}
 		// Re-verify the version if we can; this does not reinstall.
 		if let (Some(vc), Some(cons)) = (version_cmd, constraint) {
-			if !capture_confirms(run_capture(vc, Some(&bin_dir), None, &[]), cons) {
+			let captured = run_capture(vc, Some(&bin_dir), None, &[]);
+			if !capture_confirms(&pins.engine, captured, cons) {
 				continue;
 			}
 		}
@@ -398,11 +417,11 @@ fn find_verified_pin(
 /// Whether a version command's captured output proves the pin still satisfies
 /// `constraint`. A run that never spawned, exited non-zero, or printed no
 /// version proves nothing — none of those is a pin worth reusing.
-fn capture_confirms(captured: Result<Capture>, constraint: &str) -> bool {
+fn capture_confirms(name: &str, captured: Result<Capture>, constraint: &str) -> bool {
 	let Ok(c) = captured else {
 		return false;
 	};
-	c.ok && parse_version(&c.out).is_some_and(|v| satisfies(&v, constraint))
+	c.ok && parse_engine_version(name, &c.out).is_some_and(|v| satisfies(&v, constraint))
 }
 
 /// An engine's `bin` as a path relative to its toolchain directory.
@@ -521,7 +540,7 @@ fn install_and_verify(
 			),
 		));
 	}
-	match parse_version(&checked.out) {
+	match parse_engine_version(name, &checked.out) {
 		Some(v) => {
 			if let Some(cons) = constraint {
 				if !satisfies(&v, cons) {
@@ -678,7 +697,7 @@ pub fn provision_and_resolve_in(
 						"fix the tool, or point `versionCmd` at a command that prints its version",
 					));
 				}
-				let Some(version) = parse_version(&checked.out) else {
+				let Some(version) = parse_engine_version(name, &checked.out) else {
 					return Err(engine_error(
 						name,
 						"could not be checked: Lattice found no version in what it printed",
@@ -958,6 +977,33 @@ mod tests {
 			semver::Version::new(1, 75, 0)
 		);
 		assert!(parse_version("no digits here").is_none());
+
+		let swift =
+			"swift-driver version: 1.90.11.1 Apple Swift version 5.10 (swiftlang-5.10.0.13)";
+		assert_eq!(
+			parse_engine_version("swift", swift).unwrap().to_string(),
+			"5.10.0"
+		);
+		let elixir =
+			"Erlang/OTP 26 [erts-14.2] [64-bit]\n\nElixir 1.16.0 (compiled with Erlang/OTP 26)";
+		assert_eq!(
+			parse_engine_version("elixir", elixir).unwrap().to_string(),
+			"1.16.0"
+		);
+		let mix = "Erlang/OTP 26 [erts-14.2]\n\nMix 1.16.0 (compiled with Erlang/OTP 26)";
+		assert_eq!(
+			parse_engine_version("mix", mix).unwrap().to_string(),
+			"1.16.0"
+		);
+		let maven = "Downloading from central: https://repo.maven.apache.org/maven2/x\nApache Maven 3.9.6 (bc0240f)";
+		assert_eq!(
+			parse_engine_version("maven", maven).unwrap().to_string(),
+			"3.9.6"
+		);
+		assert_eq!(
+			parse_engine_version("swift", "5.9").unwrap().to_string(),
+			"5.9.0"
+		);
 	}
 
 	#[test]
@@ -1123,14 +1169,20 @@ mod tests {
 	/// used to accept the pin outright when the command could not be spawned.
 	#[test]
 	fn a_version_check_that_did_not_run_confirms_nothing() {
-		assert!(capture_confirms(Ok(cap(true, "1.2.3")), ">=1.0.0"));
-		assert!(!capture_confirms(Ok(cap(true, "0.9.0")), ">=1.0.0"));
-		assert!(!capture_confirms(Ok(cap(false, "1.2.3")), ">=1.0.0"));
+		assert!(capture_confirms("tool", Ok(cap(true, "1.2.3")), ">=1.0.0"));
+		assert!(!capture_confirms("tool", Ok(cap(true, "0.9.0")), ">=1.0.0"));
 		assert!(!capture_confirms(
+			"tool",
+			Ok(cap(false, "1.2.3")),
+			">=1.0.0"
+		));
+		assert!(!capture_confirms(
+			"tool",
 			Ok(cap(true, "no-version-here")),
 			">=1.0.0"
 		));
 		assert!(!capture_confirms(
+			"tool",
 			Err(anyhow::anyhow!("failed to spawn `faketool`")),
 			">=1.0.0"
 		));
