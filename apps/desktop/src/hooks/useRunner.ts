@@ -63,11 +63,14 @@ export const useRunner = () => {
 					noCache: flags.noCache,
 					force: flags.force,
 				},
-				(message) => runStore.ingest(message),
+				// A run for a project since closed keeps sending as it unwinds.
+				(message) => {
+					if (runStore.epoch === epoch) runStore.ingest(message);
+				},
 			);
 
 			// Anything still queued arrived after the run ended, so drain before settling.
-			runStore.flush();
+			if (runStore.epoch === epoch) runStore.flush();
 			runStore.settle(outcome, epoch);
 			return outcome;
 		} catch (caught) {
