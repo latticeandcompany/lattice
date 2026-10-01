@@ -185,7 +185,7 @@ only the fields it sets:
 
 2. The tool's build directory as `outputs` for a `build` the workspace's own
    files define: `dist/**` for npm, pnpm, yarn, bun, deno, uv, poetry and pdm;
-   `**/build/**` for Gradle; `**/target/**` for Maven; `**/bin/Debug/**` and
+   `build/**` beside each Gradle build file; `target/**` beside each `pom.xml`; `**/bin/Debug/**` and
    `**/bin/Release/**` for .NET (each subproject writes its own). None for
    Cargo (its `target/` is shared), Go, or a uv workspace member (it builds
    into the root's `dist/`). A `build` written out in an override

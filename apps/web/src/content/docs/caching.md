@@ -82,10 +82,10 @@ and it is the only thing a hit restores. A file the command produces that no
 and whatever consumes it will find it missing.
 
 A `build` a workspace's own files define already has outputs: the directory its
-tool builds into, `dist/**` for JavaScript and Python packages, `**/build/**`
-for Gradle, `**/target/**` for Maven, `**/bin/Debug/**` and `**/bin/Release/**`
-for .NET. The JVM and .NET patterns match at any depth because each subproject
-of the build writes its own. Cargo and Go get none, because Cargo's `target/` is
+tool builds into, `dist/**` for JavaScript and Python packages, `build/**` beside each Gradle build file, `target/**` beside each `pom.xml`,
+ `**/bin/Debug/**` and `**/bin/Release/**`
+for .NET. Each subproject of a JVM or .NET build writes its own, so a source
+package named `build` or `target` is never mistaken for output. Cargo and Go get none, because Cargo's `target/` is
 shared across a workspace and `go build ./...` keeps nothing, and neither does a
 uv workspace member, which builds into the workspace root's `dist/`. Set `outputs` on the task to replace the default.
 

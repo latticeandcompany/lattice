@@ -109,8 +109,8 @@ A `build` a workspace's own files define also caches its tool's build directory:
 | Driver | Default `build` outputs |
 | --- | --- |
 | `npm`, `pnpm`, `yarn`, `bun`, `deno`, `uv`, `poetry`, `pdm` | `dist/**` |
-| `gradle` | `**/build/**` |
-| `maven` | `**/target/**` |
+| `gradle` | `build/**` beside each `build.gradle(.kts)` |
+| `maven` | `target/**` beside each `pom.xml` |
 | `dotnet` | `**/bin/Debug/**`, `**/bin/Release/**` |
 | every other driver, and a uv workspace member | none |
 

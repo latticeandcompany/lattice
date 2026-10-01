@@ -265,7 +265,7 @@ the fields it sets, and a list replaces rather than extends:
 
 2. For a `build` the workspace's own files define, the tool's build directory as
    `outputs`: `dist/**` for npm, pnpm, yarn, bun, deno, uv, poetry and pdm;
-   `**/build/**` for Gradle; `**/target/**` for Maven; `**/bin/Debug/**` and
+   `build/**` beside each Gradle build file; `target/**` beside each `pom.xml`; `**/bin/Debug/**` and
    `**/bin/Release/**` for .NET. Cargo, Go and uv workspace members get none.
 3. This `tasks` map.
 4. The workspace's overrides.

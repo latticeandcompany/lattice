@@ -69,8 +69,8 @@ Things to check afterwards:
   `cargo clippy` in a crate), runs by name. `lattice run lint` in a Cargo crate
   used to run `cargo lint`, which does not exist.
 - **`build` caches the tool's build directory by default.** An npm, uv, poetry
-  or pdm workspace's `build` stores `dist/**`, Gradle's `**/build/**`, Maven's
-  `**/target/**`, .NET's `**/bin/Debug/**` and `**/bin/Release/**`, unless
+  or pdm workspace's `build` stores `dist/**`, the `build/**` beside each
+  Gradle build file, the `target/**` beside each `pom.xml`, .NET's `**/bin/Debug/**` and `**/bin/Release/**`, unless
   `outputs` says otherwise. A cache hit
   clears those directories before restoring them.
 - **`dev`, `start`, `serve` and `watch` are persistent** unless a task setting

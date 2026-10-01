@@ -191,7 +191,7 @@ whole workspace, or add the variable to `env`. A file above the workspace goes i
 
 A hit clears what the task's `outputs` match, then restores the stored copy. A
 `build` has default outputs: `dist/**` for JavaScript and Python packages,
-`**/build/**` for Gradle, `**/target/**` for Maven, `**/bin/Debug/**` and
+`build/**` beside each Gradle build file, `target/**` beside each `pom.xml`, `**/bin/Debug/**` and
 `**/bin/Release/**` for .NET. Keep files you
 write by hand out of those, or set `outputs` for the task.
 

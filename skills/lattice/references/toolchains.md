@@ -228,8 +228,8 @@ as `outputs`:
 | Driver | Default `build` outputs |
 | --- | --- |
 | `npm`, `pnpm`, `yarn`, `bun`, `deno`, `uv`, `poetry`, `pdm` | `dist/**` |
-| `gradle` | `**/build/**` |
-| `maven` | `**/target/**` |
+| `gradle` | `build/**` beside each `build.gradle(.kts)` |
+| `maven` | `target/**` beside each `pom.xml` |
 | `dotnet` | `**/bin/Debug/**`, `**/bin/Release/**` |
 | anything else, and a uv workspace member (it builds into the root's `dist/`) | none |
 

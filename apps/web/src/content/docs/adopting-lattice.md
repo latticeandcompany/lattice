@@ -136,7 +136,7 @@ workspace differs, set it in that workspace's override; fields layer, so an
 override that names `outputs` changes only `outputs`.
 
 `build` already caches the tool's build directory (`dist/**` for JavaScript and
-Python packages, `**/build/**` for Gradle, `**/target/**` for Maven,
+Python packages, `build/**` beside each Gradle build file, `target/**` beside each `pom.xml`,
 `**/bin/Debug/**` and `**/bin/Release/**` for .NET). A framework that writes elsewhere, such as `.next/`, needs its own
 `outputs`.
 

@@ -10,6 +10,7 @@
 
 use std::path::Path;
 
+use ignore::WalkBuilder;
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -199,21 +200,51 @@ pub fn native_tasks(tool: &str, dir: &Path, root: &Path, package: Option<&str>) 
 /// writes its build into by convention and never puts sources in.
 ///
 /// A Gradle, Maven or .NET workspace is a whole multi-project build, and each
-/// subproject writes its own, so those match at any depth. A .NET project's
-/// `bin` is only its configuration directories: a bare `bin` could be a folder
-/// of scripts, and a cache hit clears what the outputs match before restoring.
-/// A uv workspace member builds into the workspace root's `dist`, outside its
-/// own directory, so it gets none.
+/// subproject writes its own. Gradle and Maven name only the output directory
+/// beside each build file, because a cache hit clears what the outputs match
+/// before restoring and a source package can be called `build` or `target`. A
+/// .NET project's `bin` is only its configuration directories: a bare `bin`
+/// could be a folder of scripts. A uv workspace member builds into the
+/// workspace root's `dist`, outside its own directory, so it gets none.
 pub fn default_build_outputs(tool: &str, dir: &Path, root: &Path) -> Option<Vec<String>> {
 	let dirs: &[&str] = match tool {
 		"uv" if inside_uv_workspace(dir, root) => return None,
 		"npm" | "pnpm" | "yarn" | "bun" | "deno" | "uv" | "poetry" | "pdm" => &["dist/**"],
-		"maven" => &["**/target/**"],
-		"gradle" => &["**/build/**"],
+		"maven" => return Some(project_outputs(dir, &["pom.xml"], "target")),
+		"gradle" => {
+			return Some(project_outputs(
+				dir,
+				&["build.gradle", "build.gradle.kts"],
+				"build",
+			))
+		}
 		"dotnet" => &["**/bin/Debug/**", "**/bin/Release/**"],
 		_ => return None,
 	};
 	Some(dirs.iter().map(|d| d.to_string()).collect())
+}
+
+/// `<project>/<output>/**` for the build root and every project under it that
+/// holds one of `build_files`.
+fn project_outputs(dir: &Path, build_files: &[&str], output: &str) -> Vec<String> {
+	let skip = output.to_string();
+	let mut projects: Vec<String> = WalkBuilder::new(dir)
+		.filter_entry(move |e| e.depth() == 0 || e.file_name() != skip.as_str())
+		.build()
+		.flatten()
+		.filter(|e| e.depth() > 0 && e.file_type().is_some_and(|t| t.is_dir()))
+		.filter(|e| build_files.iter().any(|f| e.path().join(f).is_file()))
+		.filter_map(|e| {
+			let rel = e.path().strip_prefix(dir).ok()?;
+			Some(format!(
+				"{}/{output}/**",
+				rel.to_string_lossy().replace('\\', "/")
+			))
+		})
+		.collect();
+	projects.sort();
+	projects.insert(0, format!("{output}/**"));
+	projects
 }
 
 fn inside_uv_workspace(dir: &Path, root: &Path) -> bool {
@@ -754,6 +785,32 @@ mod tests {
 			default_build_outputs("uv", dir.path(), dir.path()),
 			Some(vec!["dist/**".to_string()])
 		);
+	}
+
+	/// A cache hit clears what the outputs match, so a source package named
+	/// `build` has to stay out of them or a restore deletes the user's edits.
+	#[test]
+	fn jvm_outputs_are_the_build_directories_beside_build_files() {
+		let dir = tempfile::TempDir::new().unwrap();
+		write(
+			dir.path(),
+			"settings.gradle.kts",
+			"include(\"libs:core\")\n",
+		);
+		write(dir.path(), "build.gradle.kts", "");
+		write(dir.path(), "libs/core/build.gradle.kts", "");
+		write(
+			dir.path(),
+			"libs/core/src/main/java/com/acme/build/Version.java",
+			"",
+		);
+		write(dir.path(), "libs/core/build/libs/core.jar", "");
+		let gradle = default_build_outputs("gradle", dir.path(), dir.path()).unwrap();
+		assert_eq!(gradle, ["build/**", "libs/core/build/**"]);
+
+		write(dir.path(), "app/pom.xml", "<project/>");
+		let maven = default_build_outputs("maven", dir.path(), dir.path()).unwrap();
+		assert_eq!(maven, ["target/**", "app/target/**"]);
 	}
 
 	#[test]

@@ -1614,7 +1614,13 @@ mod tests {
 		);
 		assert_eq!(
 			build.config.outputs.as_deref(),
-			Some(&["**/build/**".to_string()][..])
+			Some(
+				&[
+					"build/**".to_string(),
+					"app/build/**".to_string(),
+					"core/build/**".to_string()
+				][..]
+			)
 		);
 	}
 
