@@ -213,8 +213,12 @@ fn expand(root: &Path, pattern: &str, keep: impl Fn(&Path) -> bool) -> Result<Ve
 		.max_depth(depth)
 		.require_git(false)
 		.parents(false)
-		.filter_entry(|entry| {
+		// A directory the pattern names outright, like `packages/build` under
+		// `packages/*`, is a candidate whatever it is called. Only the ones walked
+		// through, and anything under `**`, are skipped for their name.
+		.filter_entry(move |entry| {
 			entry.depth() == 0
+				|| Some(entry.depth()) == depth
 				|| entry
 					.file_name()
 					.to_str()
@@ -355,6 +359,20 @@ mod tests {
 		assert_eq!(
 			rels(dir.path(), &LatticeConfig::default()),
 			["packages/a", "packages/b"]
+		);
+	}
+
+	#[test]
+	fn a_member_the_pattern_names_is_kept_whatever_it_is_called() {
+		let dir = repo();
+		let root = dir.path();
+		write(root, "package.json", r#"{"workspaces": ["packages/*"]}"#);
+		write(root, "packages/build/package.json", "{}");
+		write(root, "packages/ui/package.json", "{}");
+		write(root, "packages/ui/dist/package.json", "{}");
+		assert_eq!(
+			rels(root, &LatticeConfig::default()),
+			["packages/build", "packages/ui"]
 		);
 	}
 
