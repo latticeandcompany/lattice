@@ -75,7 +75,7 @@ impl Live {
 			return i;
 		}
 		let label = self.label_for(workspace, task);
-		self.label_width = self.label_width.max(label.chars().count()).min(40);
+		self.label_width = self.label_width.max(measure_text_width(&label)).min(40);
 		self.rows.push(Row {
 			label,
 			state: State::Waiting { on: Vec::new() },
@@ -107,9 +107,12 @@ impl Live {
 		self.paint(vec![line]);
 	}
 
+	/// The live region, never taller than the terminal: a frame that scrolls
+	/// cannot be redrawn in place. Running rows come first, then waiting rows,
+	/// then output tails with whatever room is left.
 	fn frame_lines(&self) -> Vec<String> {
 		let width = self.term.width().max(20) as usize;
-		let budget = (self.term.height().max(8) as usize).saturating_sub(2);
+		let mut room = (self.term.height().max(8) as usize).saturating_sub(2);
 		let spinner = paint_teal(SPINNER[self.frame % SPINNER.len()]);
 		let mut lines = Vec::new();
 
@@ -118,9 +121,21 @@ impl Live {
 			.iter()
 			.filter(|r| matches!(r.state, State::Running { .. }))
 			.collect();
-		let tail_room =
-			budget.saturating_sub(running.len() + WAITING_SHOWN + 3) / running.len().max(1);
-		for row in &running {
+		let waiting: Vec<&Row> = self
+			.rows
+			.iter()
+			.filter(|r| matches!(r.state, State::Waiting { .. }))
+			.collect();
+		if !self.rows.is_empty() {
+			room = room.saturating_sub(2);
+		}
+		let (running_shown, more_running) = fit(running.len(), usize::MAX, room);
+		room = room.saturating_sub(running_shown + usize::from(more_running));
+		let (waiting_shown, more_waiting) = fit(waiting.len(), WAITING_SHOWN, room);
+		room = room.saturating_sub(waiting_shown + usize::from(more_waiting));
+		let tail_room = room / running_shown.max(1);
+
+		for row in running.iter().take(running_shown) {
 			let State::Running { since, tail } = &row.state else {
 				continue;
 			};
@@ -135,12 +150,14 @@ impl Live {
 			}
 		}
 
-		let waiting: Vec<&Row> = self
-			.rows
-			.iter()
-			.filter(|r| matches!(r.state, State::Waiting { .. }))
-			.collect();
-		for row in waiting.iter().take(WAITING_SHOWN) {
+		if more_running {
+			lines.push(format!(
+				"  {}",
+				style(format!("+{} more running", running.len() - running_shown)).dim()
+			));
+		}
+
+		for row in waiting.iter().take(waiting_shown) {
 			let State::Waiting { on } = &row.state else {
 				continue;
 			};
@@ -166,10 +183,10 @@ impl Live {
 				style(why).dim()
 			));
 		}
-		if waiting.len() > WAITING_SHOWN {
+		if more_waiting {
 			lines.push(format!(
 				"  {}",
-				style(format!("+{} more waiting", waiting.len() - WAITING_SHOWN)).dim()
+				style(format!("+{} more waiting", waiting.len() - waiting_shown)).dim()
 			));
 		}
 
@@ -232,10 +249,23 @@ impl Live {
 	}
 }
 
+/// How many of `n` rows to show, at most `cap`, in `room` lines, and whether a
+/// "+N more" line follows them. That line takes a row's place when they do not fit.
+fn fit(n: usize, cap: usize, room: usize) -> (usize, bool) {
+	let mut shown = n.min(cap).min(room);
+	if shown < n && shown == room {
+		shown = room.saturating_sub(1);
+	}
+	(shown, shown < n && room > 0)
+}
+
 /// The reporter for a run on a terminal. See the module docs for what it draws.
 pub struct InteractiveReporter {
 	live: Arc<Mutex<Live>>,
 	stop: Arc<AtomicBool>,
+	/// Whether to animate at all. A `--sequentially` run finishes each phase, which
+	/// stops the ticker, so the next phase's `run_start` starts it again.
+	tick: bool,
 	ticker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -261,34 +291,43 @@ impl InteractiveReporter {
 			failed: 0,
 			scope: None,
 		}));
-		let stop = Arc::new(AtomicBool::new(false));
-		let ticker = tick.then(|| {
-			let (live, stop) = (live.clone(), stop.clone());
-			std::thread::spawn(move || {
-				while !stop.load(Ordering::Relaxed) {
-					std::thread::sleep(TICK);
-					let mut live = live.lock().unwrap();
-					if live
-						.rows
-						.iter()
-						.any(|r| matches!(r.state, State::Running { .. }))
-					{
-						live.frame += 1;
-						live.paint(Vec::new());
-					}
-				}
-			})
-		});
-		Self {
+		let reporter = Self {
 			live,
-			stop,
-			ticker: Mutex::new(ticker),
+			stop: Arc::new(AtomicBool::new(false)),
+			tick,
+			ticker: Mutex::new(None),
+		};
+		reporter.start_ticker();
+		reporter
+	}
+
+	fn start_ticker(&self) {
+		let mut ticker = self.ticker.lock().unwrap();
+		if !self.tick || ticker.is_some() {
+			return;
 		}
+		self.stop.store(false, Ordering::Relaxed);
+		let (live, stop) = (self.live.clone(), self.stop.clone());
+		*ticker = Some(std::thread::spawn(move || {
+			while !stop.load(Ordering::Relaxed) {
+				std::thread::sleep(TICK);
+				let mut live = live.lock().unwrap();
+				if live
+					.rows
+					.iter()
+					.any(|r| matches!(r.state, State::Running { .. }))
+				{
+					live.frame += 1;
+					live.paint(Vec::new());
+				}
+			}
+		}));
 	}
 }
 
 impl Reporter for InteractiveReporter {
 	fn run_start(&self, task: &str, workspaces: usize) {
+		self.start_ticker();
 		let mut live = self.live.lock().unwrap();
 		let mut head = format!(
 			"{} {}  {}  {}",
@@ -499,6 +538,9 @@ impl Reporter for InteractiveReporter {
 		}
 		live.rows.clear();
 		live.index.clear();
+		live.settled = 0;
+		live.cached = 0;
+		live.failed = 0;
 		live.draw(lines, Vec::new());
 	}
 
@@ -707,5 +749,63 @@ mod tests {
 			});
 		});
 		assert!(out.contains("FULL POWER"), "{out}");
+	}
+	#[test]
+	fn the_live_region_never_outgrows_the_terminal() {
+		console::set_colors_enabled_stderr(false);
+		let term = InMemoryTerm::new(10, 100);
+		let r = InteractiveReporter::on(Box::new(term), false, false);
+		r.run_start("build", 12);
+		let tasks: Vec<PlannedTask> = (0..12)
+			.map(|i| planned(&format!("ws{i}"), "build", &[]))
+			.collect();
+		r.plan(&tasks);
+		for i in 0..12 {
+			r.event(TaskEvent::Started {
+				workspace: format!("ws{i}"),
+				task: "build".into(),
+			});
+		}
+		let frame = r.live.lock().unwrap().frame_lines();
+		assert!(frame.len() <= 8, "{} lines: {frame:#?}", frame.len());
+		assert!(
+			frame.iter().any(|l| l.contains("more running")),
+			"{frame:#?}"
+		);
+	}
+
+	#[test]
+	fn a_second_phase_counts_from_zero_and_animates_again() {
+		console::set_colors_enabled_stderr(false);
+		let term = InMemoryTerm::new(30, 100);
+		let r = InteractiveReporter::on(Box::new(term), false, true);
+		r.run_start("build", 2);
+		r.plan(&[planned("core", "build", &[]), planned("web", "build", &[])]);
+		for ws in ["core", "web"] {
+			r.event(TaskEvent::Finished {
+				workspace: ws.into(),
+				task: "build".into(),
+				duration_ms: 1,
+			});
+		}
+		r.run_summary(RunSummary {
+			total: 2,
+			cached: 0,
+			failed: 0,
+			elapsed_ms: 1,
+			saved_ms: 0,
+		});
+		r.finish();
+		assert!(r.ticker.lock().unwrap().is_none());
+
+		r.run_start("test", 1);
+		r.plan(&[planned("core", "test", &[])]);
+		assert!(
+			r.ticker.lock().unwrap().is_some(),
+			"the next phase animates"
+		);
+		let frame = r.live.lock().unwrap().frame_lines();
+		assert!(frame.iter().any(|l| l.contains("0/1")), "{frame:#?}");
+		r.finish();
 	}
 }
