@@ -152,8 +152,8 @@ fn env_prints_the_pinned_toolchain_for_the_shell() {
 		.assert()
 		.success();
 	let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
-	assert!(stdout.starts_with("export PATH=\""), "{stdout}");
-	assert!(stdout.trim_end().ends_with(":$PATH\""), "{stdout}");
+	assert!(stdout.starts_with("export PATH='"), "{stdout}");
+	assert!(stdout.trim_end().ends_with(":\"$PATH\""), "{stdout}");
 	assert!(stdout.contains("toolchains"), "{stdout}");
 	assert!(stdout.contains("faketool"), "{stdout}");
 }

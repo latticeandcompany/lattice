@@ -79,44 +79,71 @@ impl EnvArgs {
 	}
 }
 
+/// `$SHELL` first: Git Bash and MSYS2 set it on Windows, and Windows also sets
+/// `PSModulePath` for every process, cmd and Git Bash included.
 fn detect_shell() -> Shell {
-	if cfg!(windows) && std::env::var_os("PSModulePath").is_some() {
-		return Shell::Powershell;
-	}
 	match std::env::var("SHELL") {
 		Ok(shell) if shell.ends_with("fish") => Shell::Fish,
-		_ if cfg!(windows) => Shell::Cmd,
-		_ => Shell::Posix,
+		Ok(_) => Shell::Posix,
+		Err(_) if cfg!(windows) && std::env::var_os("PSModulePath").is_some() => Shell::Powershell,
+		Err(_) if cfg!(windows) => Shell::Cmd,
+		Err(_) => Shell::Posix,
 	}
 }
 
+/// Each directory is quoted so the shell takes it literally: a repo path with a
+/// `$` or a backtick in it must not be expanded or run when the output is
+/// evaluated.
 fn render(shell: Shell, dirs: &[PathBuf]) -> String {
 	if dirs.is_empty() {
 		return String::new();
 	}
 	let shown: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+	let unix: Vec<String> = shown
+		.iter()
+		.map(|d| {
+			if cfg!(windows) {
+				msys_path(d)
+			} else {
+				d.clone()
+			}
+		})
+		.collect();
 	match shell {
 		Shell::Posix => format!(
-			"export PATH=\"{}:$PATH\"\n",
-			shown
-				.iter()
-				.map(|d| d.replace('"', "\\\""))
+			"export PATH={}:\"$PATH\"\n",
+			unix.iter()
+				.map(|d| format!("'{}'", d.replace('\'', "'\\''")))
 				.collect::<Vec<_>>()
 				.join(":")
 		),
 		Shell::Fish => format!(
 			"set -gx PATH {} $PATH\n",
-			shown
-				.iter()
-				.map(|d| format!("'{}'", d.replace('\'', "\\'")))
+			unix.iter()
+				.map(|d| format!("'{}'", d.replace('\\', "\\\\").replace('\'', "\\'")))
 				.collect::<Vec<_>>()
 				.join(" ")
 		),
 		Shell::Powershell => format!(
-			"$env:PATH = \"{};$env:PATH\"\n",
-			shown.join(";").replace('"', "`\"")
+			"$env:PATH = '{};' + $env:PATH\n",
+			shown.join(";").replace('\'', "''")
 		),
 		Shell::Cmd => format!("set \"PATH={};%PATH%\"\n", shown.join(";")),
+	}
+}
+
+/// `C:\repo\bin` as Git Bash and MSYS2 spell it, `/c/repo/bin`: their `PATH` is
+/// split on `:`, which a drive letter would cut in two.
+fn msys_path(path: &str) -> String {
+	let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+	let mut chars = path.chars();
+	match (chars.next(), chars.next()) {
+		(Some(drive), Some(':')) if drive.is_ascii_alphabetic() => format!(
+			"/{}{}",
+			drive.to_ascii_lowercase(),
+			chars.as_str().replace('\\', "/")
+		),
+		_ => path.replace('\\', "/"),
 	}
 }
 
@@ -132,13 +159,32 @@ mod tests {
 		];
 		assert_eq!(
 			render(Shell::Posix, &dirs),
-			"export PATH=\"/r/.lattice/toolchains/node/bin:/r/node_modules/.bin:$PATH\"\n"
+			"export PATH='/r/.lattice/toolchains/node/bin':'/r/node_modules/.bin':\"$PATH\"\n"
 		);
 		assert_eq!(
 			render(Shell::Fish, &dirs),
 			"set -gx PATH '/r/.lattice/toolchains/node/bin' '/r/node_modules/.bin' $PATH\n"
 		);
-		assert!(render(Shell::Powershell, &dirs).starts_with("$env:PATH = \""));
+		assert!(render(Shell::Powershell, &dirs).starts_with("$env:PATH = '"));
+	}
+
+	#[test]
+	fn a_path_is_taken_literally() {
+		let dirs = vec![PathBuf::from("/home/me/$work/it's `x`/bin")];
+		assert_eq!(
+			render(Shell::Posix, &dirs),
+			"export PATH='/home/me/$work/it'\\''s `x`/bin':\"$PATH\"\n"
+		);
+		assert_eq!(
+			render(Shell::Powershell, &dirs),
+			"$env:PATH = '/home/me/$work/it''s `x`/bin;' + $env:PATH\n"
+		);
+	}
+
+	#[test]
+	fn a_windows_path_is_spelled_for_git_bash() {
+		assert_eq!(msys_path(r"C:\Users\me\repo\bin"), "/c/Users/me/repo/bin");
+		assert_eq!(msys_path(r"\\?\D:\r\bin"), "/d/r/bin");
 	}
 
 	#[test]

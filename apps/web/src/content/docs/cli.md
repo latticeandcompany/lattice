@@ -289,7 +289,7 @@ does.
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--workspace` | `-w` | `<NAME>` | the workspace you are in | Whose `PATH` to print. Outside any workspace, the root's engines |
-| `--shell` | — | `posix` \| `fish` \| `powershell` \| `cmd` | from `$SHELL` | The syntax to print |
+| `--shell` | — | `posix` \| `fish` \| `powershell` \| `cmd` | from `$SHELL`; on Windows without it, PowerShell | The syntax to print |
 
 ```sh
 eval "$(lattice env)"
@@ -298,7 +298,7 @@ lattice env --workspace api
 ```
 
 ```text
-export PATH="/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin:/repo/node_modules/.bin:$PATH"
+export PATH='/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin':'/repo/node_modules/.bin':"$PATH"
 ```
 
 With nothing to add it prints nothing, and says why on stderr. An engine checked

@@ -322,11 +322,11 @@ checked and installed first, exactly as a run would.
 | Flag | Short | Argument | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--workspace` | `-w` | `<NAME>` | the workspace you are in, else the root's engines | Whose `PATH` to print |
-| `--shell` | — | `posix`, `fish`, `powershell`, `cmd` | from `$SHELL` (`fish` if it ends in fish; `powershell` on Windows with `PSModulePath`; `cmd` on Windows; else `posix`) | Which syntax |
+| `--shell` | — | `posix`, `fish`, `powershell`, `cmd` | from `$SHELL` (`fish` if it ends in fish, else `posix`; without it on Windows, `powershell` with `PSModulePath`, else `cmd`) | Which syntax |
 
 ```text
 $ lattice env --shell posix
-export PATH="/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin:/repo/node_modules/.bin:$PATH"
+export PATH='/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin':'/repo/node_modules/.bin':"$PATH"
 $ lattice env --shell fish
 set -gx PATH '/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin' '/repo/node_modules/.bin' $PATH
 ```
