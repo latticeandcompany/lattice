@@ -483,10 +483,11 @@ fn sweep_stale_staging(engine_dir: &Path, older_than: Duration) {
 	}
 }
 
-/// Run `install_cmd` into `staging` and return the version to record for what it
-/// installed. A constraint is enforced here or nowhere: a tool whose version
-/// cannot be read cannot be shown to satisfy one.
+/// Run `install_cmd` from the repo root into `staging` and return the version to
+/// record for what it installed. A constraint is enforced here or nowhere: a tool
+/// whose version cannot be read cannot be shown to satisfy one.
 fn install_and_verify(
+	root: &Path,
 	staging: &Path,
 	name: &str,
 	install_cmd: &str,
@@ -499,7 +500,7 @@ fn install_and_verify(
 	let staging_str = staging.to_string_lossy().into_owned();
 	let substituted = install_cmd.replace("$LATTICE_TOOLCHAIN_DIR", &staging_str);
 	let env = vec![("LATTICE_TOOLCHAIN_DIR".to_string(), staging_str)];
-	let installed = run_capture(&substituted, None, None, &env)?;
+	let installed = run_capture(&substituted, None, Some(root), &env)?;
 	if !installed.ok {
 		let status = match installed.code {
 			Some(code) => format!("exited with code {code}"),
@@ -658,8 +659,9 @@ pub fn provision_and_resolve_in(
 						),
 					));
 				};
-				let found = which(&vc, None, cwd);
-				let checked = run_capture(&vc, None, cwd, &[])?;
+				let dir = cwd.unwrap_or(root);
+				let found = which(&vc, None, Some(dir));
+				let checked = run_capture(&vc, None, Some(dir), &[])?;
 				let cons = constraint.clone().unwrap_or_default();
 				let install_hint = if vc.contains("gradlew") {
 					format!(
@@ -772,6 +774,7 @@ pub fn provision_and_resolve_in(
 				));
 
 				let version = match install_and_verify(
+					root,
 					&staging,
 					name,
 					&install_cmd,
