@@ -15,18 +15,20 @@ import ThemeControl from './themeControl.tsx';
 import ToolchainsView from './toolchainsView.tsx';
 import UnreadableConfig from './unreadableConfig.tsx';
 
+// Screens holding results for one project are keyed by its root, so switching
+// projects starts them over instead of showing the last project's results.
 const Screen = () => {
-	const { project, view, needsMigration, configText } = useApp();
+	const { project, view, needsMigration, configText, pendingRoot } = useApp();
 
-	if (needsMigration) return <MigrateView />;
+	if (needsMigration) return <MigrateView key={project?.root ?? pendingRoot ?? ''} />;
 	if (!project) return configText !== null ? <UnreadableConfig /> : <SetupWizard />;
 	switch (view) {
 		case 'graph':
 			return <GraphView />;
 		case 'toolchains':
-			return <ToolchainsView />;
+			return <ToolchainsView key={project.root} />;
 		case 'cache':
-			return <CacheView />;
+			return <CacheView key={project.root} />;
 		case 'config':
 			return <ConfigView />;
 		case 'setup':
