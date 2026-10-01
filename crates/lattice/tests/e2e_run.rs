@@ -108,6 +108,40 @@ fn an_edit_in_a_dependency_without_the_task_still_misses() {
 		.stdout(predicate::str::contains("0 cached"));
 }
 
+/// Rust ignores SIGPIPE, so a write to a pipe whose reader left returns an error,
+/// and `println!` turns that into a panic that ends the run with its tasks alive.
+#[test]
+fn a_reader_that_goes_away_does_not_crash_the_run() {
+	let fx = Fixture::new();
+	fx.write("app/src.txt", "x");
+	fx.config_from(
+		r#"{
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["app"],
+		    "overrides": { "app": { "tasks": { "build": @build@ } } }
+		}"#,
+		&[(
+			"build",
+			sh::all([sh::sleep(1), sh::echo("one"), sh::echo("two")]),
+		)],
+	);
+
+	let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("lattice"))
+		.args(["run", "build"])
+		.current_dir(fx.root())
+		.env("CI", "1")
+		.env("NO_COLOR", "1")
+		.stdout(std::process::Stdio::piped())
+		.stderr(std::process::Stdio::piped())
+		.spawn()
+		.expect("spawn lattice");
+	drop(child.stdout.take());
+	let out = child.wait_with_output().expect("wait for lattice");
+	let stderr = String::from_utf8_lossy(&out.stderr);
+	assert!(out.status.success(), "{:?}: {stderr}", out.status);
+	assert!(!stderr.contains("panicked"), "{stderr}");
+}
+
 #[test]
 fn corrupt_tarball_is_a_miss_not_a_false_hit() {
 	let fx = Fixture::new();

@@ -1,7 +1,23 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Mutex;
 
 use console::{style, Style, Term};
+
+/// `println!` that drops the line when stdout is gone rather than panicking, which
+/// would end the run with its tasks still running: `lattice run test | head`.
+macro_rules! say {
+	($($arg:tt)*) => {{
+		let _ = writeln!(std::io::stdout().lock(), $($arg)*);
+	}};
+}
+
+/// [`say!`] for stderr.
+macro_rules! say_err {
+	($($arg:tt)*) => {{
+		let _ = writeln!(std::io::stderr().lock(), $($arg)*);
+	}};
+}
 
 mod live;
 pub use live::InteractiveReporter;
@@ -510,7 +526,7 @@ impl CiReporter {
 impl Reporter for CiReporter {
 	fn run_start(&self, task: &str, workspaces: usize) {
 		if self.loquacious {
-			println!(
+			say!(
 				"lattice: running `{}` across {} workspace{}",
 				task,
 				workspaces,
@@ -522,7 +538,7 @@ impl Reporter for CiReporter {
 	fn event(&self, ev: TaskEvent) {
 		match ev {
 			TaskEvent::Started { workspace, task } => {
-				println!("{}: running", self.label(&workspace, &task));
+				say!("{}: running", self.label(&workspace, &task));
 			}
 			TaskEvent::CacheHit {
 				workspace,
@@ -530,7 +546,7 @@ impl Reporter for CiReporter {
 				key,
 				..
 			} => {
-				println!(
+				say!(
 					"{}: cache hit [{}]",
 					self.label(&workspace, &task),
 					short_key(&key)
@@ -552,9 +568,9 @@ impl Reporter for CiReporter {
 			} => {
 				let label = self.label(&workspace, &task);
 				if stderr {
-					eprintln!("{}: {}", label, line);
+					say_err!("{}: {}", label, line);
 				} else {
-					println!("{}: {}", label, line);
+					say!("{}: {}", label, line);
 				}
 				self.streamed.lock().unwrap().insert((workspace, task));
 			}
@@ -563,7 +579,7 @@ impl Reporter for CiReporter {
 				task,
 				duration_ms,
 			} => {
-				println!(
+				say!(
 					"{}: done ({})",
 					self.label(&workspace, &task),
 					fmt_secs(duration_ms)
@@ -584,7 +600,7 @@ impl Reporter for CiReporter {
 				if let Some(secs) = secs {
 					line.push_str(&format!(" after {secs}"));
 				}
-				eprintln!("{}", line);
+				say_err!("{}", line);
 			}
 			TaskEvent::PersistentExited {
 				workspace,
@@ -595,9 +611,9 @@ impl Reporter for CiReporter {
 				let label = self.label(&workspace, &task);
 				let (desc, secs) = (exit_desc(code), fmt_secs(duration_ms));
 				if code == Some(0) {
-					println!("{}: exited ({}) after {}", label, desc, secs);
+					say!("{}: exited ({}) after {}", label, desc, secs);
 				} else {
-					eprintln!("{}: EXITED ({}) after {}", label, desc, secs);
+					say_err!("{}: EXITED ({}) after {}", label, desc, secs);
 				}
 			}
 			TaskEvent::Skipped {
@@ -606,7 +622,7 @@ impl Reporter for CiReporter {
 				reason,
 			} => {
 				if self.loquacious {
-					println!("{}: skipped ({})", self.label(&workspace, &task), reason);
+					say!("{}: skipped ({})", self.label(&workspace, &task), reason);
 				}
 			}
 		}
@@ -620,9 +636,9 @@ impl Reporter for CiReporter {
 		let label = self.label(workspace, task);
 		for (stderr, line) in captured {
 			if *stderr {
-				eprintln!("{}: {}", label, line);
+				say_err!("{}: {}", label, line);
 			} else {
-				println!("{}: {}", label, line);
+				say!("{}: {}", label, line);
 			}
 		}
 	}
@@ -635,7 +651,7 @@ impl Reporter for CiReporter {
 		} else {
 			String::new()
 		};
-		println!(
+		say!(
 			"lattice: {} tasks, {} cached, {} failed, {}{}",
 			s.total,
 			s.cached,
@@ -644,32 +660,32 @@ impl Reporter for CiReporter {
 			saved
 		);
 		if is_full_cache(s.total, s.cached, s.failed) {
-			println!("lattice: full power, nothing to run");
+			say!("lattice: full power, nothing to run");
 		}
 	}
 
 	fn note(&self, msg: &str) {
 		if self.loquacious {
-			println!("lattice: {}", msg);
+			say!("lattice: {}", msg);
 		}
 	}
 
 	fn warn(&self, msg: &str) {
-		eprintln!("lattice: warning: {}", msg);
+		say_err!("lattice: warning: {}", msg);
 	}
 
 	fn task_note(&self, workspace: &str, task: &str, msg: &str) {
 		if self.loquacious {
-			println!("lattice: {}: {}", self.label(workspace, task), msg);
+			say!("lattice: {}: {}", self.label(workspace, task), msg);
 		}
 	}
 
 	fn task_warn(&self, workspace: &str, task: &str, msg: &str) {
-		eprintln!("lattice: warning: {}: {}", self.label(workspace, task), msg);
+		say_err!("lattice: warning: {}: {}", self.label(workspace, task), msg);
 	}
 
 	fn scope(&self, workspace: &str) {
-		println!("lattice: running in {workspace}, the workspace you are in");
+		say!("lattice: running in {workspace}, the workspace you are in");
 	}
 
 	fn finish(&self) {}
