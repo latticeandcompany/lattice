@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
@@ -86,6 +86,7 @@ impl RunArgs {
 		apply_color_policy(mode);
 
 		let request = self.request(project.cwd_workspace.as_deref());
+		self.require_a_task_in_scope(&project, &request)?;
 
 		if self.dry_run {
 			// A dry run has no runner to report through, so it gets a reporter of
@@ -141,6 +142,26 @@ impl RunArgs {
 			// keep-going failure; just carry the status out.
 			code => std::process::exit(code),
 		}
+	}
+
+	/// A run scoped to the workspace it started in, which has none of the tasks
+	/// asked for, would run nothing and exit 0. That is what a mistyped CI step
+	/// looks like, so it fails the way an unknown task does.
+	fn require_a_task_in_scope(&self, project: &Project, request: &RunRequest) -> Result<()> {
+		let Some(scoped) = request.plan.workspaces.as_ref().and_then(|w| w.first()) else {
+			return Ok(());
+		};
+		let Some(ws) = project.workspaces.iter().find(|w| &w.name == scoped) else {
+			return Ok(());
+		};
+		if self.tasks.iter().any(|task| ws.task(task).is_some()) {
+			return Ok(());
+		}
+		bail!(
+			"{scoped}, the workspace you are in, has no '{}' task. Run it from the repo \
+			 root to run it everywhere, or pick workspaces with --filter",
+			self.tasks.join("' or '")
+		);
 	}
 
 	/// `cwd_workspace` scopes the run to the workspace it was started inside,

@@ -33,7 +33,8 @@ the workspace you are in`. It works the way a package manager does inside a
 package directory, and it means `cd` into what you are working on is enough.
 
 From the repo root, a run covers every workspace. `--filter` replaces the
-directory's scope.
+directory's scope. A run whose workspace has none of the tasks named fails,
+the way an unknown task does, rather than running nothing.
 
 ## Narrow the run with `--filter`
 

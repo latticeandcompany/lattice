@@ -279,6 +279,43 @@ fn filtered_dry_run_marks_pulled_in_dependencies() {
 		.stdout(predicate::str::contains("top:build (dependency)").not());
 }
 
+#[test]
+fn a_run_from_inside_a_workspace_without_the_task_fails() {
+	let fx = Fixture::new();
+	chain_repo(&fx);
+	fx.mkdir("mid/src");
+
+	fx.lattice()
+		.current_dir(fx.join("mid/src"))
+		.args(["run", "lint"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains("no workspace has a 'lint' task"));
+
+	let fx = Fixture::new();
+	fx.mkdir("docs");
+	fx.mkdir("app");
+	fx.config_from(
+		r#"{
+		    "latticeVersion": "0.1.0",
+		    "workspaces": ["docs", "app"],
+		    "overrides": {
+		      "docs": { "tasks": { "build": @ok@ } },
+		      "app": { "tasks": { "test": @ok@ } }
+		    }
+		}"#,
+		&[("ok", sh::succeed())],
+	);
+	fx.lattice()
+		.current_dir(fx.join("docs"))
+		.args(["run", "test"])
+		.assert()
+		.failure()
+		.stderr(predicate::str::contains(
+			"docs, the workspace you are in, has no 'test' task",
+		));
+}
+
 /// A run started inside a workspace is for that workspace, and still builds
 /// what it depends on, the way cargo scopes itself to the member it is run in.
 #[test]
