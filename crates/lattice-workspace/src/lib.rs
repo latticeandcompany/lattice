@@ -840,7 +840,8 @@ fn is_native_fingerprint(fp: &str) -> bool {
 			| ".ruby-version"
 			| ".java-version"
 			| "gradlew"
-			| "mvnw" | "deno.json"
+			| "mvnw"
+			| "deno.json"
 			| "deno.jsonc"
 	)
 }
