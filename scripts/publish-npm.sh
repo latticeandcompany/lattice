@@ -145,7 +145,14 @@ if [ -n "$HOST" ]; then
 	esac
 fi
 
+# npm publish quietly drops what it cannot normalize rather than failing: npm 12
+# removed a bin whose path started with ./ and published the wrapper without its
+# command. `npm pkg fix` applies the same normalization offline.
 for dir in "${DIRS[@]}"; do
+	before="$(cat "$dir/package.json")"
+	(cd "$dir" && npm pkg fix)
+	[ "$before" = "$(cat "$dir/package.json")" ] ||
+		die "npm would rewrite $(basename "$dir")/package.json when publishing it"
 	printf '  %s%s%s\n' "$DIM" "$(basename "$dir")" "$RST"
 done
 

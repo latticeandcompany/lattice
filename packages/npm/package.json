@@ -26,7 +26,7 @@
 		"node": ">=22"
 	},
 	"bin": {
-		"lattice": "./dist/cli.mjs"
+		"lattice": "dist/cli.mjs"
 	},
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",

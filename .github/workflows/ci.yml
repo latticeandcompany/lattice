@@ -251,9 +251,15 @@ jobs:
             { echo 'stage.mjs did not print the wrapper last' >&2; exit 1; }
 
           # npm pack is the only thing that actually reads a manifest the way the
-          # registry will.
+          # registry will. npm publish goes further and drops what it cannot
+          # normalize, such as a bin path starting with ./, without failing, so a
+          # manifest `npm pkg fix` would rewrite is refused here.
           echo "$staged" | while IFS= read -r dir; do
             (cd "$dir" && npm pack --dry-run)
+            before="$(cat "$dir/package.json")"
+            (cd "$dir" && npm pkg fix)
+            [ "$before" = "$(cat "$dir/package.json")" ] ||
+              { echo "npm would rewrite $dir/package.json when publishing it" >&2; exit 1; }
           done
 
           rm -rf "$work"
