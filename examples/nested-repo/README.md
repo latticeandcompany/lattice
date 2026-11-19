@@ -64,7 +64,9 @@ so the `ignore` set keeps the inner repo's install and cache out of the key:
 A task's cache key includes the resolved keys of the tasks it depends on. So a
 frontend-only edit changes `api:build`'s key as well as `frontend:build`'s, and
 `api:build` runs again instead of restoring a result built against code that no
-longer exists.
+longer exists. The key also covers the files of every workspace `api` depends
+on, so `api:test`, which depends on no `frontend` task, re-runs after a frontend
+edit too.
 
 The rule is deliberately coarse: a workspace is one node, so `api:build` re-runs
 whenever `frontend:build`'s key moves, even when nothing `api` reads actually

@@ -18,8 +18,9 @@ binary through npm instead of through a shell script.
 npm install --save-dev @latticeandcompany/lattice
 ```
 
-`pnpm add -D`, `yarn add -D`, and `bun add -d` take the same package name. Run
-Lattice from a package script, or with `npx`:
+`pnpm add -D`, `yarn add -D`, and `bun add -d` take the same package name. The
+wrapper needs Node 22 or later. Run Lattice from a package script, or with
+`npx`:
 
 ```sh
 npx lattice run build
@@ -29,7 +30,7 @@ This package is a wrapper around the real binary. It passes everything after the
 command name straight through, so `npx lattice` and an installed `lattice` are
 the same program with the same help.
 
-## Only one binary is installed
+## One package per platform
 
 The binary is not in this package. Six sibling packages carry one build each, and
 this package depends on all six as `optionalDependencies`:
@@ -43,9 +44,11 @@ this package depends on all six as `optionalDependencies`:
 | `@latticeandcompany/lattice-linux-arm64-gnu` | Linux, aarch64 (glibc) |
 | `@latticeandcompany/lattice-win32-x64-msvc` | Windows, x86_64 (MSVC) |
 
-Each package declares the `os` and `cpu` it is for, so your package manager
-unpacks only the one that matches. The musl package covers Alpine and other
-distributions without glibc.
+Each package declares the `os` and `cpu` it is for, and on Linux the `libc`, so
+your package manager skips the ones that do not match. Package managers honor
+`libc` inconsistently, so on Linux x86_64 both the glibc and the musl package
+can install, and the wrapper runs the one for the system it is on. The musl
+package covers Alpine and other distributions without glibc.
 
 The install downloads nothing beyond those packages and runs no `postinstall`
 script. It therefore works offline, from a lockfile, behind a proxy, and under
