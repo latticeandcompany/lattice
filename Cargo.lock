@@ -2191,7 +2191,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "dagger",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "lattice-cache",
  "lattice-config",
  "lattice-events",
