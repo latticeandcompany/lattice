@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Semaphore;
@@ -26,11 +26,11 @@ use tokio::task::JoinSet;
 use chrono::Utc;
 use dagger::{build_schedule, ExecutionGraph, Schedule};
 use lattice_cache::{
-	compute_key_detailed, global_dependencies_digest, CacheMeta, CacheStore, HashInputs,
-	KeyBreakdown, LocalStore, RunRecord,
+	compute_key_detailed, global_dependencies_digest, workspace_source_digest, CacheMeta,
+	CacheStore, HashInputs, KeyBreakdown, LocalStore, RunRecord,
 };
 use lattice_config::{resolve_engines, LatticeConfig, PipelineTask};
-use lattice_events::{CacheMiss, Reporter, RunSummary, TaskEvent};
+use lattice_events::{CacheMiss, PlannedTask, Reporter, RunSummary, TaskEvent};
 use lattice_workspace::toolchain;
 use lattice_workspace::{dependency_bin_dirs, Workspace};
 use serde::Serialize;
@@ -401,6 +401,54 @@ struct TaskSpec {
 	path_prepend: Vec<PathBuf>,
 	/// This workspace's resolved toolchain identity (part of the cache key).
 	toolchain_identity: String,
+	/// Source digests of the workspaces this one depends on (part of the cache key).
+	upstream: Upstream,
+}
+
+/// Source digests of a workspace's dependencies, by dependency name.
+type Upstream = Arc<[(String, String)]>;
+
+/// For each workspace in the run, the source digest of every workspace it
+/// depends on, directly or not. Each is hashed once, however many depend on it.
+fn upstream_digests<'a>(
+	in_run: impl Iterator<Item = &'a str>,
+	ws_map: &HashMap<&'a str, &'a Workspace>,
+) -> Result<HashMap<String, Upstream>> {
+	let mut digests: HashMap<&str, String> = HashMap::new();
+	let mut out: HashMap<String, Upstream> = HashMap::new();
+	for name in in_run {
+		if out.contains_key(name) {
+			continue;
+		}
+		let mut seen: BTreeSet<&str> = BTreeSet::new();
+		let mut stack: Vec<&str> = ws_map
+			.get(name)
+			.map(|w| w.depends_on.iter().map(String::as_str).collect())
+			.unwrap_or_default();
+		while let Some(dep) = stack.pop() {
+			if dep == name || !seen.insert(dep) {
+				continue;
+			}
+			if let Some(w) = ws_map.get(dep) {
+				stack.extend(w.depends_on.iter().map(String::as_str));
+			}
+		}
+		let mut list = Vec::with_capacity(seen.len());
+		for dep in seen {
+			let Some(w) = ws_map.get(dep) else {
+				continue;
+			};
+			if !digests.contains_key(dep) {
+				let tasks: Vec<&PipelineTask> = w.tasks.values().map(|t| &t.config).collect();
+				let digest = workspace_source_digest(&w.path, &tasks)
+					.with_context(|| format!("could not hash workspace '{dep}'"))?;
+				digests.insert(dep, digest);
+			}
+			list.push((dep.to_string(), digests[dep].clone()));
+		}
+		out.insert(name.to_string(), Arc::from(list));
+	}
+	Ok(out)
 }
 
 /// Everything one spawned task needs. The shared handles are cheap to clone
@@ -679,17 +727,33 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let mut tc_cache: HashMap<String, (Vec<PathBuf>, String)> = HashMap::new();
 	let mut ws_prepend: HashMap<String, Vec<PathBuf>> = HashMap::new();
 	let mut ws_identity: HashMap<String, String> = HashMap::new();
+	let mut tools_in_use: Vec<String> = Vec::new();
 	for ws in workspaces
 		.iter()
 		.filter(|ws| in_run.contains(ws.name.as_str()))
 	{
 		let merged = resolve_engines(&config.engines, &ws.engines);
-		let memo_key = format!("{merged:?}");
+		// A build tool's wrapper makes the version depend on where it runs.
+		let wrapped = merged.contains_key("gradle") || merged.contains_key("maven");
+		let memo_key = if wrapped {
+			format!("{merged:?}@{}", ws.path.display())
+		} else {
+			format!("{merged:?}")
+		};
 		let (mut pp, id) = if let Some(hit) = tc_cache.get(&memo_key) {
 			hit.clone()
 		} else {
 			let resolved =
-				toolchain::provision_and_resolve(root, &merged, &mut |m| reporter.note(m))?;
+				toolchain::provision_and_resolve_in(root, &merged, Some(&ws.path), &mut |m| {
+					reporter.note(m)
+				})
+				.with_context(|| format!("workspace '{}' cannot run", ws.name))?;
+			for engine in &resolved.engines {
+				let described = engine.describe();
+				if !tools_in_use.contains(&described) {
+					tools_in_use.push(described);
+				}
+			}
 			let v = (resolved.path_prepend, resolved.identity);
 			tc_cache.insert(memo_key, v.clone());
 			v
@@ -708,16 +772,25 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let (node_indices, schedule) = build_schedule(graph);
 	let n = node_indices.len();
 
+	let upstream = upstream_digests(
+		node_indices
+			.iter()
+			.map(|&ni| graph.graph[ni].workspace_name.as_str()),
+		&ws_map,
+	)?;
+	// Computed before anything is drawn, so a failure here leaves no plan behind.
+	let global_digest: Arc<str> =
+		Arc::from(global_dependencies_digest(root, &config.global_dependencies)?.as_str());
+
 	let mut specs: Vec<Option<TaskSpec>> = Vec::with_capacity(n);
 	let mut task_names: BTreeSet<String> = BTreeSet::new();
 	for &ni in &node_indices {
 		let node = &graph.graph[ni];
 		task_names.insert(node.task_name.clone());
 		let spec = ws_map.get(node.workspace_name.as_str()).map(|ws| {
-			let pipeline_task = config
-				.tasks
-				.get(node.task_name.as_str())
-				.cloned()
+			let pipeline_task = ws
+				.task(&node.task_name)
+				.map(|t| t.config.clone())
 				.unwrap_or_default();
 			TaskSpec {
 				workspace_name: node.workspace_name.clone(),
@@ -728,6 +801,10 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 				pipeline_task,
 				path_prepend: ws_prepend.get(&ws.name).cloned().unwrap_or_default(),
 				toolchain_identity: ws_identity.get(&ws.name).cloned().unwrap_or_default(),
+				upstream: upstream
+					.get(&ws.name)
+					.cloned()
+					.unwrap_or_else(|| Arc::from([])),
 			}
 		});
 		specs.push(spec);
@@ -735,6 +812,30 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 
 	let run_label = task_names.iter().cloned().collect::<Vec<_>>().join("+");
 	reporter.run_start(&run_label, in_run.len());
+	if !tools_in_use.is_empty() {
+		reporter.note(&format!("using {}", tools_in_use.join(" · ")));
+	}
+	let planned: Vec<PlannedTask> = node_indices
+		.iter()
+		.enumerate()
+		.map(|(pos, &ni)| {
+			let node = &graph.graph[ni];
+			let mut waits_on: Vec<String> = schedule.prerequisites[pos]
+				.iter()
+				.map(|&dep| {
+					let d = &graph.graph[node_indices[dep]];
+					format!("{}:{}", d.workspace_name, d.task_name)
+				})
+				.collect();
+			waits_on.sort();
+			PlannedTask {
+				workspace: node.workspace_name.clone(),
+				task: node.task_name.clone(),
+				waits_on,
+			}
+		})
+		.collect();
+	reporter.plan(&planned);
 
 	// Cap parallelism at the requested override, else the machine default.
 	// Guard `Some(0)` so the semaphore always has permits.
@@ -752,11 +853,7 @@ pub async fn execute_tasks(opts: ExecuteOptions<'_>) -> Result<RunResult> {
 	let persistent_watches: Arc<Mutex<Vec<PersistentWatch>>> = Arc::new(Mutex::new(Vec::new()));
 	let shutting_down = Arc::new(AtomicBool::new(false));
 
-	// The repo's shared files and env, resolved once: they are the same for every
-	// task in the run, and hashing a shared schema directory per task would mean
-	// reading it once per task.
-	let global_digest: Arc<str> =
-		Arc::from(global_dependencies_digest(root, &config.global_dependencies)?.as_str());
+	// The repo's shared env, resolved once: it is the same for every task in the run.
 	let mut global_env_values: Vec<(String, Option<String>)> = config
 		.global_env
 		.iter()
@@ -1138,6 +1235,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		toolchain_identity: &spec.toolchain_identity,
 		lattice_version: ctx.lattice_version.as_ref(),
 		dep_keys: &ctx.dep_keys,
+		upstream: &spec.upstream,
 		global_digest: ctx.global_digest.as_ref(),
 		global_env_values: &ctx.global_env,
 	}) {
@@ -1232,10 +1330,11 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			cmd.env(name, value);
 		}
 	}
-	cmd.stdout(std::process::Stdio::piped())
+	cmd.stdin(std::process::Stdio::null())
+		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::piped());
 	#[cfg(unix)]
-	cmd.process_group(0);
+	detach_from_terminal(&mut cmd);
 
 	let mut child = match cmd.spawn() {
 		Ok(c) => c,
@@ -1370,7 +1469,7 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 		ctx.children.remove(pid);
 	}
 
-	let mut captured = std::mem::take(&mut *capture.lock().unwrap());
+	let captured = std::mem::take(&mut *capture.lock().unwrap());
 	let mut exit_code = status.as_ref().ok().and_then(|s| s.code());
 
 	let success = if timed_out {
@@ -1378,14 +1477,24 @@ async fn run_one_inner(ctx: TaskRunContext, key_slot: &mut Option<String>) -> Ta
 			.timeout
 			.map(|t| t.to_string())
 			.unwrap_or_else(|| "its timeout".to_string());
-		captured.push((true, format!("timed out after {limit} and was stopped")));
+		// A warning rather than a line of the task's output: a display that has
+		// already streamed the output does not print the captured copy again.
+		let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+			workspace: ws.clone(),
+			task: task.clone(),
+			msg: format!("timed out after {limit} and was stopped"),
+		});
 		exit_code = None;
 		false
 	} else {
 		match status {
 			Ok(s) => s.success(),
 			Err(e) => {
-				captured.push((true, format!("failed to wait for task: {e}")));
+				let _ = ctx.tx.send(RunnerMsg::TaskWarn {
+					workspace: ws.clone(),
+					task: task.clone(),
+					msg: format!("failed to wait for task: {e}"),
+				});
 				false
 			}
 		}
@@ -1585,6 +1694,28 @@ fn build_shell_command(command: &str) -> tokio::process::Command {
 fn windows_shell_arg(cmd: &mut tokio::process::Command, command: &str) {
 	use std::os::windows::process::CommandExt;
 	cmd.as_std_mut().raw_arg(format!("/S /C \"{command}\""));
+}
+
+/// Start the task in a session of its own, which also makes it a process group
+/// leader for [`signal_group`].
+///
+/// A task in a background process group that still shares Lattice's terminal
+/// is stopped by SIGTTIN the moment anything in it reads that terminal — the
+/// Gradle client does, `sudo` and `ssh` prompts do through `/dev/tty` — and a
+/// stopped task never exits, so the run waited forever. Without a controlling
+/// terminal those reads fail instead, and the task reports its own error.
+#[cfg(unix)]
+fn detach_from_terminal(cmd: &mut tokio::process::Command) {
+	// SAFETY: `setsid` is async-signal-safe and touches no memory, which is all
+	// a `pre_exec` hook is allowed to do between fork and exec.
+	unsafe {
+		cmd.pre_exec(|| {
+			if libc::setsid() == -1 {
+				return Err(std::io::Error::last_os_error());
+			}
+			Ok(())
+		});
+	}
 }
 
 /// Prepend `prepend` dirs to the child's `PATH`, affecting that child only.
@@ -1839,19 +1970,25 @@ mod tests {
 	fn ws(name: &str, root: &std::path::Path, commands: &[(&str, &str)]) -> Workspace {
 		let path = root.join(name);
 		std::fs::create_dir_all(&path).unwrap();
-		let mut map = indexmap::IndexMap::new();
-		for (k, v) in commands {
-			map.insert((*k).to_string(), (*v).to_string());
+		let mut w = Workspace::new(name, path);
+		for (task, command) in commands {
+			w = w.with_task(task, command, PipelineTask::default());
 		}
-		Workspace {
-			name: name.to_string(),
-			path,
-			auto: false,
-			depends_on: Vec::new(),
-			engines: EngineMap::new(),
-			driver: None,
-			commands: map,
+		w
+	}
+
+	/// Give each workspace's tasks the settings `config.tasks` holds, the way
+	/// discovery layers the root map onto what it finds.
+	fn apply(workspaces: &[Workspace], config: &LatticeConfig) -> Vec<Workspace> {
+		let mut out = workspaces.to_vec();
+		for w in &mut out {
+			for (name, settings) in &config.tasks {
+				if let Some(task) = w.tasks.get_mut(name) {
+					task.config = settings.clone();
+				}
+			}
 		}
+		out
 	}
 
 	/// Two workspaces whose `build` writes different bytes to the same relative
@@ -1878,7 +2015,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let reporter = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
@@ -1923,7 +2061,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let r1 = RecordingReporter::new();
 		let mut o1 = opts(&graph, &workspaces, &config, root, &r1);
@@ -1969,7 +2108,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		// --no-cache: re-runs, stores nothing, so the next plain run is still a miss.
 		let r1 = RecordingReporter::new();
@@ -2060,7 +2200,8 @@ mod tests {
 			ws("wb", root, &[("build", &sh::succeed())]),
 		];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let result = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2096,7 +2237,8 @@ mod tests {
 			ws("wb", root, &[("build", &b)]),
 		];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -2126,7 +2268,8 @@ mod tests {
 		let b = sh::append(&order, "b");
 		let workspaces = vec![ws("wa", root, &[("a", &a), ("b", &b)])];
 		let config = config_with(&[("a", PipelineTask::default()), ("b", dep(&["a"]))]);
-		let graph = build_execution_graph(&workspaces, "b", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["b"]).unwrap();
 		let r = RecordingReporter::new();
 
 		execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2157,7 +2300,8 @@ mod tests {
 			("build", PipelineTask::default()),
 			("test", dep(&["build"])),
 		]);
-		let graph = build_execution_graph(&workspaces, "test", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["test"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let err = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2196,7 +2340,8 @@ mod tests {
 			("build", PipelineTask::default()),
 			("test", dep(&["build"])),
 		]);
-		let graph = build_execution_graph(&workspaces, "test", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["test"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -2222,7 +2367,8 @@ mod tests {
 		let root = tmp.path();
 		let workspaces = vec![ws("app", root, &[("build", &sh::succeed())])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2250,7 +2396,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		// First run with caching enabled, so it stores.
 		let r1 = RecordingReporter::new();
@@ -2313,7 +2460,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let reporter = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
@@ -2361,7 +2509,8 @@ mod tests {
 				},
 			),
 		]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -2404,7 +2553,8 @@ mod tests {
 		let root = tmp.path();
 		let workspaces = vec![ws("app", root, &[("dev", &sh::exit(3))])];
 		let config = config_with(&[("dev", persistent(&[]))]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		// A shutdown signal far past the timeout: the run has to end because the
@@ -2432,7 +2582,8 @@ mod tests {
 		let root = tmp.path();
 		let workspaces = vec![ws("app", root, &[("dev", &sh::succeed())])];
 		let config = config_with(&[("dev", persistent(&[]))]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -2461,7 +2612,8 @@ mod tests {
 			ws("stays", root, &[("dev", &sh::sleep(30))]),
 		];
 		let config = config_with(&[("dev", persistent(&[]))]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		// The run keeps waiting for `stays`, so only the signal ends it.
@@ -2500,7 +2652,8 @@ mod tests {
 		workspace.engines = engines;
 		let workspaces = vec![workspace];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let result = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2526,7 +2679,8 @@ mod tests {
 
 		let workspaces = vec![ws("web", &root.join("apps"), &[("build", "faketool")])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let result = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2562,7 +2716,8 @@ mod tests {
 		};
 		let mut config = config_with(&[("build", build)]);
 		config.global_dependencies = vec!["shared.json".to_string()];
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let warm = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &warm);
@@ -2608,7 +2763,8 @@ mod tests {
 		// PATH is always set, so the value is read from the real environment
 		// without the test having to mutate it.
 		config.global_env = vec!["PATH".to_string()];
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let r1 = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &r1);
@@ -2620,7 +2776,8 @@ mod tests {
 		// computed under the old one must not answer for it.
 		let mut other = config.clone();
 		other.global_env = vec!["PATH".to_string(), "HOME".to_string()];
-		let graph2 = build_execution_graph(&workspaces, "build", &other).unwrap();
+		let workspaces = apply(&workspaces, &other);
+		let graph2 = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r2 = RecordingReporter::new();
 		let mut o = opts(&graph2, &workspaces, &other, root, &r2);
 		o.no_cache = false;
@@ -2641,7 +2798,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let err = tokio::time::timeout(
@@ -2672,7 +2830,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let result = execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -2737,7 +2896,8 @@ mod tests {
 				root,
 				&[("build", &sh::write("out.txt", "built"))],
 			)];
-			let graph = build_execution_graph(&workspaces, "build", config).unwrap();
+			let workspaces = apply(&workspaces, config);
+			let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 			for seed in 0..3 {
 				std::fs::write(root.join("app/seed.txt"), format!("seed{seed}")).unwrap();
 				let r = RecordingReporter::new();
@@ -2788,7 +2948,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let reporter = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
@@ -2831,7 +2992,8 @@ mod tests {
 		// this one, so before `cancel` existed there was no way to stop it.
 		let workspaces = vec![ws("app", root, &[("build", &sh::sleep(30))])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let reporter = RecordingReporter::new();
 		let mut o = opts(&graph, &workspaces, &config, root, &reporter);
@@ -2860,7 +3022,8 @@ mod tests {
 		let marker = root.join("done.txt");
 		let workspaces = vec![ws("app", root, &[("build", &sh::touch(&marker))])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 
 		let reporter = RecordingReporter::new();
 		let o = opts(&graph, &workspaces, &config, root, &reporter);
@@ -2894,7 +3057,8 @@ mod tests {
 			("build", PipelineTask::default()),
 			("dev", persistent(&["build"])),
 		]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -2936,7 +3100,8 @@ mod tests {
 			("build", PipelineTask::default()),
 			("dev", persistent(&["build"])),
 		]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -2963,7 +3128,8 @@ mod tests {
 		let root = tmp.path();
 		let workspaces = vec![ws("app", root, &[("build", &sh::sleep(60))])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -3036,7 +3202,8 @@ mod tests {
 		]);
 		let workspaces = vec![ws("app", root, &[("build", &cmd)])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -3070,7 +3237,8 @@ mod tests {
 		]);
 		let workspaces = vec![ws("app", root, &[("build", &cmd)])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		execute_tasks(opts(&graph, &workspaces, &config, root, &r))
@@ -3118,7 +3286,8 @@ mod tests {
 		let command = sh::all([sh::echo("built"), sh::lingering_background(120)]);
 		let workspaces = vec![ws("app", root, &[("build", &command)])];
 		let config = config_with(&[("build", PipelineTask::default())]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let started = Instant::now();
@@ -3185,7 +3354,8 @@ mod tests {
 			..Default::default()
 		};
 		let config = config_with(&[("build", build)]);
-		let graph = build_execution_graph(&workspaces, "build", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["build"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let err = tokio::time::timeout(
@@ -3213,7 +3383,8 @@ mod tests {
 		let root = tmp.path();
 		let workspaces = vec![ws("app", root, &[("dev", &sh::stubborn_background(120))])];
 		let config = config_with(&[("dev", persistent(&[]))]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);
@@ -3241,7 +3412,8 @@ mod tests {
 		let root = tmp.path();
 		let workspaces = vec![ws("app", root, &[("dev", &sh::escaped_background(120))])];
 		let config = config_with(&[("dev", persistent(&[]))]);
-		let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+		let workspaces = apply(&workspaces, &config);
+		let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 		let r = RecordingReporter::new();
 
 		let mut o = opts(&graph, &workspaces, &config, root, &r);

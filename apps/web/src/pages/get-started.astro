@@ -4,53 +4,42 @@ import CopyCommand from '../components/copyCommand';
 import { installCommand, releasesUrl } from '../lib/nav';
 import { withBase } from '../lib/base';
 
-// Every terminal transcript on this page was captured from lattice 1.1.1
-// running against a two-package repo. Re-capture them rather than editing by hand.
+// Every terminal transcript on this page was captured from lattice 2.0.0
+// running against a two-package npm repo. Re-capture them rather than editing by hand.
 const initOutput = `✓ wrote lattice.json
 ✓ wrote .lattice/schema.json
 ✓ updated .gitignore
+
+2 workspaces:
+  app    npm      build test
+  greet  npm      build
 
 next: lattice run build`;
 
 const config = `{
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
-  "workspaces": [
-    { "name": "ui",  "path": "packages/ui" },
-    { "name": "web", "path": "apps/web", "dependsOn": ["ui"] }
-  ],
-  "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*"],
-      "outputs": ["dist/**"]
-    }
-  }
+  "latticeVersion": "2.0.0"
 }`;
 
-const setupOutput = `❖ lattice  setup
-● ui npm install
-● web npm install
-❖ setup complete`;
+const dryRun = `❖ lattice  dry run · build
+  → greet:build  npm run build
+  → app:build  npm run build`;
 
-const coldRun = `lattice: running \`build\` across 2 workspaces
-lattice: ui:build: hash 6ab2b4b8a24730ea
-lattice: ui:build: cache miss (nothing cached for this task yet)
-ui:build: running
-ui:build: done (0.25s)
-lattice: web:build: hash e7006757504cd76c
-lattice: web:build: cache miss (nothing cached for this task yet)
-web:build: running
-web:build: done (0.20s)
-lattice: 2 tasks, 0 cached, 0 failed, 0.46s`;
+const coldRun = `❖ lattice  build  · 2 workspaces
 
-const warmRun = `lattice: running \`build\` across 2 workspaces
-lattice: ui:build: hash 6ab2b4b8a24730ea
-ui:build: cache hit [6ab2b4b8]
-lattice: web:build: hash e7006757504cd76c
-web:build: cache hit [e7006757]
-lattice: 2 tasks, 2 cached, 0 failed, 0.00s, 0.45s saved
-lattice: full power, nothing to run`;
+  ✓ greet  0.12s
+  ✓ app    0.12s
+
+❖  2 tasks  0.27s`;
+
+const warmRun = `❖ lattice  build  · 2 workspaces
+
+  ● greet  cached · 0.12s saved
+  ● app    cached · 0.12s saved
+
+❖  2 tasks · 2 cached  0.00s · 0.23s saved
+
+❖❖❖ FULL POWER`;
 
 const windowsInstallCommand = 'irm https://latticeandcompany.github.io/lattice/install.ps1 | iex';
 
@@ -63,7 +52,7 @@ const next = [
 	{
 		name: 'Workspaces',
 		href: withBase('/docs/workspaces'),
-		blurb: 'What a workspace is, how to declare its path and dependencies, and how a task resolves inside one.',
+		blurb: 'Where Lattice finds your workspaces, what it names them, and how it orders them.',
 	},
 	{
 		name: 'Caching',
@@ -80,7 +69,7 @@ const next = [
 
 <Layout
 	title="Get started · Lattice"
-	description="Install Lattice in a repo, write a lattice.json, and run a task that comes back from cache the second time."
+	description="Install Lattice in a repo, let it find your workspaces, and run a build that comes back from cache the second time."
 >
 	<section class="px-3 pt-5 pb-4">
 		<div class="mx-auto" style="max-width: 48rem;">
@@ -89,7 +78,9 @@ const next = [
 			</h1>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
 				Six steps from a repo with no Lattice in it to a build that comes back from cache the second time
-				you run it. You need a terminal and the tools your workspaces already use.
+				you run it. You need a terminal and the tools your workspaces already use. The transcripts are
+				from a repo with two npm packages, <code>app</code> and <code>greet</code>, where
+				<code>app</code> depends on <code>greet</code>.
 			</p>
 		</div>
 	</section>
@@ -130,7 +121,7 @@ const next = [
 				<div class="step__body">
 					<h2 class="step__title">Check that it runs</h2>
 					<pre class="step__code"><code>lattice --version</code></pre>
-					<pre class="step__code step__code--out"><code>lattice 1.1.1</code></pre>
+					<pre class="step__code step__code--out"><code>lattice 2.0.0</code></pre>
 					<p class="mb-0">
 						If your shell can't find <code>lattice</code>, open a new terminal so the
 						<code>PATH</code> line takes effect.
@@ -141,54 +132,53 @@ const next = [
 			<li class="step">
 				<span class="step__num" aria-hidden="true">3</span>
 				<div class="step__body">
-					<h2 class="step__title">Scaffold a config</h2>
+					<h2 class="step__title">Initialize</h2>
 					<pre class="step__code"><code>lattice init</code></pre>
 					<p>
-						On a terminal, <code>init</code> scans the repo first, then asks you to confirm the
-						workspaces and the pinned tool versions it found. If the scan finds nothing, it walks you
-						through adding them one at a time. To write what the scan finds without being asked, add
-						<code>-y</code>.
+						<code>init</code> reads the repo before it writes anything. It finds the workspaces your
+						<code>package.json</code>, <code>pnpm-workspace.yaml</code>, <code>Cargo.toml</code> or
+						<code>go.work</code> already name, and on a terminal it offers any other projects it found
+						and any tool versions the repo already pins. <code>-y</code> takes what it offers without
+						asking. Then it shows every workspace it sees, the tool that runs it and the tasks it can
+						run:
 					</p>
 					<pre class="step__code step__code--out"><code>{initOutput}</code></pre>
 					<p class="mb-0">
-						<code>lattice.json</code> is your config. Commit <code>.lattice/schema.json</code> too, so
-						your editor validates that config as you type. <code>init</code> gitignores the rest:
-						<code>.lattice/cache/</code>, <code>.lattice/toolchains/</code>, and
-						<code>.lattice/bin/</code> are all per-machine.
+						Commit <code>lattice.json</code> and <code>.lattice/schema.json</code>, which lets your
+						editor check the config as you type. <code>init</code> gitignores the rest of
+						<code>.lattice/</code>, which is per-machine.
 					</p>
 				</div>
 			</li>
-
 			<li class="step">
 				<span class="step__num" aria-hidden="true">4</span>
 				<div class="step__body">
-					<h2 class="step__title">Declare your workspaces</h2>
-					<p>
-						A workspace is a directory with its own manifest. It is the unit Lattice runs and caches
-						tasks in. List each one by literal path, and say which ones depend on which:
-					</p>
+					<h2 class="step__title">Read what it wrote</h2>
 					<pre class="step__code step__code--file"><code>{config}</code></pre>
+					<p>
+						That is the whole config for this repo. The packages come from the root
+						<code>package.json</code>'s <code>workspaces</code>, the tool from the lockfile, the tasks
+						from each package's <code>scripts</code>, and the order from <code>app</code>'s dependency on
+						<code>greet</code>. Ask what a run would do before running it:
+					</p>
+					<pre class="step__code"><code>lattice run build --dry-run</code></pre>
+					<pre class="step__code step__code--out"><code>{dryRun}</code></pre>
 					<p class="mb-0">
-						Each workspace runs the tool already in its directory, identified from that directory's
-						lockfile or manifest. <code>^build</code> means the <code>build</code> task of every
-						workspace this one depends on, run first. <code>inputs</code> are the files the cache
-						watches for changes, and <code>outputs</code> are the files it captures and restores. To
-						write a command yourself instead, set <code>"auto": false</code> on the workspace and give
-						it a <code>scripts</code> map.
+						A project no workspace file names, a dependency between languages, or a command you want to
+						write yourself goes in <code>lattice.json</code>. See
+						<a href={withBase('/docs/configuration')}>Configuration</a>.
 					</p>
 				</div>
 			</li>
-
 			<li class="step">
 				<span class="step__num" aria-hidden="true">5</span>
 				<div class="step__body">
 					<h2 class="step__title">Install dependencies</h2>
 					<pre class="step__code"><code>lattice setup</code></pre>
-					<pre class="step__code step__code--out"><code>{setupOutput}</code></pre>
 					<p class="mb-0">
-						<code>setup</code> installs any tool versions you pinned, then installs each workspace's own
-						dependencies. Run it as often as you like. Lattice skips a workspace whose lockfile hasn't
-						changed.
+						<code>setup</code> checks or installs any tool versions you pinned, then runs each
+						workspace's own installer, once per lockfile: here, one <code>npm install</code>. Run it as
+						often as you like. Lattice skips a workspace whose lockfile hasn't changed.
 					</p>
 				</div>
 			</li>
@@ -197,21 +187,21 @@ const next = [
 				<span class="step__num" aria-hidden="true">6</span>
 				<div class="step__body">
 					<h2 class="step__title">Run a task</h2>
-					<pre class="step__code"><code>lattice run build -v</code></pre>
+					<pre class="step__code"><code>lattice run build</code></pre>
 					<pre class="step__code step__code--out"><code>{coldRun}</code></pre>
 					<p>
-						<code>ui</code> builds before <code>web</code> because <code>web</code> depends on it.
-						Workspaces with no dependency between them run at the same time. <code>-v</code> is short
-						for <code>--verbose</code>, and it prints this plain log. Without it, on a terminal, you
-						get a live display instead.
+						<code>greet</code> builds before <code>app</code> because <code>app</code> depends on it.
+						Workspaces with no dependency between them run at the same time. While a run is going, the
+						live display shows each running task with the last lines it printed and what the rest are
+						waiting on; in CI, or with <code>--stream</code>, you get one plain line per event instead.
 					</p>
 					<p>Run it again without changing a file:</p>
 					<pre class="step__code step__code--out"><code>{warmRun}</code></pre>
 					<p class="mb-0">
-						Same hashes, so nothing re-ran. <code>dist/</code> came back out of
-						<code>.lattice/cache/</code>. Edit a file under <code>src/</code> and that workspace's hash
-						changes. That workspace builds again, and so does anything that depends on it. Everything
-						else still comes from cache.
+						Nothing changed, so nothing ran. Each package's <code>dist/</code> came back out of
+						<code>.lattice/cache/</code>. Edit a file in <code>greet</code> and it builds again, and so
+						does <code>app</code>, which depends on it. Run it from inside <code>packages/greet</code>
+						and only <code>greet</code> builds.
 					</p>
 				</div>
 			</li>

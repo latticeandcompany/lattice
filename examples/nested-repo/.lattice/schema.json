@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://latticeandcompany.github.io/lattice/schema.json",
   "title": "Lattice Configuration",
-  "description": "Schema for lattice.json, the root configuration file of a Lattice monorepo. Workspaces are declared as objects with literal paths; globs are not accepted.",
+  "description": "lattice.json, the one config file of a Lattice repo. Everything in it is optional: workspaces, their dependencies and their tasks come from the repo's own manifests, and this file only says what those cannot.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -16,20 +16,48 @@
     },
     "workspaces": {
       "type": "array",
-      "description": "Explicitly declared workspaces. Each entry is a single project directory (no globs).",
+      "description": "Directories, or globs of them, that are workspaces on top of the ones the repo's own workspace files (package.json workspaces, pnpm-workspace.yaml, Cargo [workspace], go.work, uv, deno) already name. Relative to the repo root. `\".\"` makes the root a workspace.",
       "items": {
-        "$ref": "#/$defs/workspace"
+        "type": "string"
+      }
+    },
+    "exclude": {
+      "type": "array",
+      "description": "Globs of workspace paths to leave out, whoever named them.",
+      "items": {
+        "type": "string"
       }
     },
     "engines": {
       "$ref": "#/$defs/engines",
-      "description": "Root-level toolchain defaults for all workspaces."
+      "description": "Tool versions every workspace runs with. An override can pin a different one for its workspaces."
+    },
+    "globalDependencies": {
+      "type": "array",
+      "description": "Repo-root-relative globs hashed into every task's cache key. Use for files shared across workspaces, such as a base tsconfig, a schema directory, or a root .env.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "globalEnv": {
+      "type": "array",
+      "description": "Environment variable names whose values are hashed into every task's cache key.",
+      "items": {
+        "type": "string"
+      }
     },
     "tasks": {
       "type": "object",
-      "description": "Named tasks and how they relate across the workspace graph.",
+      "description": "How tasks behave in every workspace that has them. A task does not have to be listed here to run: any task a workspace's own files define can be run by name.",
       "additionalProperties": {
         "$ref": "#/$defs/pipelineTask"
+      }
+    },
+    "overrides": {
+      "type": "object",
+      "description": "Settings for particular workspaces. A key is a workspace name, or a glob over workspace paths when it contains a `/` or a glob character.",
+      "additionalProperties": {
+        "$ref": "#/$defs/override"
       }
     },
     "settings": {
@@ -38,39 +66,41 @@
     }
   },
   "$defs": {
-    "workspace": {
+    "override": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "path"],
       "properties": {
         "name": {
           "type": "string",
-          "description": "Workspace name (required)."
+          "description": "The name Lattice uses for the workspace, in place of the one its manifest gives it."
         },
-        "path": {
+        "driver": {
           "type": "string",
-          "description": "Literal directory path (relative to repo root) to the workspace. Never a glob."
-        },
-        "auto": {
-          "type": "boolean",
-          "description": "When true (default), infer engine and task commands from the native manifest."
+          "description": "The tool that runs this workspace's tasks, when Lattice cannot tell from its files. `\"none\"` for a workspace whose every task is written out under `tasks`."
         },
         "engines": {
           "$ref": "#/$defs/engines",
-          "description": "Per-workspace toolchain constraints; overrides/pins the inferred engine."
+          "description": "Tool versions for this workspace, over the root `engines`."
         },
         "dependsOn": {
           "type": "array",
-          "description": "Other workspaces (by name) this one depends on.",
+          "description": "Workspaces this one depends on beyond what its manifest says, such as an edge between languages.",
           "items": {
             "type": "string"
           }
         },
-        "scripts": {
+        "tasks": {
           "type": "object",
-          "description": "Explicit script-name -> command overrides.",
+          "description": "This workspace's tasks: a command string, or a task object whose `run` is the command and whose other fields override the root `tasks` map.",
           "additionalProperties": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/pipelineTask"
+              }
+            ]
           }
         }
       }
@@ -80,8 +110,12 @@
       "description": "Name-keyed map of engine constraints. Each value is either a version constraint string or a detailed engine spec object.",
       "additionalProperties": {
         "oneOf": [
-          { "type": "string" },
-          { "$ref": "#/$defs/engineSpec" }
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/engineSpec"
+          }
         ]
       }
     },
@@ -99,11 +133,11 @@
         },
         "installCmd": {
           "type": "string",
-          "description": "Command used to install the toolchain."
+          "description": "Command that installs the tool into $LATTICE_TOOLCHAIN_DIR. Lattice runs it once per version and puts the install's `bin` on every task's PATH."
         },
         "bin": {
           "type": "string",
-          "description": "Bin directory relative to the toolchain install."
+          "description": "Bin directory relative to the toolchain install (defaults to \"bin\"). It must be relative and stay inside the install: this directory is prepended to every task's PATH."
         }
       }
     },
@@ -111,23 +145,27 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "run": {
+          "type": "string",
+          "description": "The command to run. Only valid in an override: the root `tasks` map says how a task behaves everywhere, not what it runs."
+        },
         "dependsOn": {
           "type": "array",
-          "description": "Task dependencies. `^task` means the same task in dependency workspaces.",
+          "description": "Tasks that must finish first. `build` means this workspace's build; `^build` means the build of every workspace this one depends on.",
           "items": {
             "type": "string"
           }
         },
         "inputs": {
           "type": "array",
-          "description": "File globs hashed to determine cache keys.",
+          "description": "Globs, relative to the workspace, of the files hashed into the cache key. With none, every file in the workspace that git does not ignore is hashed.",
           "items": {
             "type": "string"
           }
         },
         "outputs": {
           "type": "array",
-          "description": "File globs captured as cached artifacts.",
+          "description": "Globs, relative to the workspace, of the files stored in the cache and restored on a hit. Replaces the default for the workspace's tool.",
           "items": {
             "type": "string"
           }
@@ -148,11 +186,24 @@
         },
         "persistent": {
           "type": "boolean",
-          "description": "When true, the task is long-running (e.g. a dev server) and never cached."
+          "description": "A long-running task, such as a dev server. It is never cached and nothing may depend on it. `dev`, `start`, `serve` and `watch` are persistent unless this says otherwise."
         },
         "cache": {
           "type": "boolean",
-          "description": "Whether outputs of this task are cached."
+          "description": "Set false to always run the task. `clean`, `deploy`, `publish` and `release` are never cached unless this says otherwise."
+        },
+        "timeout": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 31536000
+            }
+          ],
+          "description": "How long the task may run before it is killed, e.g. \"90s\", \"10m\", \"1h\", or a whole number of seconds. The maximum is 31536000 (365 days). Ignored for persistent tasks."
         }
       }
     },
@@ -166,7 +217,7 @@
         },
         "cacheDir": {
           "type": "string",
-          "description": "Directory for the local cache (defaults to \".lattice/cache\")."
+          "description": "Directory for the local cache, relative to the repo root (defaults to \".lattice/cache\"). It must stay inside the repo and cannot be the repo root itself: `lattice prune` deletes cache archives and partial writes in whatever directory it names."
         },
         "loquacious": {
           "type": "boolean",

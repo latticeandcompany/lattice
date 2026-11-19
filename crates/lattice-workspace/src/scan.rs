@@ -13,9 +13,9 @@ use serde_json::Value;
 
 use ignore::WalkBuilder;
 use indexmap::IndexMap;
-use lattice_config::{is_well_known_engine, EngineMap};
+use lattice_config::is_well_known_engine;
 
-use crate::{detect_drivers, ECOSYSTEM_MARKERS};
+use crate::{detect_driver, ECOSYSTEM_MARKERS};
 
 /// How far below the root the walk goes. Deep enough for `apps/web/packages/ui`,
 /// shallow enough that a large tree does not stall the scan.
@@ -143,7 +143,7 @@ pub fn scan_workspaces(root: &Path) -> Vec<WorkspaceCandidate> {
 			continue;
 		};
 		let rel = relative_path(root, path);
-		let driver = detect_drivers(path, &EngineMap::new()).ok().map(|d| d.tool);
+		let driver = detect_driver(root, path, "").ok().map(|d| d.tool);
 		found.push(WorkspaceCandidate {
 			name: suggested_name(root, path),
 			path: rel,
@@ -754,15 +754,15 @@ mod tests {
 
 	#[test]
 	fn a_candidate_with_no_driver_is_offered_unselected() {
-		// A bare `Cargo.toml` with the lock at the repo root is not enough
-		// evidence to drive tasks, and declaring it would halt the next run.
+		// A bare `package.json` could belong to any of four package managers,
+		// and declaring it would halt the next run.
 		let tmp = TempDir::new().unwrap();
-		write(tmp.path(), "crates/a/Cargo.toml", "[package]");
+		write(tmp.path(), "tools/a/package.json", "{}");
 		write(tmp.path(), "apps/web/package.json", "{}");
 		write(tmp.path(), "apps/web/package-lock.json", "{}");
 
 		let found = scan_workspaces(tmp.path());
-		let bare = found.iter().find(|c| c.path == "crates/a").unwrap();
+		let bare = found.iter().find(|c| c.path == "tools/a").unwrap();
 		let driven = found.iter().find(|c| c.path == "apps/web").unwrap();
 		assert_eq!(bare.driver, None);
 		assert!(

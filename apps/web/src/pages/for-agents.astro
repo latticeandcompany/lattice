@@ -10,7 +10,7 @@ const contents = [
 	{
 		file: 'SKILL.md',
 		blurb:
-			'How to orient in a repo that uses Lattice, run and preview tasks, declare a workspace, and decide what to cache.',
+			'Where Lattice finds workspaces, tasks and dependencies, what does not exist in lattice.json, how to run and preview tasks, and how to move a 1.x config with lattice migrate.',
 	},
 	{
 		file: 'references/configuration.md',
@@ -22,7 +22,7 @@ const contents = [
 	},
 	{
 		file: 'references/toolchains.md',
-		blurb: 'The built-in driver table, the engines that can be version-checked by name, and how provisioning works.',
+		blurb: 'How a workspace\'s tool is chosen, the tasks each tool can run, the engines that can be checked by name, and what a failed check says.',
 	},
 	{
 		file: 'references/troubleshooting.md',
@@ -42,8 +42,9 @@ const contents = [
 			</h1>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
 				A coding agent's training data predates Lattice, so it has no working knowledge of it. Ask one
-				to edit a <code>lattice.json</code> and it guesses from the config files it has seen before.
-				This skill gives it the real commands, fields, and error messages instead.
+				to edit a <code>lattice.json</code> and it lists every workspace by hand, invents keys, and
+				guesses at commands, because that is what the config files it has seen look like. This skill
+				gives it the real commands, fields, and error messages instead.
 			</p>
 		</div>
 	</section>
@@ -100,9 +101,10 @@ const contents = [
 		<div class="mx-auto" style="max-width: 48rem;">
 			<h2 class="h4 fw-bold mb-3">Without the skill</h2>
 			<p class="mb-0" style="color: var(--text-subtle); line-height: 1.65;">
-				An agent that can read files and run commands gets most of the way on its own. Point it at
-				<code>lattice.json</code>, then have it run <code>lattice run &lt;task&gt; --dry-run</code>. That
-				validates the config and prints every resolved command without running one. For flags,
+				An agent that can read files and run commands gets most of the way on its own. Have it run
+				<code>lattice run &lt;task&gt; --dry-run</code> before reading anything: most of what Lattice
+				runs is not in <code>lattice.json</code>, and the dry run lists every workspace and every
+				resolved command without running one. For flags,
 				<code>lattice --help</code> and each subcommand's <code>--help</code> are authoritative. The
 				<a href={withBase('/docs/configuration')}>configuration</a> and
 				<a href={withBase('/docs/cli')}>CLI</a> pages cover the same ground, and every page on this site

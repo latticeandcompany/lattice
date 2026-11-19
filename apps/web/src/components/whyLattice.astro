@@ -9,24 +9,24 @@ interface Benefit {
 
 const benefits: Benefit[] = [
 	{
-		icon: 'bi-lightning-charge',
-		title: 'Builds finish sooner',
-		body: 'Repeat a build and the parts that didn\'t change come straight from cache. Change one workspace and Lattice re-runs only that workspace and whatever depends on it.',
+		icon: 'bi-diagram-3',
+		title: 'Your manifests are the config',
+		body: 'Workspaces come from pnpm-workspace.yaml, Cargo members and go.work. Build order comes from workspace:* and path dependencies. A new package is picked up the moment its package manager sees it.',
 	},
 	{
 		icon: 'bi-command',
-		title: 'One command for the whole repo',
-		body: 'Build and test every workspace with the same command, whatever language each one uses. Lattice orders the runs by dependency and starts the independent ones together.',
+		title: 'One task name, each tool\'s own command',
+		body: 'lattice run lint is cargo clippy in a crate, go vet ./... in a module and the lint script in a package. A workspace with no lint sits the run out instead of failing it.',
 	},
 	{
-		icon: 'bi-play-circle',
-		title: 'No build scripts to write',
-		body: 'List your workspaces once. Lattice reads the manifest or lockfile already in each directory to work out the command to run.',
+		icon: 'bi-lightning-charge',
+		title: 'Only what changed runs again',
+		body: 'A task is keyed on its inputs, its command, its tool versions and the results of what it depends on. Edit one package and it re-runs with its dependents. Everything else is restored from cache.',
 	},
 	{
 		icon: 'bi-box-seam',
-		title: 'The same tool versions everywhere',
-		body: 'Pin the compilers, linters, and package managers a workspace needs, and Lattice checks or installs them before any task starts. A fresh clone builds the same on your laptop and in CI.',
+		title: 'A wrong tool version stops the run, and says why',
+		body: 'Pin node, the JDK or a linter and Lattice checks it before anything starts. When it is wrong you see the version wanted, the one found and where, and the fix. An installCmd installs it into the repo instead.',
 	},
 ];
 ---
@@ -35,11 +35,11 @@ const benefits: Benefit[] = [
 	<div class="mx-auto" style="max-width: 72rem;">
 		<div class="mx-auto text-center mb-5" style="max-width: 40rem;">
 			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
-				Less setup, faster builds
+				Point it at the repo you already have
 			</h2>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
-				Lattice works out which tool each workspace already uses, runs your tasks in dependency
-				order, and restores cached results instead of running them twice.
+				Lattice finds the workspaces, their dependencies and their tasks in the files your tools
+				already read, so the config is only what those files cannot say.
 			</p>
 		</div>
 

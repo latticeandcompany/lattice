@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-	fmtSecs,
-	fmtSpan,
-	isFullCache,
-	runSummary,
-	shortKey,
-	shortenPath,
-} from '../src/lib/format.ts';
+import { fmtSecs, fmtSpan, isFullCache, runSummary, shortKey, shortenPath, fmtBytes, fmtCount, hitRate } from '../src/lib/format.ts';
 
 // Matched against the Rust fmt_secs, so the window and the terminal never disagree
 // about how long something took.
@@ -79,4 +72,19 @@ test('a full cache needs every task cached and none failed', () => {
 test('a long path keeps its tail, which is the part that identifies it', () => {
 	assert.equal(shortenPath('/Users/me/src/lattice'), '…/me/src/lattice');
 	assert.equal(shortenPath('/a/b'), '/a/b');
+});
+
+test('a measured size rounds to one decimal the way lattice stats prints it', () => {
+	assert.equal(fmtBytes(512), '512 B');
+	assert.equal(fmtBytes(1536), '1.5 KB');
+	assert.equal(fmtBytes(1.4 * 1024 ** 3), '1.4 GB');
+});
+
+test('counts group thousands', () => {
+	assert.equal(fmtCount(3390), '3,390');
+});
+
+test('a hit rate needs something scheduled to be a rate at all', () => {
+	assert.equal(hitRate(0, 0), null);
+	assert.equal(hitRate(3, 4), 75);
 });

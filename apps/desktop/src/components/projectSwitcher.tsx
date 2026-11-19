@@ -51,7 +51,7 @@ const ProjectSwitcher = () => {
 				aria-label={project ? `Project: ${project.name}. Switch project` : 'Open a project'}
 				disabled={busy}
 			>
-				<span className="tw:min-w-0 flex-grow-1">
+				<span className="flex-grow-1" style={{ minWidth: 0 }}>
 					{project ? (
 						<>
 							<span className="rail-project__name">{project.name}</span>
@@ -63,7 +63,7 @@ const ProjectSwitcher = () => {
 						<span className="rail-project__name">Open a project…</span>
 					)}
 				</span>
-				<i className="bi bi-chevron-expand rail-project__caret" aria-hidden="true" />
+				<i className="bi bi-chevron-expand text-body-secondary small" aria-hidden="true" />
 			</button>
 
 			<ul className={`dropdown-menu rail-project__menu${open ? ' show' : ''}`}>

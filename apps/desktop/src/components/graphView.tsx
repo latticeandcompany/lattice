@@ -7,11 +7,12 @@ import { useTaskViewsRev } from '../hooks/useRunStore.ts';
 import { useThemeTokens } from '../hooks/useThemeTokens.ts';
 import * as api from '../lib/api.ts';
 import { closure, filterDump, layerCount } from '../lib/graphLayout.ts';
-import { buildGraphOption, type NodeState } from '../lib/graphOption.ts';
-import { defaultSelection, effectiveSelection } from '../lib/runOptions.ts';
+import { buildGraphOption, declaredEdges, type NodeState } from '../lib/graphOption.ts';
+import { defaultSelection, effectiveSelection, taskNamesOf } from '../lib/runOptions.ts';
 import { runStore } from '../lib/runStore.ts';
 import type { GraphDump } from '../lib/types.ts';
 import GraphLegend from './graphLegend.tsx';
+import PageHead from './pageHead.tsx';
 
 type Mode = 'graph' | 'list';
 
@@ -21,7 +22,7 @@ const GraphView = () => {
 	const reducedMotion = useReducedMotion();
 	const viewsRev = useTaskViewsRev();
 
-	const taskNames = useMemo(() => project?.tasks.map((task) => task.name) ?? [], [project]);
+	const taskNames = useMemo(() => taskNamesOf(project?.workspaces ?? []), [project]);
 	const [picked, setPicked] = useState<string[]>(() => defaultSelection(taskNames));
 	// Not the raw pick: the project may have been switched under it.
 	const selected = useMemo(() => effectiveSelection(picked, taskNames), [picked, taskNames]);
@@ -83,12 +84,17 @@ const GraphView = () => {
 		[focused, dump],
 	);
 
+	const declared = useMemo(
+		() => declaredEdges(filtered, project?.workspaces ?? []),
+		[filtered, project],
+	);
+
 	const option = useMemo(
 		() =>
 			filtered.nodes.length === 0
 				? null
-				: buildGraphOption({ dump: filtered, states, tokens, focus, reducedMotion }),
-		[filtered, states, tokens, focus, reducedMotion],
+				: buildGraphOption({ dump: filtered, states, tokens, focus, reducedMotion, declared }),
+		[filtered, states, tokens, focus, reducedMotion, declared],
 	);
 
 	const { hostRef, chart, ready } = useEcharts(mode === 'graph' ? option : null);
@@ -123,140 +129,122 @@ const GraphView = () => {
 
 	if (!project) return null;
 
+	const toggle = (task: string, additive: boolean) =>
+		setPicked(
+			additive
+				? selected.includes(task)
+					? selected.filter((candidate) => candidate !== task)
+					: [...selected, task]
+				: [task],
+		);
+
 	return (
-		<div className="app-main__scroll">
-			<div className="app-main__inner d-flex flex-column gap-3 tw:min-h-0">
-				<div className="d-flex align-items-center flex-wrap gap-2">
-					<div className="btn-group btn-group-sm" role="group" aria-label="Tasks to show">
-						{taskNames.map((task) => (
-							<button
-								key={task}
-								type="button"
-								className={`btn btn-outline-secondary${selected.includes(task) ? ' active' : ''}`}
-								onClick={(event) =>
-									setPicked(
-										event.metaKey || event.ctrlKey
-											? selected.includes(task)
-												? selected.filter((candidate) => candidate !== task)
-												: [...selected, task]
-											: [task],
-									)
-								}
-								aria-pressed={selected.includes(task)}
-							>
-								{task}
-							</button>
-						))}
-					</div>
+		<>
+			<PageHead title="Graph">
+				<span className="datum">
+					{filtered.nodes.length} tasks, {layerCount(filtered)} deep
+				</span>
+			</PageHead>
 
-					<div className="btn-group btn-group-sm" role="group" aria-label="Display">
-						<button
-							type="button"
-							className={`btn btn-outline-secondary${mode === 'graph' ? ' active' : ''}`}
-							onClick={() => setMode('graph')}
-							aria-pressed={mode === 'graph'}
-						>
-							Graph
-						</button>
-						<button
-							type="button"
-							className={`btn btn-outline-secondary${mode === 'list' ? ' active' : ''}`}
-							onClick={() => setMode('list')}
-							aria-pressed={mode === 'list'}
-						>
-							List
-						</button>
-					</div>
+			<div className="app-scroll">
+				<div className="app-column d-flex flex-column gap-3">
+					<div className="d-flex align-items-center flex-wrap gap-2">
+						<div className="picker" role="group" aria-label="Tasks to show">
+							{taskNames.slice(0, 8).map((task) => (
+								<button
+									key={task}
+									type="button"
+									className="picker__option"
+									onClick={(event) => toggle(task, event.metaKey || event.ctrlKey)}
+									aria-pressed={selected.includes(task)}
+								>
+									{task}
+								</button>
+							))}
+						</div>
 
-					<div className="input-group input-group-sm tw:max-w-[15rem]">
-						<span className="input-group-text">
-							<i className="bi bi-search" aria-hidden="true" />
-						</span>
+						<div className="picker" role="group" aria-label="Display">
+							{(['graph', 'list'] as const).map((value) => (
+								<button
+									key={value}
+									type="button"
+									className="picker__option"
+									onClick={() => setMode(value)}
+									aria-pressed={mode === value}
+								>
+									{value === 'graph' ? 'Graph' : 'List'}
+								</button>
+							))}
+						</div>
+
 						<input
-							type="text"
-							className="form-control"
+							type="search"
+							className="form-control form-control-sm w-auto"
 							placeholder="Find a task"
 							aria-label="Find a task in the graph"
 							value={search}
 							onChange={(event) => setSearch(event.target.value)}
 						/>
+
+						{focused && (
+							<button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setFocused(null)}>
+								Show every task
+							</button>
+						)}
 					</div>
 
-					{focused && (
-						<button
-							type="button"
-							className="btn btn-outline-secondary btn-sm"
-							onClick={() => setFocused(null)}
-						>
-							Clear focus
-						</button>
-					)}
+					{error && <pre className="cli-error selectable">{error}</pre>}
 
-					<span className="ms-auto small text-body-secondary">
-						{filtered.nodes.length} tasks · {layerCount(filtered)} layers deep
-					</span>
-				</div>
-
-				{error && (
-					<div className="alert alert-danger d-flex align-items-start gap-2 mb-0" role="alert">
-						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
-						<div className="selectable">{error}</div>
-					</div>
-				)}
-
-				{filtered.nodes.length === 0 ? (
-					<div className="d-flex flex-column align-items-center justify-content-center gap-3 text-center text-body-secondary py-5">
-						<i className="bi bi-diagram-3 fs-2" aria-hidden="true" />
-						<div>No task matches what you picked.</div>
-					</div>
-				) : mode === 'graph' ? (
-					<>
-						<div className="border rounded-3 bg-body tw:h-[clamp(24rem,62vh,44rem)]">
-							<div ref={hostRef} className="w-100 h-100" />
+					{filtered.nodes.length === 0 ? (
+						<div className="empty-state">
+							<h2>No task matches</h2>
+							<p>Pick another task, or clear the search.</p>
 						</div>
-						<GraphLegend />
-						<p className="small text-body-secondary mb-0">
-							Click a task to focus what it depends on and what depends on it. Drag to pan,
-							scroll to zoom.
-						</p>
-					</>
-				) : (
-					// A canvas cannot be read by a screen reader or walked by a keyboard, so
-					// the same data is here as a table rather than as aria on a <canvas>.
-					<table className="table table-sm align-middle">
-						<caption className="visually-hidden">
-							Tasks in dependency order, with what each one runs
-						</caption>
-						<thead>
-							<tr>
-								<th scope="col">#</th>
-								<th scope="col">Task</th>
-								<th scope="col">Command</th>
-								<th scope="col">Notes</th>
-							</tr>
-						</thead>
-						<tbody>
-							{filtered.nodes.map((node, index) => (
-								<tr key={node.id}>
-									<td className="font-monospace tw:text-[0.78rem]">{index + 1}</td>
-									<td className="font-monospace tw:text-[0.78rem]">{node.id}</td>
-									<td className="font-monospace tw:text-[0.78rem] selectable">{node.command}</td>
-									<td className="small">
-										{[
-											node.persistent ? 'persistent' : '',
-											node.pulledIn ? 'pulled in as a dependency' : '',
-											states.get(node.id)?.state ?? '',
-										]
-											.filter(Boolean)
-											.join(' · ')}
-									</td>
+					) : mode === 'graph' ? (
+						<>
+							<div className="graph-frame">
+								<div ref={hostRef} className="graph-host" />
+							</div>
+							<GraphLegend declared={declared.size > 0} />
+							<p className="small text-body-secondary mb-0">
+								Click a task to see only what it depends on and what depends on it. Drag to pan, scroll to
+								zoom.
+							</p>
+						</>
+					) : (
+						// A canvas cannot be read by a screen reader or walked by a keyboard, so
+						// the same data is here as a table.
+						<table className="table table-sm align-middle">
+							<caption className="visually-hidden">Tasks in dependency order, with what each one runs</caption>
+							<thead>
+								<tr>
+									<th scope="col">Task</th>
+									<th scope="col">Command</th>
+									<th scope="col">Notes</th>
 								</tr>
-							))}
-						</tbody>
-					</table>
-				)}
+							</thead>
+							<tbody>
+								{filtered.nodes.map((node) => (
+									<tr key={node.id}>
+										<td className="font-monospace small">{node.id}</td>
+										<td className="font-monospace small selectable">{node.command}</td>
+										<td className="small">
+											{[
+												node.persistent ? 'keeps running' : '',
+												node.pulledIn ? 'a dependency of what you picked' : '',
+												states.get(node.id)?.state ?? '',
+											]
+												.filter(Boolean)
+												.join(', ')}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					)}
+				</div>
 			</div>
-		</div>
+		</>
 	);
 };
 

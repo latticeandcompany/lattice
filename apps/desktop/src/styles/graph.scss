@@ -1,0 +1,44 @@
+// The dependency graph's frame and its tooltip. Shared with the website's /desktop
+// page, so it reads the brand through custom properties only.
+
+.graph-frame {
+	height: clamp(24rem, 62vh, 44rem);
+	border: 1px solid var(--border-subtle);
+	border-radius: 0.625rem;
+}
+
+.graph-frame--short {
+	height: clamp(19rem, 42vh, 28rem);
+}
+
+.graph-host {
+	width: 100%;
+	height: 100%;
+}
+
+.graph-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem 1.1rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.78rem;
+	color: var(--text-muted);
+
+	li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+}
+
+.graph-tooltip__card {
+	max-width: 26rem;
+}
+
+.graph-tooltip__command {
+	font-size: 0.75rem;
+	white-space: pre-wrap;
+	word-break: break-all;
+}

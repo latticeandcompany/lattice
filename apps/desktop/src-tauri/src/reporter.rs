@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use lattice_events::{OutputLine, Reporter, RunSummary, TaskEvent};
+use lattice_events::{OutputLine, PlannedTask, Reporter, RunSummary, TaskEvent};
 use lattice_runner::RunResult;
 
 /// Flush after this many buffered lines.
@@ -44,6 +44,10 @@ pub struct OutputChunk {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RunMessage {
+	/// Every task the run will reach and what each waits on, before any starts.
+	Plan {
+		tasks: Vec<PlannedTask>,
+	},
 	Event {
 		event: TaskEvent,
 	},
@@ -191,6 +195,13 @@ impl<S: EventSink> ChannelReporter<S> {
 }
 
 impl<S: EventSink> Reporter for ChannelReporter<S> {
+	fn plan(&self, tasks: &[PlannedTask]) {
+		self.flush();
+		self.sink.send(RunMessage::Plan {
+			tasks: tasks.to_vec(),
+		});
+	}
+
 	fn run_start(&self, _task: &str, _workspaces: usize) {
 		// The window already knows what it asked for, and it draws the task list
 		// from the graph rather than from a count.

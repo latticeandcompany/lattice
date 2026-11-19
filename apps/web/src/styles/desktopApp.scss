@@ -1,13 +1,23 @@
 // The desktop app's own component styles, borrowed rather than restated.
 //
-// Most of the app is Bootstrap and Tailwind utilities the site already ships, so only
-// two sheets have to travel: the task list, which is still bespoke, and the failure
-// ramp it colours a failed row with. Both read the brand tokens through custom
-// properties and neither has a `@use` of its own, which is what lets them drop in here
-// against the site's Bootstrap instead of the app's.
+// The run sheet, the graph frame and the failure colour they use all read the brand
+// through custom properties and carry no `@use` of their own, which is what lets them
+// drop in here against the site's Bootstrap instead of the app's. _tokens.scss is
+// byte-identical between the two apps, so it is deliberately not imported twice.
 //
-// _tokens.scss is byte-identical between the two apps, so it is deliberately not
-// imported twice.
+// The preview is the app, so it takes the app's crimson focus rather than the site's
+// teal. The window frame around it is the page's own.
 
 @use '../../../desktop/src/styles/status';
-@use '../../../desktop/src/styles/tasks.scss';
+@use '../../../desktop/src/styles/runSheet.scss';
+@use '../../../desktop/src/styles/graph.scss';
+
+.desktop-window {
+	--focus: var(--crimson-500);
+	--mono: 'DM Mono', ui-monospace, monospace;
+	text-align: left;
+}
+
+[data-bs-theme='dark'] .desktop-window {
+	--focus: var(--crimson-300);
+}

@@ -2,252 +2,245 @@
 
 Symptom first. Two commands answer most questions:
 
-- `lattice run <tasks> --dry-run` validates the config and prints each
-  `workspace:task` next to the exact command that would be handed to the shell.
-- `lattice run <tasks> -v` runs for real and prints each task's hash and cache
-  outcome as plain lines.
+- `lattice run <tasks> --dry-run` loads the config, discovers the workspaces,
+  and prints each `workspace:task` next to the exact command it would run.
+- `lattice run <tasks> --stream -v` runs for real and prints every event as a
+  plain line, with each task's hash and cache-miss reason.
 
-On a terminal without `-v` you get the live display, which prints none of the
-plain lines below. `-v` adds the trace lines: the run header, each task's hash,
-each cache-miss reason, each task's output, and each skipped task. The run
-summary, the full-cache line, and every `lattice: warning:` line print in plain
-output whether or not `-v` was passed.
+Errors print as `error: <message>` with causes indented under it. Warnings
+print in every mode; notes print on the live display, and in the stream only
+with `-v`.
 
 ## `no lattice.json found in this directory or any parent`
 
-There is no config at or above the current directory. Either the working
-directory is outside the repo, or the repo does not use Lattice yet.
-`lattice init` creates one.
+The working directory is outside the repo, or the repo does not use Lattice yet.
+`lattice init` creates a config.
 
-## `workspace 'x' has an ambiguous or undeclared driver`
+## `lattice.json is written for Lattice 1.x ...`
 
-Detection produced no single answer. Three distinct causes:
+The config lists workspaces as objects. Run `lattice migrate` (add `--dry-run`
+to read the result first). It keeps every workspace name, ordering and command.
+Do not translate it by hand: the point of the new format is what it leaves out,
+and `migrate` checks the result against the repo before writing it.
 
-- two tools of the same role are present and neither is declared,
-- the only candidates are runtimes, which cannot drive a named task,
-- nothing recognizable is in the directory at all.
+After migrating, a workspace named after a scoped package keeps its old short
+name through `overrides.<path>.name`. A workspace added later takes its
+manifest's full name, such as `@acme/ui`.
 
-The error names the candidates it saw and prints a copy-pasteable fix. Two
-correct responses, and which one is right is a fact about the repo:
+## A workspace is missing
 
-- Add the suggested `engines` entry naming the tool the workspace actually uses,
-  and replace the `>=0.0.0` placeholder with a real constraint.
-- Set `"auto": false` and write `scripts`. This is right when there is no single
-  answer to infer, such as a wrapper script or a nested repo with its own task
-  runner.
+Run `lattice run build --dry-run` and compare against what you expected. In
+order:
 
-Ask which tool the workspace uses. Do not pick one off the candidate list to
-make the error go away. See `toolchains.md` for the full resolution rules,
-including the case where a declaration loses to a higher-ranked tool.
+- It is not named by a root workspace file (`package.json` `workspaces`,
+  `pnpm-workspace.yaml`, Cargo `[workspace]`, `go.work`, uv, deno) and not by
+  `lattice.json` `workspaces`. Add its directory, or a glob, to `workspaces`.
+- A glob skips hidden and gitignored directories and `node_modules`, `target`,
+  `dist`, `build`, `out`, `vendor`, `venv`, `__pycache__`. Name such a directory
+  literally.
+- `*` does not cross a `/`. `apps/*` does not reach `apps/web/admin`; use
+  `apps/**` or list it.
+- It is inside another workspace that Lattice runs as one: a Gradle, Maven or
+  .NET build, a nested monorepo, a Cargo workspace in a subdirectory. Its tool
+  builds it as part of the outer workspace; that is deliberate.
+- It is matched by `exclude`.
+- The directory holds nothing Lattice recognizes, so a glob match was skipped.
+  Give it a command: `"overrides": { "./tools": { "tasks": { "build": "make" } } }`.
+- It is the repo root. The root is not a workspace when it names members; add
+  `"."` to `workspaces`.
 
-## A declared engine is not the driver Lattice picked
+## A workspace appears that should not
 
-Role rank is resolved before evidence. A declaration only breaks a tie among
-candidates that already share the top role rank. A workspace with
-`"engines": { "pnpm": ">=8" }` and a `turbo.json` resolves to `turbo`, because a
-task runner outranks a package manager. Set `"auto": false` and write `scripts`
-to override that.
+A root workspace file names it, or a glob matches it. Add its path to `exclude`.
+Gradle subprojects never appear as separate workspaces unless a glob names
+them; list the build's root instead (`"jvm"`, not `"jvm/*"`), because two
+builds of one Gradle project at once fight over its locks.
 
-## A task's resolved command is not what you expected
+## `Lattice cannot tell which of npm, pnpm, yarn, bun runs the tasks in workspace 'x'`
 
-`scripts` always wins; only a task with no `scripts` entry falls back to the
-driver's invoke template. Run `lattice run <task> --dry-run` and read the
-command. If it is wrong, add or edit that workspace's `scripts` entry.
+A `package.json` (or `pyproject.toml`) with no lockfile, no `packageManager`, no
+`[tool.*]` table, and none of those in any directory above it, or two tools
+tied on equal evidence. Add the fix it prints, naming the tool the workspace
+actually uses:
 
-`--dry-run` resolves commands before any toolchain is provisioned and before
-`PATH` is adjusted, so it shows the command as written, not as it would resolve
-at run time — neither against a provisioned tool nor against a binary the
-project installed under `node_modules/.bin` or `.venv/bin`.
+```json
+"overrides": { "x": { "driver": "pnpm" } }
+```
+
+Ask which tool the workspace uses if its files do not say. Do not pick one off
+the list to make the error go away. Committing the lockfile also resolves it.
+
+## The driver Lattice picked is not the one you use
+
+Role rank decides first: a task runner (`turbo.json`, a `justfile`, a
+`Rakefile`) beats a package manager, which beats a build tool. A workspace with
+`pnpm-lock.yaml` and a `turbo.json` runs `turbo run <task>`. Set
+`overrides.<ws>.driver` to the tool you want; it bypasses detection entirely.
+An `engines` entry never selects a driver.
+
+## A task did not run in a workspace
+
+Every workspace without the task sits the run out. The live display notes it
+(`no 'lint' task in docs, web, so they sit this one out`); the stream does with
+`-v`. Check what the workspace can run: `--dry-run` for the task, or the table
+in `toolchains.md`.
+
+- A `package.json`, deno, composer, just, Taskfile, Rakefile, pdm or Pipfile
+  workspace runs only what its file declares. Add the script, or write the
+  command in an override.
+- A verb that needs a dependency (`pytest`, `ruff`, `black`, `flake8`, `mypy`,
+  `rspec`, `rubocop`, `:credo`) or a plugin (Spotless, Android, `application`,
+  Spring Boot) is offered only when the manifest shows it.
+- A Gradle task nobody registered in the build script is invisible to Lattice.
+  Write it out: `"tasks": { "jib": "./gradlew jib" }`.
+- An override task object with no `run` only changes a task the workspace
+  already has.
+
+## `web has no 'build' task. Did you mean 'biuld'?`
+
+The workspace declares a name one or two edits from the task, which is what a
+typo looks like. Fix the name in the manifest. The warning is not a failure: the
+task was skipped there and the run carried on.
+
+## `no workspace has a 'x' task`
+
+No workspace defines the task, so the run is refused, with the nearest name and
+every task that exists. A task listed only under `lattice.json` `tasks` does not
+count; that map configures tasks, it does not create them.
+
+## `web: package.json could not be parsed: ..., so it runs none of its scripts`
+
+The manifest is there and unreadable, so no script can be read out of it. Fix
+the file. `deno.json`, `deno.jsonc` and `turbo.json` may carry comments;
+`package.json` may not.
+
+## A task's command is not what you expected
+
+`--dry-run` shows it. An override's `run` wins over anything discovered. For
+Gradle and Maven the command goes through the nearest wrapper at or above the
+workspace (`../gradlew build` from a subproject), or `gradle`/`mvn` with none.
+`--dry-run` shows commands as written, before toolchains or dependency bin
+directories are on `PATH`.
+
+## Arguments after `--` went somewhere unexpected
+
+They go to the tasks named on the command line, in the workspaces the run is
+for, never to prerequisites. They are passed as written: `lattice run test --
+--nocapture` gives Cargo `cargo test --nocapture`, which Cargo rejects; its
+harness needs `lattice run test -- -- --nocapture`. `npm run` is the one command
+that gets a `--` inserted for you.
+
+## A run from a subdirectory ran fewer workspaces
+
+Running inside a workspace scopes the run to it and what it depends on, and the
+header or first line says `in <ws>, the workspace you are in`. Run from the
+root, or pass `--filter`, for more.
 
 ## `sh: <tool>: command not found`
 
-The task's command names a binary the shell could not resolve. Three causes, in
-the order worth checking:
+- The dependency is not installed yet. Lattice adds the project's dependency bin
+  directories (`node_modules/.bin`, `.venv/bin`, …) only when they exist. Run
+  `lattice setup`.
+- The tool is neither a project dependency nor on the host `PATH`. Add it as a
+  dependency, or give its engine an `installCmd`.
+- For an engine, the check says so first: `engine 'go' is not installed, or not
+  on PATH`.
 
-The dependency is not installed yet. Lattice puts the project's dependency bin
-directories on a task's `PATH`, but only the ones that exist. On a fresh clone
-there are none. Run `lattice setup`, then the task.
+## A tool that prompts fails at once
 
-The tool is not a dependency of the project at all, and not on the host `PATH`
-either. Either install it as a dependency, or declare an `engine` with an
-`installCmd` so Lattice provisions it. See `references/toolchains.md`.
+Every task runs with an empty stdin and no controlling terminal, so `sudo`,
+`ssh`, `gpg`, or an installer asking a question gets EOF or an error and exits.
+That is deliberate: a task that read the terminal used to be stopped by the
+shell and hang the run forever, which is how `./gradlew` hung. Supply
+credentials without a prompt (an agent, a token in the environment).
 
-The dependency directory is above the repo root. The walk goes from the
-workspace directory up to the repo root and stops there, so a dependency
-directory outside the repo is never added, and only the inherited `PATH` can
-reach it. Move the install inside the repo, or name the tool through its package
-manager in a `scripts` entry.
+## `error: workspace 'x' cannot run` / `engine '<name>' ...`
 
-`lattice run <task> --dry-run` shows the command but not the `PATH` it will run
-under, so it cannot confirm or rule any of these out.
+An engine failed its check or install before any task started. The indented
+lines say what was wanted, found, run and printed, and what to do. The common
+ones:
 
-## `x declares scripts but no "y", so the task was skipped`
-
-A workspace driven by `npm`, `pnpm`, `yarn`, `bun`, or `deno` can only run a task
-its manifest declares as a script. A task the manifest does not declare is not
-run there. The task drops out of the graph and the run carries on. The warning
-fires because the manifest declares a script map *without* that task, and a typo
-looks the same from the outside.
-
-The likeliest fix is the typo the message suggests. Otherwise add the script to
-the manifest, or add a `scripts` entry for the task in `lattice.json`, which
-overrides inference entirely. If the workspace has nothing to do for that task,
-the run is already correct. A types-only package with no `build` script has
-nothing to build.
-
-The warning is not a run failure. Do not paste a guessed command into `scripts`
-to silence it. An older release fabricated `npm run <task>` in exactly this case,
-and the fabricated command failed the build.
-
-`--filter` does not narrow the warning, so a filtered run can name a workspace it
-did not select. `lattice run <task> --dry-run` shows exactly which workspaces the
-task resolved in.
-
-## `x: package.json could not be parsed: ..., so every task it would have named was skipped`
-
-The manifest is there and unreadable. No script name can be read out of it, so
-nothing runs in that workspace. Fix the file. The same warning covers a manifest
-that cannot be read at all and one whose `scripts` (or deno's `tasks`) is not an
-object.
-
-Lattice strips comments from a `deno.json` or a `deno.jsonc`, so a comment is not
-the cause there. A `package.json` is parsed as strict JSON, the way npm parses
-it, so a comment in one *is* the cause.
-
-## `workspace 'x' has "auto": false and declares no command for task 'y'`
-
-An `auto: false` workspace must declare a script for every task it takes part
-in. Add the entry, or leave the workspace on `auto` so it can sit out tasks that
-do not apply. Silent skipping happens only for `auto: true` workspaces. Under
-`--filter`, the check covers the workspaces the pattern matched; one pulled in
-as a dependency is asked only for the tasks its dependents need.
-
-## `the task graph has a cycle`
-
-Two tasks depend on each other, directly or through a chain, over same-workspace
-or `^`-prefixed edges. The message names the graph, not the edge, so read the
-`dependsOn` of each task involved. Nothing ran.
-
-## `task 'dev' in workspace 'app' is persistent, so no other task may depend on it`
-
-A persistent task must be a graph leaf. Nothing can start after a process that
-never finishes. If a task needs the artifact a dev server would serve, depend on
-the build step that produces it.
+- `does not match the version this repo pins`: the host tool's version. Install
+  the pinned version, or add an `installCmd` so no host `PATH` matters. A check
+  that passes on one machine and fails on another is validate mode doing its
+  job.
+- `is not installed, or not on PATH`: install it, or add an `installCmd`.
+- `could not be installed: its installCmd exited with code <n>`: the output
+  follows. The command runs with `$LATTICE_TOOLCHAIN_DIR` set to an empty
+  directory it should install into.
+- `has a version constraint but no way to check the installed version`: a name
+  outside the well-known table needs `versionCmd`.
+- A `gradle` engine failing on a machine with no `gradle`: it is checked through
+  the build's wrapper; if the workspace has no `gradlew` above it, the host
+  `gradle` is what gets checked.
 
 ## ``unknown field `output` in tasks.build``
 
-A key the config does not define at that level. The message names the container,
-the position, the nearest valid field, and every field accepted there. Nothing
-ran. Delete the key or correct it.
+A key the config does not define. The message names the container, position,
+nearest field and every accepted field. `output` and `input` are why this is
+fatal: either typo would change what a task caches without a word.
 
-`output` for `outputs` and `input` for `inputs` are why this is fatal: either
-typo silently changes what the task caches. A config carrying an extra key from
-an older release has to drop it.
+## `` `overrides` key 'x' names no workspace ``
+
+The key is read as a name (no `/` or glob character) and no workspace has it.
+Workspace names come from manifests, so `apps/web` may be named `@acme/web`;
+`--dry-run` or `lattice init`'s table shows the names. Match by path instead:
+`"apps/web"`, or `"./tools"` for a top-level directory.
+
+## `workspace 'x' depends on 'y', which is not a workspace`
+
+An override's `dependsOn` names a workspace that does not exist under that
+name. Use the discovered name.
+
+## `the task graph has a cycle through <ws>:<task>`
+
+Two tasks depend on each other through `dependsOn`. Workspace edges come from
+manifests too, so a dev-dependency cycle between two packages is a cycle here.
+Read the `dependsOn` of each task involved and each manifest's dependencies.
+
+## `task 'dev' in workspace 'app' is persistent, so no other task may depend on it`
+
+A persistent task must be a leaf. `dev`, `start`, `serve` and `watch` are
+persistent by default; a `start` that is a one-shot command needs
+`"start": { "persistent": false }`.
 
 ## A task never hits the cache
 
-Something feeding the hash changes every run. Run with `-v`; the miss line names
-the component that moved. `-v` is the only place these two lines print. The live
-display carries no per-task trace:
+Something feeding the key changes every run. `--stream -v` names it:
 
 ```text
 lattice: web:build: hash a1b2c3d4e5f6a7b8
 lattice: web:build: cache miss: inputs changed
 ```
 
-The ten component names, and what each covers:
-
-| Name | Covers |
+| Component | Common cause |
 | --- | --- |
-| `inputs` | Contents of the files `inputs` matched, minus `ignore` and minus `outputs`. With no `inputs`, the whole workspace |
-| `env` | The names in the task's `env`, with their resolved values |
-| `globalEnv` | The names in the root `globalEnv`, with their resolved values |
-| `globalDependencies` | The root `globalDependencies` patterns and the contents of what they match |
-| `manifests` | Manifests and lockfiles present in the workspace, plus lockfiles at the repo root |
-| `dependencies` | The cache keys of this task's prerequisites |
-| `toolchain` | The resolved toolchain identity string |
-| `command` | The resolved shell command |
-| `patterns` | The `inputs`, `outputs`, and `ignore` glob lists themselves |
-| `environment` | Lattice version, OS, architecture, shell, workspace name, task name |
+| `inputs` | A file that changes every run: a timestamp, `.DS_Store`, a tool's state directory. Narrow `inputs` or add to `ignore` |
+| `env` | A value that differs per shell, such as an absolute path |
+| `dependencies` | A prerequisite's key moved. Expected; look at the prerequisite |
+| `upstream` | A file changed in a workspace this one depends on. Expected |
+| `manifests` | A manifest or lockfile changed. Expected after a dependency bump |
+| `command` | The command changed, including arguments after `--` |
+| `environment` | A Lattice upgrade. One full miss per release |
 
-Two misses name no component:
-
-```text
-lattice: web:build: cache miss (nothing cached for this task yet)
-lattice: web:build: cache miss (the entry for this key is no longer in the cache)
-```
-
-The second means the key was computed before, but its entry is gone: evicted
-under `settings.maxCacheSize`, swept by `lattice prune`, or rejected as corrupt.
-
-Common causes, by component:
-
-- `inputs`: a glob matching a file that changes every run. A timestamp, a
-  `.DS_Store`, generated output, or a tool's own state directory. Narrow
-  `inputs`, or add the path to `ignore`.
-- `inputs` once, right after `lattice setup`, on an older release: setup used to
-  write a `.lattice-setup-marker` inside each workspace it installed into, and a
-  task with no declared `inputs` hashed it. The marker now lives under
-  `.lattice/setup`, which is never walked for a key, so the marker is no longer
-  a cause. The next successful install deletes a stale `.lattice-setup-marker`
-  left in a workspace.
-- `env`: a name whose value differs across shells or machines, such as an
-  absolute path or a session id. Drop it unless the command's result genuinely
-  depends on it.
-- `dependencies`: a prerequisite's key moved. Expected, not a problem. Look at
-  the prerequisite instead.
-- `manifests`: a lockfile or manifest changed. Also expected after a dependency
-  bump, and it happens whether or not the lockfile is listed in `inputs`.
-- `inputs` after a `chmod`: the executable bit of every hashed file is part of
-  the key, because the artifact restores file modes. Nothing else about the mode
-  counts, so a umask difference between machines does not move the key.
-- `environment` right after an upgrade: the Lattice version is part of every
-  key. One full miss per release is expected.
+`cache miss (nothing cached for this task yet)` and `cache miss (the entry for
+this key is no longer in the cache)` name no component; the second means the
+entry was evicted or rejected as corrupt.
 
 ## A task hits the cache when it should not
 
-The command reads a file or a variable that is not declared. `inputs` matches
-only what its globs say, and only the names listed in `env` are hashed. Neither
-omission warns. Widen the `inputs` glob, drop `inputs` entirely so the whole
-workspace is hashed, or add the missing `env` name.
+The command reads something undeclared. `inputs` hashes only what its globs
+match, `env` only the names it lists. Widen `inputs`, drop it so the whole
+workspace is hashed, or add the `env` name. A file above the workspace goes in
+`globalDependencies`. Declared `inputs` ignore `.gitignore`; the whole-workspace
+walk honors it. `--force` replaces a bad entry; `--no-cache` leaves it in place.
 
-Declared `inputs` do **not** respect `.gitignore`. Only `.lattice`, `.git`,
-`.hg`, `.svn`, and `.jj` are skipped. A task with no `inputs` is the opposite:
-that walk honors `.gitignore` in the workspace and in every ancestor directory,
-but not the user's global gitignore, and hidden files are hashed.
+## Files disappeared after a cache hit
 
-Symlinks are hashed either way. A symlinked file contributes the path it points
-at, not the bytes on the other end, so re-pointing a link moves the key even
-when both targets hold the same content. The walk descends a symlinked
-*directory* when `inputs` is declared, so `inputs: ["vendor/**"]` reaches the
-real files behind a symlinked `vendor`. With no `inputs`, the walk does not
-descend a symlinked directory. That walk covers the whole workspace, and a
-followed link would pull an unrelated tree from elsewhere on the disk into the
-key.
-
-If the file is *above* the workspace, no `inputs` glob can reach it. Patterns
-are workspace-relative and `tasks` is shared across workspaces. Put the file in
-the root-level `globalDependencies`, and repo-wide variables in `globalEnv`:
-
-```json
-{
-  "globalDependencies": ["tsconfig.base.json", "proto/**"],
-  "globalEnv": ["NODE_ENV"]
-}
-```
-
-While investigating, `--no-cache` neither reads nor writes. Once you have found
-it, `--force` re-runs and overwrites the stored entry, which is what clears a
-bad one. `--no-cache` leaves the bad entry in place to be served again on the
-next plain run.
-
-## Files disappeared from an output directory after a cache hit
-
-A hit deletes everything matching the entry's recorded `outputs` globs, then
-unpacks the artifact. That is deliberate: a hit reproduces the tree the run
-produced, so files the task deletes stay deleted and content-hashed filenames do
-not pile up across generations. Anything you wrote by hand into a directory that
-`outputs` matches is deleted on the next hit.
+A hit deletes what the entry's `outputs` match, then unpacks the archive. That
+includes a default output: an npm, uv, poetry or pdm workspace's `build` owns
+`dist/**`, Gradle's `build/**`, Maven's `target/**`, .NET's `bin/**`. Keep
+hand-written files out of those, or set `outputs` for the task.
 
 ## `no files matched outputs [...], so nothing was cached`
 
@@ -255,268 +248,81 @@ not pile up across generations. Anything you wrote by hand into a directory that
 lattice: warning: web:build: failed to cache outputs: no files matched outputs ["dist/**"], so nothing was cached. Check that the patterns are relative to the workspace, and that the task writes there
 ```
 
-The task succeeded and nothing was stored, so it will re-run every time. Either
-the globs are wrong, or they are written relative to the repo root instead of
-the workspace. A task that legitimately produces no files, such as `test` or
-`lint`, should declare no `outputs` at all.
+The task passed and stored nothing, so it re-runs every time. With a default
+output this means the build writes somewhere else (`.next/`, `out/`); set
+`outputs` for it. `outputs [...] matched only empty directories` is the same for
+a pattern that matched an empty directory.
 
-## `outputs [...] matched only empty directories, so nothing was cached`
+## The live display does not appear
 
-```text
-lattice: warning: web:build: failed to cache outputs: outputs ["dist"] matched only empty directories, so nothing was cached. Check that the task writes its files where the patterns point
-```
-
-A pattern did match here, unlike the warning above, and everything it matched
-was a directory holding no files. A bare `outputs: ["dist"]` covers `dist/`
-itself, so an empty `dist/` counts as a match while the task has produced
-nothing.
-
-Look in the directory after a run. Either the command writes somewhere the
-patterns do not cover, or it produces nothing at all. Storing that archive would
-be worse than storing nothing. Every later run would hit it and restore an empty
-`dist/` over whatever an uncached run had put there.
-
-## The output looks wrong after a cache hit
-
-A lookup is a hit only when the metadata parses, the artifact's byte length
-matches what was recorded, and its sha256 matches the recorded digest. Anything
-else is a miss, never a bad hit. A corrupt or half-written entry can only cost a
-re-run.
-
-Restoring can still fail after a verified hit, on permissions or disk space. That
-is a warning, and the task re-runs:
-
-```text
-lattice: warning: web:build: failed to restore cached outputs: <reason>
-```
-
-## `lattice prune` reports `removed 0 artifacts` with leftover files on disk
-
-Leftovers from an interrupted store are reclaimed only once they have sat
-untouched for an hour. Until then they stay put, and their bytes count against
-`settings.maxCacheSize`. Run `prune` again later, or delete the cache directory.
-
-A store in progress and a store that died halfway through leave the same files
-behind, so age is the only thing separating them. Without the wait, two
-`lattice` processes sharing one checkout would delete each other's cache writes.
-One process finishes its run and enforces the size limit while the other is
-still writing.
-
-## An engine version check fails on one machine and not another
-
-That constraint is in validate-only mode: a version with no `installCmd`, so
-Lattice checks whatever is on that machine's `PATH`. Either bring every
-machine's host tool to the same version, or add an `installCmd` so Lattice
-installs its own copy under `.lattice/toolchains/` and no host `PATH` matters.
-
-## An engine with a version constraint is not being checked at all
-
-Check the shape. An object with `versionCmd` but no `version` and no `installCmd`
-is host mode: nothing is installed and nothing is checked, not even that the
-tool exists. Add `version` to get a check, or `installCmd` to get an install.
-
-A `version` on a name outside the well-known table, with no `versionCmd`, is now
-an error in both validate-only and provisioned mode rather than a constraint
-nobody checked. A `pins.json` that records `0.0.0` came from an older release.
-That version was never installed, and it fed every cache key in the workspace.
-Such a toolchain now records `unknown`, so the first run after upgrading misses.
-
-## `installCmd` provisioning fails partway
-
-Provisioning stages into a temporary directory, runs `installCmd`,
-version-checks the result, then renames into the final content-addressed path. A
-failure at any stage is fatal and names the stage. Nothing is left pinned, so
-rerunning retries from scratch.
-
-## `--dry-run` does not show toolchain problems
-
-It returns before any engine is provisioned or validated. An engine failure
-surfaces on a real run, or up front from `lattice setup`.
-
-## The interactive display does not appear
-
-Output falls back to plain lines whenever stdout is not a terminal, `CI` is set
-to any value including the empty string, or `-v` was passed, or
-`settings.loquacious` is `true`. On top of that, `lattice run` forces plain
-output whenever the tasks it was asked for pull a `persistent` task into their
-dependency closure. Redirecting into a file or a pipe is the most common
-surprise.
-
-## Color appears somewhere it should not
-
-Color is emitted only when stdout is a real terminal, in either mode. A `-v` run
-at a shell colors each `workspace:task` label; the same run piped or redirected
-colors nothing. Set `NO_COLOR` to any value to suppress color everywhere without
-changing the output mode.
+The stream is used when stdout is not a terminal, when `CI` is set to anything,
+with `--stream`, and for any run that includes a persistent task. `-v` no longer
+switches modes.
 
 ## A run never finishes
 
-A `persistent: true` task in the closure is meant to block. Once every other
-task is done and the persistent ones are spawned, `lattice run` streams their
-output and waits. To get a run that terminates, do not request the persistent
-task; run its non-persistent prerequisites instead.
+A persistent task is meant to block; `dev` is persistent by default. Run its
+non-persistent prerequisites instead, or stop it with `Ctrl-C`. The run also
+ends when every persistent task exits or any task fails. A persistent task that
+exits prints `EXITED (code 1) after 1.09s` and fails the run.
 
-Four things end such a run: the first `Ctrl-C`, a `SIGTERM`, the exit of every
-persistent task, or the failure of any task in the run. Lattice watches for the
-signal through the whole run, so a `Ctrl-C` that arrives while the builds ahead
-of the servers are still running ends the run there. Older releases needed a
-second `Ctrl-C` in that case, ignored `SIGTERM` until the CI runner force-killed
-the process, and went on waiting after a task failure.
-
-A run blocks only while a persistent task is actually up. Lattice waits on every
-persistent child, so one that exits stops holding the run open:
+A non-persistent task that never finishes is a hang. Give it a `timeout`:
 
 ```text
-web:dev: EXITED (code 1) after 1.09s
-lattice: 2 tasks, 0 cached, 1 failed, 1.83s
-```
-
-Anything but a clean `0` counts as a failed task and exits non-zero.
-`exited (code 0)` goes to stdout in lowercase and counts as nothing. When the
-last persistent task exits, the summary prints without needing a Ctrl-C. A child
-Lattice kills on the way out is never reported and never counts as a failure.
-
-A *non-persistent* task that never finishes is a hang, not a design. Give the
-tasks that can hang a `timeout`:
-
-```text
+app:slow: running
+app:slow: starting
+lattice: warning: app:slow: timed out after 1s and was stopped
 app:slow: FAILED after 1.00s
-app:slow: timed out after 1s and was stopped
 ```
 
-A timeout leaves no exit code, so that line carries the duration alone.
+The timeout is a warning, so it prints whether or not the task had already
+streamed output; on the live display it is a `! app:slow: timed out after 1s
+and was stopped` line above the task's `✗`. A timeout leaves no exit code, so
+the `FAILED` line carries the duration alone.
 
-Ctrl-C, or a `SIGTERM`, ends any run. Every running task's process group gets
-`SIGTERM`, five seconds, then `SIGKILL`. The process exits `130` with:
-
-```text
-Error: interrupted. Lattice stopped the tasks that were still running
-```
-
-Nothing a task spawned *into that group* survives it. A process the task started
-in a group of its own is out of reach, and if it holds the task's output open the
-run cannot see that output end. Lattice waits 500ms for it, warns, and exits:
-
-```text
-lattice: warning: a task left a process holding its output open; it is still running.
-```
-
-That process keeps running and keeps its port; kill it by port or by name, not
-through Lattice. `tauri dev` triggers this with its `beforeDevCommand`. A second
-`Ctrl-C` exits immediately with `130` without finishing teardown, which is the
-only way out if teardown itself wedges — watching for an interrupt replaces the
-default action for `SIGINT` and `SIGTERM`, so no further signal would end the
-process on its own.
-
-Distinguish `130` from `1` if a pipeline branches on the exit code.
+`Ctrl-C` or `SIGTERM` stops every task's process group (`SIGTERM`, five
+seconds, `SIGKILL`) and exits `130` with `error: interrupted. Lattice stopped
+the tasks that were still running`. A process a task started in a group of its
+own is out of reach; if it holds the output open Lattice warns `a task left a
+process holding its output open; it is still running` and exits. A second
+`Ctrl-C` exits at once.
 
 ## The run stopped at the first failure
 
-That is the default. The first failing task ends the run:
-
-```text
-app:build: FAILED (code 1) after 0.31s
-Error: task 'app:build' failed, stopping the run
-```
-
-`--continue` keeps independent work going instead. Its tasks that were waiting
-on the failure report as skipped, and the run still exits `1`:
-
-```text
-a:build: FAILED (code 1) after 0.01s
-a:test: skipped (dependency failed)
-lattice: 3 tasks, 0 cached, 1 failed, 0.02s
-```
-
-A `FAILED` line carries the command's exit code and how long it ran. A task
-killed by a signal, and a task stopped by its `timeout`, have no code, so the
-line reads `FAILED after 30.00s`. A task that failed before its command started
-has neither, so the line reads `FAILED`. The captured output prints under it, in
-arrival order across both streams.
+The default. `--continue` keeps independent work going, reports every failure,
+and still exits `1`; tasks waiting on a failure print `skipped (dependency
+failed)` under `-v`.
 
 ## `--filter` ran more or fewer workspaces than expected
 
-It is a substring match on workspace `name`, never on `path`, and never a glob.
-The matches are the roots of the run, so their transitive dependencies are in
-the graph too, tagged `(dependency)` under `--dry-run`. Nothing that depends *on*
-a match is included. A filter matching nothing prints
-`lattice: no workspaces matched filter '<pattern>'.` and exits `0`.
+It is a substring match on workspace name, never on path. Matches are the roots
+of the run; what they depend on comes along, tagged `(dependency)`. Workspace
+names now come from manifests, so `--filter web` also matches `@acme/web-ui`.
 
-If a prerequisite you expected is missing, check that the depending workspace
-lists it in `dependsOn` and that the task's own `dependsOn` carries the `^`.
+## `lattice setup` says `dependencies up to date` and the build fails
 
-## `lattice setup` says `dependencies up to date` and the build fails on a missing dependency
-
-The marker recording the last install is newer than every lockfile governing the
-workspace. Those lockfiles are the one in the workspace and every one above it up
-to the repo root, so a single root lockfile in a hoisted npm, pnpm, or yarn tree
-invalidates every workspace under it.
-
-An older release checked only the workspace's own directory. In that layout a
-workspace directory holds no lockfile, so nothing could invalidate its marker.
-`lattice setup` reported `dependencies up to date` forever, and only `--force`
-recovered.
-
-## `lattice setup <name>` installed nothing and exited 0
-
-An older release selected nothing for a workspace name the config does not
-declare. Current releases refuse the name: `workspace 'X' is not declared in the
-\`workspaces\` array in lattice.json`, with the declared names listed. Check the
-name against the `workspaces` array.
-
-## `lattice setup` hangs, or the installer fails with no obvious reason
-
-The installer gets no stdin, so an installer that stops for a password, a token,
-or a confirmation reads end-of-file and exits non-zero. Its own output, shown as
-the install runs, says what it wanted. Supply the credential without a prompt,
-or run that installer once by hand outside Lattice. An older release let the
-installer inherit the terminal, so the installer blocked on a prompt nothing
-displayed and the command hung with no output.
+The workspace's marker under `.lattice/setup` is newer than every lockfile in
+the workspace and above it. `lattice setup --force`.
 
 ## `lattice run` did nothing and exited 0
 
-Three cases exit `0` without running anything: an empty `workspaces` array, a
-filter that matched nothing, and every task in the graph hitting the cache. The
-third prints:
-
-```text
-lattice: full power, nothing to run
-```
-
-That line prints only when nothing executed. It was `lattice: full cache,
-nothing to run` in earlier releases, so update anything grepping for the old
-string.
+A repo with no workspaces (`lattice: found no workspaces. ...`), a filter that
+matched nothing, or every task a cache hit (`lattice: full power, nothing to
+run`, or `❖❖❖ FULL POWER` on the live display).
 
 ## `lattice stats` reports more saved time than the run took
 
-Working as intended. The saved figure is task time, not wall clock: each hit adds
-the duration the run that wrote its entry spent, whether or not those tasks would
-have run at the same moment. Four cached one-minute tasks on independent branches
-report `4m 00s saved` on a run that took a second.
+The saved figure is task time, not wall clock.
 
-## `lattice stats` says no runs are recorded
+## The editor validates against an old schema
 
-The ledger is a file inside the cache directory, so anything that clears the
-cache clears the history: deleting `.lattice`, moving `settings.cacheDir`, or a
-CI job starting from an empty cache. A run also appends nothing when it could not
-store (`--no-cache`) or scheduled no task at all (a `--filter` that matched
-nothing). Run a task without `--no-cache` and it fills in from there. Nothing is
-recoverable and nothing needs to be: the ledger is a record, not an input.
-
-## `.lattice/schema.json` is missing, or the editor shows a stale schema
-
-`run`, `setup`, `prune`, and `stats` write a *missing* schema file. An existing one is
-left alone on purpose, even by a newer release. Delete it and rerun any command
-that loads config, or force a rewrite with `lattice init --force`. It is the one
-thing under `.lattice/` meant to be committed.
+Every command that loads the config rewrites `.lattice/schema.json` when it
+differs from the binary's copy. Run any `lattice` command. Commit the file.
 
 ## Clean slate
 
-Everything under `.lattice/` is derived state, except `schema.json`.
-`.lattice/cache/` costs only time to rebuild, `.lattice/toolchains/`
-reprovisions on next need, and `.lattice/bin/` re-downloads the pinned release.
-`rm -rf .lattice` is a complete, safe reset and never touches `lattice.json`.
-You do not need to run `lattice init` again afterward.
+Everything under `.lattice/` except `schema.json` is derived. `rm -rf .lattice`
+is a complete reset that never touches `lattice.json`.
 
-Before reporting a problem, gather `lattice version`,
-`lattice run <tasks> --dry-run`, and `lattice run <tasks> -v`.
+Before reporting a problem, gather `lattice version`, `lattice run <tasks>
+--dry-run`, and `lattice run <tasks> --stream -v`.

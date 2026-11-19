@@ -35,8 +35,8 @@ class ErrorBoundary extends Component<Props, State> {
 		if (!error) return this.props.children;
 
 		return (
-			<div className="app-main__scroll">
-				<div className="app-main__inner tw:max-w-[48rem]">
+			<div className="app-scroll">
+				<div className="app-column app-column--narrow">
 					<div className="alert alert-danger d-flex align-items-start gap-2 mb-3" role="alert">
 						<i className="bi bi-exclamation-triangle" aria-hidden="true" />
 						<div>
@@ -45,25 +45,11 @@ class ErrorBoundary extends Component<Props, State> {
 						</div>
 					</div>
 
-					{stack && (
-						<div className="card code-card">
-							<div className="card-header code-card__bar">
-								<span className="code-card__dot" />
-								<span className="code-card__dot" />
-								<span className="code-card__dot" />
-								<span className="code-card__name">component stack</span>
-							</div>
-							<div className="card-body p-0">
-								<pre className="code-card__body code-card__body--log mb-0 selectable">
-									{stack.trim()}
-								</pre>
-							</div>
-						</div>
-					)}
+					{stack && <pre className="log-pane selectable">{stack.trim()}</pre>}
 
 					<button
 						type="button"
-						className="btn btn-primary mt-3 px-4"
+						className="btn btn-primary mt-3"
 						onClick={() => this.setState({ error: null, stack: null })}
 					>
 						Try again

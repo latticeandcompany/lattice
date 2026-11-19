@@ -47,7 +47,8 @@ const FieldHint = ({ children, label }: FieldHintProps) => {
 			</button>
 			{open && (
 				<span
-					className="popover d-block position-absolute top-100 start-0 mt-1 tw:w-[20rem] tw:z-20"
+					className="popover d-block position-absolute top-100 start-0 mt-1"
+					style={{ width: '20rem', zIndex: 20 }}
 					role="tooltip"
 				>
 					<span className="popover-body d-block">{children}</span>

@@ -1,4 +1,6 @@
 //! Turning a scan of a directory into the files that make it a Lattice repo.
+//! Most repos need very little: the workspaces a workspace file already names,
+//! and every task a manifest defines, are found without being written down.
 //!
 //! Assembling the config and writing it are separate: a front end that wants to
 //! show the user what it is about to write calls [`build_config`], renders the
@@ -12,8 +14,14 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::{json, Map, Value};
 
+use serde::Serialize;
+
 use lattice_config::schema::SCHEMA_JSON;
-use lattice_workspace::scan::{DeclaredTasks, EnginePin, TaskDetail, WorkspaceCandidate};
+use lattice_config::LatticeConfig;
+use lattice_workspace::members;
+use lattice_workspace::scan::{
+	scan_engine_pins, scan_workspaces, DeclaredTasks, EnginePin, TaskDetail, WorkspaceCandidate,
+};
 
 /// The directory `lattice setup` writes its per-workspace install markers into,
 /// one file per workspace. Named here because the line that ignores it has to
@@ -38,15 +46,12 @@ pub const GITIGNORE_LINES: &[&str] = &[
 	LEGACY_SETUP_MARKER,
 ];
 
-/// The skeleton written when a scan turns up nothing and there is no one to ask.
+/// The config written when there is nothing to say: every workspace, every
+/// dependency and every task comes from the repo's own files.
 pub fn default_skeleton(version: &str) -> Value {
 	json!({
 		"$schema": ".lattice/schema.json",
-		"latticeVersion": version,
-		"workspaces": [],
-		"tasks": {
-			"build": { "dependsOn": ["^build"], "outputs": ["dist/**"] }
-		}
+		"latticeVersion": version
 	})
 }
 
@@ -70,13 +75,113 @@ pub fn ensure_gitignore_lines(existing: &str, lines: &[&str]) -> String {
 	out
 }
 
-/// Assemble the config from the chosen workspaces and engine pins.
+/// What a scan of a repo without a `lattice.json` found.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proposal {
+	/// Directories the repo's own workspace files already name. Nothing needs
+	/// writing for these; they are listed so a front end can show them.
+	pub native: Vec<String>,
+	/// Directories no workspace file names, which the config has to list.
+	pub extra: Vec<WorkspaceCandidate>,
+	pub pins: Vec<EnginePin>,
+	/// The repo root, when it is not offered as a workspace: a single project
+	/// that needs no entry, or a monorepo root. Either way its task runner's
+	/// settings — a root `turbo.json`'s outputs and dependencies — are imported.
+	pub root: Option<WorkspaceCandidate>,
+}
+
+/// Read `root` for everything a config could say.
+///
+/// A directory inside another project is that project's business — a Gradle
+/// subproject, a fixture package, a crate inside an app — so only the outermost
+/// projects no workspace file names are proposed. The root is proposed only
+/// when nothing else is: a root beside other projects usually holds the repo's
+/// tooling, and one that names workspaces is not one itself.
+pub fn propose(root: &Path) -> Proposal {
+	let native: Vec<String> = members::find_members(root, &LatticeConfig::default())
+		.unwrap_or_default()
+		.into_iter()
+		.filter(|m| matches!(m.origin, members::Origin::Native(_)))
+		.map(|m| m.rel)
+		.collect();
+
+	let candidates = scan_workspaces(root);
+	let root_candidate = candidates.iter().find(|c| c.path == ".");
+	let root_is_one_build = root_candidate
+		.and_then(|c| c.driver.as_deref())
+		.is_some_and(|d| matches!(d, "gradle" | "maven" | "dotnet"));
+
+	let inside = |path: &str, other: &str| {
+		other != "." && path != other && path.starts_with(&format!("{other}/"))
+	};
+	let mut extra: Vec<WorkspaceCandidate> = candidates
+		.iter()
+		.filter(|c| c.path != "." && !root_is_one_build)
+		.filter(|c| !native.contains(&c.path))
+		.filter(|c| {
+			!candidates.iter().any(|o| inside(&c.path, &o.path))
+				&& !native.iter().any(|n| inside(&c.path, n))
+		})
+		.cloned()
+		.collect();
+
+	let mut root_settings = None;
+	if let Some(root_candidate) = root_candidate {
+		if native.is_empty() && !extra.is_empty() {
+			let mut offered = root_candidate.clone();
+			offered.default_selected = false;
+			extra.insert(0, offered);
+		} else if root_candidate.driver.is_some() {
+			root_settings = Some(root_candidate.clone());
+		}
+	}
+
+	Proposal {
+		native,
+		extra,
+		pins: scan_engine_pins(root),
+		root: root_settings,
+	}
+}
+
+/// `lattice.json` `workspaces` entries for `paths`: siblings that are every
+/// project under their parent collapse into `parent/*`, so a service added
+/// there later is picked up without editing the config.
+pub fn workspace_patterns(paths: &[&str], all_candidates: &[&str]) -> Vec<String> {
+	let parent = |p: &str| p.rsplit_once('/').map(|(dir, _)| dir.to_string());
+	let mut out: Vec<String> = Vec::new();
+	for path in paths {
+		let pattern = match parent(path) {
+			Some(dir) => {
+				let siblings: Vec<&&str> = all_candidates
+					.iter()
+					.filter(|c| parent(c).as_deref() == Some(dir.as_str()))
+					.collect();
+				let all_chosen = siblings.iter().all(|s| paths.contains(s));
+				if siblings.len() > 1 && all_chosen {
+					format!("{dir}/*")
+				} else {
+					path.to_string()
+				}
+			}
+			None => path.to_string(),
+		};
+		if !out.contains(&pattern) {
+			out.push(pattern);
+		}
+	}
+	out
+}
+
+/// Assemble the config from the chosen extra workspaces and engine pins.
 ///
 /// `version` is written as `latticeVersion`. It is a parameter rather than the
 /// running binary's own version because a front end may be scaffolding a repo
 /// that pins a different one.
 pub fn build_config(
 	workspaces: &[&WorkspaceCandidate],
+	all_candidates: &[&str],
 	pins: &[&EnginePin],
 	version: &str,
 ) -> Value {
@@ -84,11 +189,11 @@ pub fn build_config(
 	root.insert("$schema".into(), json!(".lattice/schema.json"));
 	root.insert("latticeVersion".into(), json!(version));
 
-	let ws: Vec<Value> = workspaces
-		.iter()
-		.map(|c| json!({ "name": c.name, "path": c.path }))
-		.collect();
-	root.insert("workspaces".into(), Value::Array(ws));
+	let paths: Vec<&str> = workspaces.iter().map(|c| c.path.as_str()).collect();
+	let patterns = workspace_patterns(&paths, all_candidates);
+	if !patterns.is_empty() {
+		root.insert("workspaces".into(), json!(patterns));
+	}
 
 	if !pins.is_empty() {
 		let mut engines = Map::new();
@@ -98,76 +203,48 @@ pub fn build_config(
 		root.insert("engines".into(), Value::Object(engines));
 	}
 
-	let globals = union_globals(workspaces, |d| &d.global_dependencies);
+	let mut config = Value::Object(root);
+	import_settings(&mut config, workspaces);
+	config
+}
+
+/// Add the shared files, env and task settings `candidates`' task runners
+/// already declare to `config`.
+pub fn import_settings(config: &mut Value, candidates: &[&WorkspaceCandidate]) {
+	let Some(root) = config.as_object_mut() else {
+		return;
+	};
+	let globals = union_globals(candidates, |d| &d.global_dependencies);
 	if !globals.is_empty() {
 		root.insert("globalDependencies".into(), json!(globals));
 	}
-	let global_env = union_globals(workspaces, |d| &d.global_env);
+	let global_env = union_globals(candidates, |d| &d.global_env);
 	if !global_env.is_empty() {
 		root.insert("globalEnv".into(), json!(global_env));
 	}
-
-	root.insert("tasks".into(), Value::Object(build_tasks(workspaces)));
-
-	Value::Object(root)
+	let tasks = imported_tasks(candidates);
+	if !tasks.is_empty() {
+		root.insert("tasks".into(), Value::Object(tasks));
+	}
 }
 
-/// The pipeline, taken from what the chosen workspaces' own task configuration
-/// already declares.
-///
-/// A repo that runs eleven tasks through its task runner gets eleven tasks here,
-/// not one: writing only `build` leaves every other task undeclared, and an
-/// undeclared task is one `lattice run` refuses. Falling back to a lone `build`
-/// is for the workspaces that declare no list to read — a Cargo or Go workspace
-/// takes the task name on the command line and could name anything.
-fn build_tasks(workspaces: &[&WorkspaceCandidate]) -> Map<String, Value> {
+/// The task settings a workspace's own task runner already spells out, such as
+/// a `turbo.json`'s outputs and dependencies. A task a file only names needs no
+/// entry: it runs by name as it is.
+fn imported_tasks(workspaces: &[&WorkspaceCandidate]) -> Map<String, Value> {
 	let mut tasks: Map<String, Value> = Map::new();
-	let mut named_only: HashSet<String> = HashSet::new();
-
 	for c in workspaces {
 		for task in &c.declared.tasks {
-			match &task.detail {
-				// Two workspaces declaring the same task is ordinary; the one that
-				// says something about it is the one worth keeping.
-				Some(detail) => {
-					if !tasks.contains_key(&task.name) || named_only.remove(&task.name) {
-						tasks.insert(task.name.clone(), detail_value(detail));
-					}
-				}
-				None => {
-					if !tasks.contains_key(&task.name) {
-						named_only.insert(task.name.clone());
-						tasks.insert(task.name.clone(), inferred_value(&task.name, workspaces));
-					}
+			if let Some(detail) = &task.detail {
+				if !tasks.contains_key(&task.name) {
+					tasks.insert(task.name.clone(), detail_value(detail));
 				}
 			}
 		}
 	}
-
-	if tasks.is_empty() && !workspaces.is_empty() {
-		tasks.insert("build".into(), inferred_value("build", workspaces));
-	}
-
 	prune_depends_on(&mut tasks);
+	tasks.retain(|_, v| v.as_object().is_some_and(|o| !o.is_empty()));
 	tasks
-}
-
-/// What to write for a task the repo names but says nothing else about, as a
-/// `package.json` script does. Only `build` gets a default, because only `build`
-/// has one every ecosystem agrees on: a package is built after the packages it
-/// depends on are.
-fn inferred_value(name: &str, workspaces: &[&WorkspaceCandidate]) -> Value {
-	if name != "build" {
-		return Value::Object(Map::new());
-	}
-	let mut build = Map::new();
-	build.insert("dependsOn".into(), json!(["^build"]));
-	// Only claim an output directory the evidence supports; a repo with no
-	// `package.json` workspace has no reason to cache `dist/`.
-	if workspaces.iter().any(|c| c.marker == "package.json") {
-		build.insert("outputs".into(), json!(["dist/**"]));
-	}
-	Value::Object(build)
 }
 
 fn detail_value(detail: &TaskDetail) -> Value {
@@ -191,9 +268,8 @@ fn detail_value(detail: &TaskDetail) -> Value {
 	Value::Object(task)
 }
 
-/// Drop every `dependsOn` entry that names no task in the written pipeline.
-/// Lattice refuses to load a config that depends on a task it does not define,
-/// and a prerequisite the user never chose to import is not one to halt over.
+/// Drop every `dependsOn` entry that names no imported task. A prerequisite
+/// the user never chose to import is not one to halt a run over.
 fn prune_depends_on(tasks: &mut Map<String, Value>) {
 	let names: HashSet<String> = tasks.keys().cloned().collect();
 	for (name, task) in tasks.iter_mut() {
@@ -234,7 +310,8 @@ fn union_globals(
 /// The text [`write_artifacts`] would write for `config`, so a caller can show it
 /// first. Pretty-printed with a trailing newline.
 pub fn render_config(config: &Value) -> Result<String> {
-	Ok(format!("{}\n", serde_json::to_string_pretty(config)?))
+	let typed: LatticeConfig = serde_json::from_value(config.clone())?;
+	Ok(lattice_config::to_config_text(&typed))
 }
 
 /// Write `lattice.json`, the committed schema copy, and the `.gitignore` lines.
@@ -264,124 +341,11 @@ pub fn write_artifacts(dir: &Path, config: &Value) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use lattice_workspace::scan::TaskCandidate;
 
-	fn candidate(name: &str, path: &str, marker: &str) -> WorkspaceCandidate {
-		WorkspaceCandidate {
-			name: name.to_string(),
-			path: path.to_string(),
-			marker: marker.to_string(),
-			driver: None,
-			default_selected: true,
-			declared: DeclaredTasks::default(),
-		}
-	}
-
-	#[test]
-	fn the_declared_version_is_the_one_that_gets_written() {
-		// Not the running binary's version: a front end may be scaffolding a repo
-		// that pins something else, and writing the wrong pin here is silent.
-		let config = build_config(&[], &[], "9.9.9");
-		assert_eq!(config["latticeVersion"], json!("9.9.9"));
-	}
-
-	#[test]
-	fn a_dist_output_needs_a_package_json_to_justify_it() {
-		let node = candidate("web", "apps/web", "package.json");
-		let rust = candidate("core", "crates/core", "Cargo.toml");
-
-		let with_node = build_config(&[&node], &[], "1.0.0");
-		assert_eq!(with_node["tasks"]["build"]["outputs"], json!(["dist/**"]));
-
-		let without = build_config(&[&rust], &[], "1.0.0");
-		assert!(without["tasks"]["build"].get("outputs").is_none());
-	}
-
-	#[test]
-	fn engines_are_omitted_entirely_when_nothing_is_pinned() {
-		let config = build_config(
-			&[&candidate("web", "apps/web", "package.json")],
-			&[],
-			"1.0.0",
-		);
-		assert!(config.get("engines").is_none());
-	}
-
-	#[test]
-	fn a_pin_becomes_a_string_form_engine() {
-		let pin = EnginePin {
-			engine: "node".to_string(),
-			version: ">=26".to_string(),
-			source: ".nvmrc".to_string(),
-		};
-		let config = build_config(&[], &[&pin], "1.0.0");
-		assert_eq!(config["engines"]["node"], json!(">=26"));
-	}
-
-	#[test]
-	fn rendering_ends_in_exactly_one_newline() {
-		let text = render_config(&default_skeleton("1.0.0")).unwrap();
-		assert!(text.ends_with("}\n"));
-		assert!(!text.ends_with("}\n\n"));
-	}
-
-	#[test]
-	fn writing_twice_leaves_gitignore_alone_the_second_time() {
-		let dir = tempfile::tempdir().unwrap();
-		let config = default_skeleton("1.0.0");
-
-		let first = write_artifacts(dir.path(), &config).unwrap();
-		assert!(first.contains(&".gitignore".to_string()));
-
-		let second = write_artifacts(dir.path(), &config).unwrap();
-		assert!(
-			!second.contains(&".gitignore".to_string()),
-			"an unchanged .gitignore must not be reported as written"
-		);
-	}
-
-	#[test]
-	fn every_ignored_path_is_a_machine_local_artifact() {
-		let out = ensure_gitignore_lines("", GITIGNORE_LINES);
-		for line in GITIGNORE_LINES {
-			assert!(out.contains(line), "{line} missing from {out:?}");
-		}
-		// The schema copy is committed, so it must never be ignored.
-		assert!(!out.contains(".lattice/schema.json"));
-	}
-
-	#[test]
-	fn the_setup_marker_directory_is_ignored() {
-		// The ignore line has to be the marker directory `setup` actually writes
-		// into, plus the trailing slash that makes it a directory pattern.
-		let expected = format!("{SETUP_MARKER_DIR}/");
-		assert!(
-			GITIGNORE_LINES.iter().any(|l| *l == expected),
-			"{expected} missing from {GITIGNORE_LINES:?}"
-		);
-
-		let dir = tempfile::tempdir().unwrap();
-		write_artifacts(dir.path(), &default_skeleton("1.0.0")).unwrap();
-		let ignored = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
-		assert!(
-			ignored.lines().any(|l| l.trim() == expected),
-			"the setup marker directory is missing from .gitignore:\n{ignored}"
-		);
-	}
-
-	#[test]
-	fn the_legacy_in_workspace_marker_stays_ignored() {
-		// Someone upgrading has one of these in every workspace already. Dropping
-		// the line would turn them all into untracked files in the source tree.
-		assert!(GITIGNORE_LINES.contains(&LEGACY_SETUP_MARKER));
-
-		let dir = tempfile::tempdir().unwrap();
-		write_artifacts(dir.path(), &default_skeleton("1.0.0")).unwrap();
-		let ignored = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
-		assert!(
-			ignored.lines().any(|l| l.trim() == LEGACY_SETUP_MARKER),
-			"the legacy setup marker is missing from .gitignore:\n{ignored}"
-		);
+	fn write(root: &Path, rel: &str, contents: &str) {
+		let path = root.join(rel);
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(path, contents).unwrap();
 	}
 
 	fn pin(engine: &str, version: &str) -> EnginePin {
@@ -393,180 +357,164 @@ mod tests {
 	}
 
 	#[test]
-	fn the_skeleton_declares_a_build_task_and_no_workspaces() {
-		let v = default_skeleton("1.2.3");
-		assert_eq!(v["$schema"], json!(".lattice/schema.json"));
-		assert_eq!(v["latticeVersion"], json!("1.2.3"));
-		assert_eq!(v["workspaces"], json!([]));
-		assert_eq!(v["tasks"]["build"]["dependsOn"], json!(["^build"]));
-		assert_eq!(v["tasks"]["build"]["outputs"], json!(["dist/**"]));
+	fn the_skeleton_says_nothing_it_does_not_have_to() {
+		let skeleton = default_skeleton("2.0.0");
+		assert_eq!(skeleton["latticeVersion"], "2.0.0");
+		assert!(skeleton.get("workspaces").is_none());
+		assert!(skeleton.get("tasks").is_none());
+		lattice_config::parse_config(&render_config(&skeleton).unwrap()).unwrap();
 	}
 
 	#[test]
-	fn scanned_workspaces_keep_their_scan_order() {
-		let web = candidate("web", "apps/web", "package.json");
-		let api = candidate("api", "services/api", "Cargo.toml");
-		let node = pin("node", "22.11.0");
+	fn a_js_monorepo_needs_only_the_projects_its_workspace_file_misses() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let root = dir.path();
+		write(root, "package.json", r#"{"workspaces": ["packages/*"]}"#);
+		write(root, "package-lock.json", "{}");
+		write(root, "packages/ui/package.json", r#"{"name": "ui"}"#);
+		write(root, "services/api/go.mod", "module api\n");
+		write(root, "services/api/go.sum", "");
+		write(root, "services/worker/go.mod", "module worker\n");
+		write(root, "services/worker/go.sum", "");
 
-		let v = build_config(&[&web, &api], &[&node], "1.0.0");
-		assert_eq!(
-			v["workspaces"],
-			json!([
-				{ "name": "web", "path": "apps/web" },
-				{ "name": "api", "path": "services/api" }
-			])
+		let p = propose(root);
+		assert_eq!(p.native, ["packages/ui"]);
+		let extra: Vec<&str> = p.extra.iter().map(|c| c.path.as_str()).collect();
+		assert_eq!(extra, ["services/api", "services/worker"]);
+
+		let chosen: Vec<&WorkspaceCandidate> = p.extra.iter().collect();
+		let config = build_config(&chosen, &extra, &[], "2.0.0");
+		assert_eq!(config["workspaces"], json!(["services/*"]));
+		assert!(config.get("tasks").is_none());
+	}
+
+	#[test]
+	fn a_monorepo_roots_turbo_settings_are_imported() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let root = dir.path();
+		write(
+			root,
+			"package.json",
+			r#"{"workspaces": ["packages/*"], "packageManager": "npm@11.0.0"}"#,
 		);
-		assert_eq!(v["engines"]["node"], json!("22.11.0"));
-		assert_eq!(v["tasks"]["build"]["dependsOn"], json!(["^build"]));
+		write(
+			root,
+			"turbo.json",
+			r#"{"tasks": {"build": {"dependsOn": ["^build"], "outputs": ["dist/**", ".next/**"]}}}"#,
+		);
+		write(root, "packages/ui/package.json", r#"{"name": "ui"}"#);
+		let p = propose(root);
+		let settings = p.root.expect("the root's turbo.json is a settings source");
+		let mut config = build_config(&[], &[], &[], "2.0.0");
+		import_settings(&mut config, &[&settings]);
+		assert_eq!(
+			config["tasks"]["build"]["outputs"],
+			json!(["dist/**", ".next/**"])
+		);
 	}
 
 	#[test]
-	fn an_engine_only_config_declares_no_task_at_all() {
-		// Nothing to build, so claiming a build task would be inventing one.
+	fn a_gradle_build_is_proposed_as_one_project() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let root = dir.path();
+		write(root, "settings.gradle.kts", "include(\":app\")\n");
+		write(root, "gradlew", "");
+		write(root, "app/build.gradle.kts", "");
+		let p = propose(root);
+		assert!(p.extra.is_empty(), "{:?}", p.extra);
+		assert!(p.native.is_empty());
+		assert_eq!(p.root.unwrap().driver.as_deref(), Some("gradle"));
+	}
+
+	#[test]
+	fn one_of_two_siblings_is_written_literally() {
+		assert_eq!(
+			workspace_patterns(&["services/api"], &["services/api", "services/old"]),
+			["services/api"]
+		);
+		assert_eq!(
+			workspace_patterns(&["tools"], &["tools", "services/api"]),
+			["tools"]
+		);
+	}
+
+	#[test]
+	fn a_pin_becomes_a_string_form_engine() {
 		let node = pin("node", "22.11.0");
-		let v = build_config(&[], &[&node], "1.0.0");
-		assert_eq!(v["workspaces"], json!([]));
-		assert_eq!(v["tasks"], json!({}));
-		assert_eq!(v["engines"]["node"], json!("22.11.0"));
+		let config = build_config(&[], &[], &[&node], "2.0.0");
+		assert_eq!(config["engines"]["node"], "22.11.0");
+		assert!(config.get("workspaces").is_none());
+	}
+
+	#[test]
+	fn turbo_task_settings_carry_over_and_bare_names_do_not() {
+		use lattice_workspace::scan::TaskCandidate;
+		let mut c = WorkspaceCandidate {
+			name: "web".into(),
+			path: "web".into(),
+			marker: "package.json".into(),
+			driver: Some("turbo".into()),
+			default_selected: true,
+			declared: DeclaredTasks::default(),
+		};
+		c.declared.tasks = vec![
+			TaskCandidate {
+				name: "build".into(),
+				detail: Some(TaskDetail {
+					depends_on: Some(vec!["^build".into(), "codegen".into()]),
+					outputs: Some(vec!["dist/**".into()]),
+					..Default::default()
+				}),
+			},
+			TaskCandidate {
+				name: "lint".into(),
+				detail: None,
+			},
+		];
+		let config = build_config(&[&c], &["web"], &[], "2.0.0");
+		assert_eq!(config["tasks"]["build"]["outputs"], json!(["dist/**"]));
+		assert_eq!(config["tasks"]["build"]["dependsOn"], json!(["^build"]));
+		assert!(config["tasks"].get("lint").is_none());
+	}
+
+	#[test]
+	fn rendering_ends_in_exactly_one_newline() {
+		let text = render_config(&default_skeleton("2.0.0")).unwrap();
+		assert!(text.ends_with("}\n") && !text.ends_with("\n\n"));
+	}
+
+	#[test]
+	fn writing_twice_leaves_gitignore_alone_the_second_time() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let config = default_skeleton("2.0.0");
+		let first = write_artifacts(dir.path(), &config).unwrap();
+		assert!(first.contains(&".gitignore".to_string()));
+		let second = write_artifacts(dir.path(), &config).unwrap();
+		assert!(!second.contains(&".gitignore".to_string()));
+	}
+
+	#[test]
+	fn every_ignored_path_is_a_machine_local_artifact() {
+		for line in GITIGNORE_LINES {
+			assert_ne!(*line, ".lattice/schema.json", "the schema is committed");
+			assert_ne!(
+				*line, ".lattice/",
+				"ignoring all of .lattice hides the schema"
+			);
+		}
+		assert!(GITIGNORE_LINES.contains(&".lattice/setup/"));
+		assert!(GITIGNORE_LINES.contains(&LEGACY_SETUP_MARKER));
 	}
 
 	#[test]
 	fn appending_ignore_lines_twice_does_not_duplicate_them() {
 		let once = ensure_gitignore_lines("", GITIGNORE_LINES);
-		let twice = ensure_gitignore_lines(&once, GITIGNORE_LINES);
-		assert_eq!(once, twice);
-		assert_eq!(twice.matches(".lattice/cache/").count(), 1);
+		assert_eq!(ensure_gitignore_lines(&once, GITIGNORE_LINES), once);
 	}
 
 	#[test]
 	fn existing_ignore_content_is_kept_and_comes_first() {
-		let existing = "node_modules/\ntarget/\n";
-		let out = ensure_gitignore_lines(existing, GITIGNORE_LINES);
-		assert!(out.starts_with("node_modules/\ntarget/\n"));
-		assert!(out.contains(".lattice/cache/"));
-	}
-
-	#[test]
-	fn a_line_already_present_is_not_added_again() {
-		let out = ensure_gitignore_lines(".lattice/cache/\n", GITIGNORE_LINES);
-		assert_eq!(out.matches(".lattice/cache/").count(), 1);
-		assert!(out.contains(".lattice/toolchains/"));
-	}
-	fn task(name: &str, detail: Option<TaskDetail>) -> TaskCandidate {
-		TaskCandidate {
-			name: name.to_string(),
-			detail,
-		}
-	}
-
-	fn list(items: &[&str]) -> Option<Vec<String>> {
-		Some(items.iter().map(|s| s.to_string()).collect())
-	}
-
-	/// The bug this exists for: a repo whose task runner declares a dozen tasks
-	/// used to get a config with one, and every other task it already ran was
-	/// undeclared from the moment init finished.
-	#[test]
-	fn every_declared_task_reaches_the_config() {
-		let mut root = candidate("app", ".", "package.json");
-		root.declared = DeclaredTasks {
-			tasks: vec![
-				task(
-					"build",
-					Some(TaskDetail {
-						depends_on: list(&["^build"]),
-						outputs: list(&["dist/**"]),
-						..Default::default()
-					}),
-				),
-				task(
-					"dev",
-					Some(TaskDetail {
-						persistent: Some(true),
-						cache: Some(false),
-						..Default::default()
-					}),
-				),
-				task("lint", Some(TaskDetail::default())),
-			],
-			global_dependencies: vec!["tsconfig.base.json".into()],
-			global_env: vec!["CI".into()],
-			source: "turbo.json".into(),
-		};
-
-		let config = build_config(&[&root], &[], "1.0.0");
-
-		assert_eq!(
-			config["tasks"],
-			json!({
-				"build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
-				"dev": { "persistent": true, "cache": false },
-				"lint": {}
-			})
-		);
-		assert_eq!(config["globalDependencies"], json!(["tsconfig.base.json"]));
-		assert_eq!(config["globalEnv"], json!(["CI"]));
-	}
-
-	/// Lattice refuses to load a config whose task depends on a task it does not
-	/// define, so importing half a task graph has to leave a config that runs.
-	#[test]
-	fn a_dependency_on_a_task_that_was_not_imported_is_dropped() {
-		let mut ws = candidate("app", ".", "package.json");
-		ws.declared = DeclaredTasks {
-			tasks: vec![task(
-				"zip",
-				Some(TaskDetail {
-					depends_on: list(&["^build", "build", "zip"]),
-					..Default::default()
-				}),
-			)],
-			source: "turbo.json".into(),
-			..Default::default()
-		};
-
-		let config = build_config(&[&ws], &[], "1.0.0");
-		assert_eq!(config["tasks"], json!({ "zip": {} }));
-	}
-
-	/// Two workspaces naming the same task is ordinary in a monorepo. The one
-	/// that says something about it is the one worth keeping, whichever came
-	/// first.
-	#[test]
-	fn the_workspace_that_describes_a_shared_task_wins() {
-		let mut scripts = candidate("web", "apps/web", "package.json");
-		scripts.declared = DeclaredTasks {
-			tasks: vec![task("build", None), task("test", None)],
-			source: "package.json".into(),
-			..Default::default()
-		};
-		let mut runner = candidate("root", ".", "package.json");
-		runner.declared = DeclaredTasks {
-			tasks: vec![task(
-				"build",
-				Some(TaskDetail {
-					outputs: list(&["build/**"]),
-					..Default::default()
-				}),
-			)],
-			source: "turbo.json".into(),
-			..Default::default()
-		};
-
-		let config = build_config(&[&scripts, &runner], &[], "1.0.0");
-		assert_eq!(config["tasks"]["build"], json!({ "outputs": ["build/**"] }));
-		assert_eq!(config["tasks"]["test"], json!({}));
-	}
-
-	/// A `cargo` or `go` workspace publishes no list of the tasks it accepts, so
-	/// there is nothing to import and `build` remains the one safe proposal.
-	#[test]
-	fn a_workspace_that_declares_no_task_list_still_gets_a_build() {
-		let rust = candidate("core", "crates/core", "Cargo.toml");
-		let config = build_config(&[&rust], &[], "1.0.0");
-		assert_eq!(
-			config["tasks"],
-			json!({ "build": { "dependsOn": ["^build"] } })
-		);
+		let out = ensure_gitignore_lines("node_modules/", &[".lattice/cache/"]);
+		assert_eq!(out, "node_modules/\n.lattice/cache/\n");
 	}
 }

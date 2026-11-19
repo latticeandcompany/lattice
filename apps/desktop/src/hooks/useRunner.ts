@@ -14,6 +14,9 @@ import { cacheFlags, type CacheMode } from '../lib/runOptions.ts';
 export interface RunSettings {
 	tasks: string[];
 	filter?: string;
+	/** Exact workspace names, for a row's own Run button. */
+	workspaces?: string[];
+	args?: string[];
 	sequentially: boolean;
 	concurrency?: number;
 	keepGoing: boolean;
@@ -41,6 +44,8 @@ export const useRunner = () => {
 			const graph = await api.graphDump({
 				tasks: settings.tasks,
 				filter: settings.filter,
+				workspaces: settings.workspaces,
+				args: settings.args,
 				sequentially: settings.sequentially,
 			});
 			runStore.begin(graph);
@@ -50,17 +55,22 @@ export const useRunner = () => {
 				{
 					tasks: settings.tasks,
 					filter: settings.filter,
+					workspaces: settings.workspaces,
+					args: settings.args,
 					sequentially: settings.sequentially,
 					concurrency: settings.concurrency,
 					keepGoing: settings.keepGoing,
 					noCache: flags.noCache,
 					force: flags.force,
 				},
-				(message) => runStore.ingest(message),
+				// A run for a project since closed keeps sending as it unwinds.
+				(message) => {
+					if (runStore.epoch === epoch) runStore.ingest(message);
+				},
 			);
 
 			// Anything still queued arrived after the run ended, so drain before settling.
-			runStore.flush();
+			if (runStore.epoch === epoch) runStore.flush();
 			runStore.settle(outcome, epoch);
 			return outcome;
 		} catch (caught) {

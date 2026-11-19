@@ -839,6 +839,10 @@ pub struct HashInputs<'a> {
 	/// Resolved cache keys of this task's prerequisites. Sorted here. This is what
 	/// makes a change anywhere upstream reach every task downstream of it.
 	pub dep_keys: &'a [String],
+	/// [`workspace_source_digest`] of every workspace this one depends on,
+	/// directly or not, by name. Sorted here. `dep_keys` only covers prerequisites
+	/// in the graph, and a dependency with no task of the same name has none.
+	pub upstream: &'a [(String, String)],
 	/// Digest of the repo's `globalDependencies`, from
 	/// [`global_dependencies_digest`]. The same for every task in a run, so it is
 	/// computed once rather than per task.
@@ -858,6 +862,7 @@ pub const KEY_COMPONENTS: &[&str] = &[
 	"command",
 	"toolchain",
 	"dependencies",
+	"upstream",
 	"patterns",
 	"env",
 	"globalEnv",
@@ -956,6 +961,18 @@ pub fn compute_key_detailed(inputs: &HashInputs) -> Result<KeyBreakdown> {
 			dep_keys.dedup();
 			for dep in dep_keys {
 				hash_field(h, "dep.key", dep.as_bytes());
+			}
+		}),
+	);
+
+	components.insert(
+		"upstream".to_string(),
+		digest_of(|h| {
+			let mut upstream: Vec<&(String, String)> = inputs.upstream.iter().collect();
+			upstream.sort();
+			for (name, digest) in upstream {
+				hash_field(h, "upstream.name", name.as_bytes());
+				hash_field(h, "upstream.digest", digest.as_bytes());
 			}
 		}),
 	);
@@ -1106,6 +1123,46 @@ fn digest_of_env(values: &[(String, Option<String>)]) -> String {
 				None => hash_field(h, "env.unset", b""),
 			}
 		}
+	})
+}
+
+/// Digest of what a workspace's tasks read, for the keys of the workspaces that
+/// depend on it: the union of their `inputs` when every task declares some, the
+/// whole workspace otherwise, minus every task's `ignore` and `outputs`.
+pub fn workspace_source_digest(workspace_path: &Path, tasks: &[&PipelineTask]) -> Result<String> {
+	let mut excluded: Vec<String> = Vec::new();
+	for task in tasks {
+		excluded.extend(task.ignore.iter().flatten().cloned());
+		if let Some(outputs) = task.outputs.as_deref() {
+			excluded.extend(expand_dir_patterns(workspace_path, outputs));
+		}
+	}
+	let inputs: Option<Vec<String>> = if tasks.is_empty() {
+		None
+	} else {
+		tasks
+			.iter()
+			.map(|t| t.inputs.clone())
+			.collect::<Option<Vec<_>>>()
+			.map(|lists| lists.concat())
+	};
+	let mut files = match inputs {
+		Some(patterns) => collect_matching_files(workspace_path, &patterns, &excluded)?,
+		None => collect_workspace_files(workspace_path, &excluded)?,
+	};
+	files.dedup();
+	files.sort();
+	try_digest_of(|h| {
+		for file_path in &files {
+			let rel = file_path
+				.strip_prefix(workspace_path)
+				.unwrap_or(file_path)
+				.to_string_lossy()
+				.into_owned();
+			hash_field(h, "source.path", rel.as_bytes());
+			hash_input_into(h, "source", file_path)?;
+		}
+		Ok(())
 	})
 }
 
@@ -1607,9 +1664,45 @@ mod tests {
 			toolchain_identity: "rust-1.80",
 			lattice_version: "0.1.0",
 			dep_keys: &[],
+			upstream: &[],
 			global_digest: "",
 			global_env_values: &[],
 		}
+	}
+
+	#[test]
+	fn an_edit_upstream_moves_the_key_but_its_build_output_does_not() {
+		let dir = tempfile::tempdir().unwrap();
+		let ui = dir.path();
+		std::fs::create_dir_all(ui.join("src")).unwrap();
+		std::fs::write(ui.join("src/button.tsx"), "v1").unwrap();
+		let build = PipelineTask {
+			outputs: Some(vec!["dist/**".to_string()]),
+			..PipelineTask::default()
+		};
+		let before = workspace_source_digest(ui, &[&build]).unwrap();
+
+		std::fs::create_dir_all(ui.join("dist")).unwrap();
+		std::fs::write(ui.join("dist/index.js"), "built").unwrap();
+		assert_eq!(workspace_source_digest(ui, &[&build]).unwrap(), before);
+
+		std::fs::write(ui.join("src/button.tsx"), "v2").unwrap();
+		let after = workspace_source_digest(ui, &[&build]).unwrap();
+		assert_ne!(after, before);
+
+		let web = tempfile::tempdir().unwrap();
+		let task = PipelineTask::default();
+		let key = |digest: &str| {
+			let upstream = [("ui".to_string(), digest.to_string())];
+			let inputs = HashInputs {
+				upstream: &upstream,
+				..base_inputs(web.path(), &task, &[])
+			};
+			compute_key_detailed(&inputs).unwrap()
+		};
+		let (old, new) = (key(&before), key(&after));
+		assert_ne!(old.key, new.key);
+		assert_eq!(new.changed_from(&old), ["upstream"]);
 	}
 
 	fn meta_for(key: &str) -> CacheMeta {

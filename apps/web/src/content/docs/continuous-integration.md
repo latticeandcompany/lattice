@@ -63,17 +63,18 @@ task fails with `command not found`.
 ## What output a job gets
 
 `lattice run` and `lattice setup` pick their output mode the same way
-everywhere. Lattice prints raw, line-by-line output when stdout is not a
-terminal, when the `CI` environment variable is set, or when you pass
-`-v`/`--verbose`. A CI job satisfies the first two at once: a step's stdout
-is not a terminal, and GitHub Actions sets `CI` in every job.
+everywhere. Lattice prints the plain stream, one `workspace:task:` line per
+event, when stdout is not a terminal, when the `CI` environment variable is set,
+or when you pass `--stream`. A CI job satisfies the first two at once: a step's
+stdout is not a terminal, and GitHub Actions sets `CI` in every job.
 
-`CI` and `-v` are interchangeable as mode triggers. `-v` additionally turns on
-per-task output and hash trace lines. Somewhere that does not set `CI`, such as
-an SSH session driving a build, pass `-v`:
+Every line a task prints is streamed under its label as it arrives, so a job log
+reads like the build's own output with a prefix. `-v` adds each task's cache key
+and the reason it missed. Somewhere that does not set `CI`, such as an SSH
+session driving a build, pass `--stream`:
 
 ```sh
-lattice run build -v
+lattice run build --stream
 ```
 
 Color follows the terminal rather than the mode, so a CI log is free of escape
@@ -107,7 +108,7 @@ this one replaced.
 ## Exit codes
 
 `lattice run` exits `0` when every task finished successfully, including runs
-with nothing to do. No workspaces declared, or a `--filter` that matched
+with nothing to do. A repo with no workspaces, or a `--filter` that matched
 nothing, prints a line and still exits `0`.
 
 | Exit | Means |
@@ -147,8 +148,8 @@ The run still exits `1` if anything failed. The summary line carries the failed
 count, and each task skipped because a prerequisite failed prints
 `skipped (dependency failed)` under `-v`. Each failure prints one line naming
 the exit code and how long the task ran, `api:test: FAILED (code 1) after
-12.40s`, with the task's captured output under it. A search for `FAILED` in the
-log finds both the tasks that broke and what they printed.
+12.40s`, after the output the task streamed. A search for `FAILED` in the log
+finds the tasks that broke, with what they printed just above.
 
 ## Cap parallelism on a small runner
 

@@ -79,12 +79,13 @@ fn path_injection_makes_provisioned_tool_available_during_run() {
 	fx.config(&format!(
 		r#"{{
   "latticeVersion": "0.1.0",
-  "workspaces": [
-    {{ "name": "app", "path": "app", "auto": false,
+  "workspaces": ["app"],
+  "overrides": {{
+    "app": {{
       "engines": {{ "faketool": {} }},
-      "scripts": {{ "build": "faketool --version" }} }}
-  ],
-  "tasks": {{ "build": {{}} }}
+      "tasks": {{ "build": "faketool --version" }}
+    }}
+  }}
 }}
 "#,
 		faketool_engine()
@@ -96,4 +97,63 @@ fn path_injection_makes_provisioned_tool_available_during_run() {
 		.success()
 		.stdout(predicate::str::contains("faketool 1.2.3"))
 		.stdout(predicate::str::contains("0 failed"));
+}
+
+/// Lattice runs from any directory in the repo, so an `installCmd` that names a
+/// script by a relative path has to see the same directory from each of them.
+#[test]
+fn an_install_cmd_runs_from_the_repo_root_wherever_lattice_started() {
+	let fx = Fixture::new();
+	fx.mkdir("app/src");
+	let install = sh::all([
+		sh::write("installed-here.txt", "x"),
+		sh::install_fake_tool("faketool", "1.2.3"),
+	]);
+	fx.config(&format!(
+		r#"{{
+  "latticeVersion": "0.1.0",
+  "engines": {{ "faketool": {{
+    "version": ">=1.2.0",
+    "versionCmd": "faketool --version",
+    "installCmd": {},
+    "bin": "bin"
+  }} }}
+}}
+"#,
+		sh::json(&install)
+	));
+
+	fx.lattice()
+		.current_dir(fx.join("app/src"))
+		.args(["setup"])
+		.assert()
+		.success();
+	assert!(fx.exists("installed-here.txt"));
+	assert!(!fx.exists("app/src/installed-here.txt"));
+}
+
+/// `lattice env` hands the PATH a task sees to the user's own shell, so the
+/// pinned tool answers there too.
+#[test]
+fn env_prints_the_pinned_toolchain_for_the_shell() {
+	let fx = Fixture::new();
+	fx.config(&format!(
+		r#"{{
+  "latticeVersion": "0.1.0",
+  "engines": {{ "faketool": {} }}
+}}
+"#,
+		faketool_engine()
+	));
+
+	let out = fx
+		.lattice()
+		.args(["env", "--shell", "posix"])
+		.assert()
+		.success();
+	let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+	assert!(stdout.starts_with("export PATH='"), "{stdout}");
+	assert!(stdout.trim_end().ends_with(":\"$PATH\""), "{stdout}");
+	assert!(stdout.contains("toolchains"), "{stdout}");
+	assert!(stdout.contains("faketool"), "{stdout}");
 }

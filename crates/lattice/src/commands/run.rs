@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args;
 use console::style;
 
@@ -6,19 +6,22 @@ use dagger::{dry_run_order, includes_persistent_task, ExecutionGraph};
 use lattice_output::{apply_color_policy, banner_line, make_reporter, paint_teal, OutputMode};
 use lattice_project::{Plan, Project, RunOptions, RunRequest};
 
-use crate::cli::{detect_output_mode, effective_loquacious, maybe_emit_version_nag, BIN_VERSION};
+use crate::cli::{
+	detect_output_mode, effective_loquacious, maybe_emit_version_nag, OutputFlags, BIN_VERSION,
+};
 
 #[derive(Args, Debug)]
 #[command(long_about = "Run one or more tasks across your workspaces.\n\n\
-Lattice builds each task's dependency graph from the `tasks` map in lattice.json, \
-then runs that graph in dependency order. Naming several tasks at once merges them \
-into one graph, so a dependency they share runs once. To run each task's graph to \
-completion before the next one starts, pass --sequentially.\n\n\
+A task runs in every workspace that has it: a script in package.json, a recipe in a \
+justfile, or a verb its tool has, such as `cargo clippy` for lint. Workspaces run in \
+dependency order, and naming several tasks at once merges them into one graph, so a \
+dependency they share runs once. Run from inside a workspace to run it and what it \
+depends on.\n\n\
 Examples:\n  \
 lattice run build\n  \
 lattice run lint test build\n  \
-lattice run lint test build --sequentially\n  \
 lattice run test --filter api\n  \
+lattice run test -- --nocapture\n  \
 lattice run lint --concurrency 4 --continue")]
 pub struct RunArgs {
 	/// One or more task names, separated by spaces.
@@ -54,23 +57,27 @@ pub struct RunArgs {
 	/// List the tasks that would run, then exit without running them.
 	#[arg(long)]
 	pub dry_run: bool,
+
+	/// Arguments after `--` are passed to the tasks you named.
+	#[arg(last = true, value_name = "ARGS")]
+	pub args: Vec<String>,
 }
 
 impl RunArgs {
-	pub async fn execute(&self, flag_loq: bool, no_version_check: bool) -> Result<()> {
+	pub async fn execute(&self, flags: OutputFlags, no_version_check: bool) -> Result<()> {
 		let cwd = std::env::current_dir()?;
 		let project = Project::open(&cwd)?;
 		project.require_known_tasks(&self.tasks)?;
 
-		let effective_loq = effective_loquacious(flag_loq, project.config.settings.loquacious);
-		let mut mode = detect_output_mode(effective_loq);
+		let effective_loq = effective_loquacious(flags.verbose, project.config.settings.loquacious);
+		let mut mode = detect_output_mode(flags.stream);
 
 		// Persistent tasks (dev servers, watchers) stream output indefinitely,
 		// which the live TUI can't render. Default such runs to raw, CI-style
 		// line output so that streaming output stays visible.
 		if mode == OutputMode::Interactive {
 			let task_refs: Vec<&str> = self.tasks.iter().map(|t| t.as_str()).collect();
-			if includes_persistent_task(&task_refs, &project.config) {
+			if includes_persistent_task(&task_refs, &project.workspaces) {
 				mode = OutputMode::Raw;
 			}
 		}
@@ -78,7 +85,8 @@ impl RunArgs {
 		// The mode is final here, and nothing has printed yet.
 		apply_color_policy(mode);
 
-		let request = self.request();
+		let request = self.request(project.cwd_workspace.as_deref());
+		self.require_a_task_in_scope(&project, &request)?;
 
 		if self.dry_run {
 			// A dry run has no runner to report through, so it gets a reporter of
@@ -93,11 +101,7 @@ impl RunArgs {
 			Plan::NoWorkspaces => {
 				// A freshly-scaffolded repo has an empty `workspaces` array; exit 0
 				// rather than erroring.
-				println!(
-					"lattice: no workspaces declared. Add one to the \
-                     `workspaces` array in lattice.json, then run `{}`.",
-					self.tasks.join(" ")
-				);
+				println!("{NO_WORKSPACES}");
 				return Ok(());
 			}
 			Plan::NoMatch { filter } => {
@@ -112,6 +116,9 @@ impl RunArgs {
 		maybe_emit_version_nag(mode, &project.config, no_version_check);
 
 		let reporter = make_reporter(mode, effective_loq);
+		if let Some(scoped) = request.plan.workspaces.as_ref().and_then(|w| w.first()) {
+			reporter.scope(scoped);
+		}
 
 		let outcome = lattice_project::run(RunOptions {
 			project: &project,
@@ -137,11 +144,37 @@ impl RunArgs {
 		}
 	}
 
-	fn request(&self) -> RunRequest {
+	/// A run scoped to the workspace it started in, which has none of the tasks
+	/// asked for, would run nothing and exit 0. That is what a mistyped CI step
+	/// looks like, so it fails the way an unknown task does.
+	fn require_a_task_in_scope(&self, project: &Project, request: &RunRequest) -> Result<()> {
+		let Some(scoped) = request.plan.workspaces.as_ref().and_then(|w| w.first()) else {
+			return Ok(());
+		};
+		let Some(ws) = project.workspaces.iter().find(|w| &w.name == scoped) else {
+			return Ok(());
+		};
+		if self.tasks.iter().any(|task| ws.task(task).is_some()) {
+			return Ok(());
+		}
+		bail!(
+			"{scoped}, the workspace you are in, has no '{}' task. Run it from the repo \
+			 root to run it everywhere, or pick workspaces with --filter",
+			self.tasks.join("' or '")
+		);
+	}
+
+	/// `cwd_workspace` scopes the run to the workspace it was started inside,
+	/// unless `--filter` picks workspaces itself.
+	fn request(&self, cwd_workspace: Option<&str>) -> RunRequest {
 		RunRequest {
 			plan: lattice_project::PlanRequest {
 				tasks: self.tasks.clone(),
 				filter: self.filter.clone(),
+				workspaces: cwd_workspace
+					.filter(|_| self.filter.is_none())
+					.map(|ws| vec![ws.to_string()]),
+				args: self.args.clone(),
 				sequentially: self.sequentially,
 			},
 			no_cache: self.no_cache,
@@ -154,11 +187,7 @@ impl RunArgs {
 	fn print_plan(&self, project: &Project, request: &RunRequest) -> Result<()> {
 		match project.plan(&request.plan)? {
 			Plan::NoWorkspaces => {
-				println!(
-					"lattice: no workspaces declared. Add one to the \
-                     `workspaces` array in lattice.json, then run `{}`.",
-					self.tasks.join(" ")
-				);
+				println!("{NO_WORKSPACES}");
 			}
 			Plan::NoMatch { filter } => {
 				println!("lattice: no workspaces matched filter '{}'.", filter);
@@ -179,6 +208,10 @@ impl RunArgs {
 		Ok(())
 	}
 }
+
+const NO_WORKSPACES: &str = "lattice: found no workspaces. The repo root names none in a \
+workspace file and holds no project Lattice recognizes. List workspace directories under \
+`workspaces` in lattice.json, like \"apps/*\".";
 
 /// Print a task graph's topological order under a banner (used by `--dry-run`).
 fn print_dry_run(banner: &str, graph: &ExecutionGraph) {
@@ -204,6 +237,31 @@ fn print_dry_run(banner: &str, graph: &ExecutionGraph) {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use clap::Parser;
+
+	#[derive(Parser)]
+	struct Harness {
+		#[command(flatten)]
+		run: RunArgs,
+	}
+
+	fn parse(argv: &[&str]) -> RunArgs {
+		Harness::try_parse_from(argv).unwrap().run
+	}
+
+	#[test]
+	fn a_run_from_inside_a_workspace_is_scoped_to_it() {
+		let args = parse(&["run", "build"]);
+		let request = args.request(Some("web"));
+		assert_eq!(request.plan.workspaces, Some(vec!["web".to_string()]));
+	}
+
+	#[test]
+	fn arguments_after_a_double_dash_are_passed_through() {
+		let args = parse(&["run", "test", "--", "--nocapture", "-q"]);
+		assert_eq!(args.tasks, ["test"]);
+		assert_eq!(args.args, ["--nocapture", "-q"]);
+	}
 
 	#[test]
 	fn the_cli_flags_reach_the_request_unchanged() {
@@ -216,10 +274,16 @@ mod tests {
 			no_cache: false,
 			force: true,
 			dry_run: false,
+			args: vec!["-x".to_string()],
 		};
-		let request = args.request();
+		let request = args.request(Some("web"));
 		assert_eq!(request.plan.tasks, vec!["build", "test"]);
 		assert_eq!(request.plan.filter.as_deref(), Some("api"));
+		assert_eq!(
+			request.plan.workspaces, None,
+			"a filter wins over the directory"
+		);
+		assert_eq!(request.plan.args, ["-x"]);
 		assert!(request.plan.sequentially);
 		assert_eq!(request.concurrency, Some(4));
 		assert!(request.keep_going);

@@ -53,6 +53,11 @@ pub fn run() {
 			commands::run_stop,
 			commands::run_active,
 			commands::run_log,
+			commands::migrate_preview,
+			commands::migrate_apply,
+			commands::toolchains_check,
+			commands::cache_report,
+			commands::cache_prune,
 		])
 		.run(tauri::generate_context!())
 		.expect("the Lattice window could not start");

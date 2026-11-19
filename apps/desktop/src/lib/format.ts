@@ -75,3 +75,34 @@ export const shortenPath = (path: string, keep = 3): string => {
 	if (parts.length <= keep) return path;
 	return `…/${parts.slice(-keep).join('/')}`;
 };
+
+/**
+ * A byte count rounded to one decimal, `1.4 GB`, the way `lattice stats` prints a
+ * measured size.
+ */
+export const fmtBytes = (bytes: number): string => {
+	const units: [number, string][] = [
+		[1024 ** 4, 'TB'],
+		[1024 ** 3, 'GB'],
+		[1024 ** 2, 'MB'],
+		[1024, 'KB'],
+	];
+	for (const [unit, name] of units) {
+		if (bytes >= unit) return `${(bytes / unit).toFixed(1)} ${name}`;
+	}
+	return `${bytes} B`;
+};
+
+/** `3,390`, as the CLI groups a count. */
+export const fmtCount = (count: number): string => count.toLocaleString('en-US');
+
+/** Share of scheduled tasks that came from cache. Null when none were ever scheduled. */
+export const hitRate = (hits: number, tasks: number): number | null =>
+	tasks > 0 ? Math.round((hits * 100) / tasks) : null;
+
+/** `4 Sep 2026`, for a date a person reads rather than parses. */
+export const fmtDay = (iso: string): string => {
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return iso;
+	return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+};

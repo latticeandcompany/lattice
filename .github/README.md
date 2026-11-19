@@ -21,12 +21,15 @@
 ---
 
 Lattice runs the tasks in your repo in dependency order and in parallel. It
-stores each result under a hash of everything that produced it, so a task whose
-inputs have not changed does not run again.
+reads the workspaces, the dependencies between them and their tasks from the
+files your tools already read — `pnpm-workspace.yaml`, Cargo's `[workspace]`,
+`go.work`, each package's scripts, a Gradle build — so a `lattice.json` holds
+only what those cannot say. It stores each result under a hash of everything
+that produced it, so a task whose inputs have not changed does not run again.
 
-It runs each workspace with the tool that workspace already uses. Its 34 drivers
-cover JavaScript, Rust, Python, Go, Ruby, the JVM, .NET, Swift, PHP, Elixir,
-Dart, Haskell, and two language-agnostic task runners. Lattice pins each tool's
+It runs each workspace with the tool that workspace already uses, across
+JavaScript, Rust, Python, Go, Ruby, the JVM, .NET, Swift, PHP, Elixir, Dart,
+Haskell, and two language-agnostic task runners. It can also pin each tool's
 version, so every machine builds against the same one.
 
 ## Install
@@ -96,133 +99,109 @@ lattice init
 lattice run build
 ```
 
-`lattice init` reads the repo and shows you two lists: the directories that hold
-a manifest, and the tool versions the repo already pins. Uncheck anything wrong,
-and it writes `lattice.json`, a committed `.lattice/schema.json`, and the
-`.gitignore` lines for what Lattice keeps locally. `lattice init --yes` skips the
-prompts and writes what the scan found.
-
-The tasks come with the workspaces. For each one you keep, `init` reads the task
-list out of the file that workspace's tool already reads — a `turbo.json`, an
-`nx.json`, `package.json` scripts, a `justfile`, a `pyproject.toml` — so a repo
-that runs twelve tasks today gets twelve, not a starter `build`.
-
-Then run a task. Below is Lattice building six of its own crates. `--filter`
-picks the workspaces the run is for, and the graph still holds everything they
-depend on:
+`lattice init` reads the repo and writes a `lattice.json` holding only what it
+would not find on its own: projects no workspace file names, and the tool
+versions the repo already pins. Then it lists every workspace it sees, with the
+tool that runs it and the tasks it can run:
 
 ```text
-$ lattice run build --filter lattice-runner
-lattice-events:build: running
-lattice-config:build: running
-lattice-events:build: done (0.20s)
-lattice-config:build: done (0.22s)
-lattice-cache:build: running
-lattice-workspace:build: running
-lattice-cache:build: done (0.14s)
-lattice-workspace:build: done (0.15s)
-dagger:build: running
-dagger:build: done (0.87s)
-lattice-runner:build: running
-lattice-runner:build: done (1.74s)
-lattice: 6 tasks, 0 cached, 0 failed, 3.09s
+✓ wrote lattice.json
+✓ wrote .lattice/schema.json
+✓ updated .gitignore
+
+2 workspaces:
+  app    npm      build test
+  greet  npm      build
+
+next: lattice run build
 ```
 
-`lattice-cache:build` and `lattice-workspace:build` both wait on
-`lattice-config:build`, because each of those workspaces names `lattice-config`
-in its `dependsOn` and the `build` task depends on `^build`. `dagger:build` waits
-on both of them, and `lattice-runner:build` waits on all five.
+In that two-package npm repo, the whole config is a version pin. `app` depends
+on `greet` in its `package.json`, so `greet` builds first:
+
+```text
+$ lattice run build | cat
+greet:build: running
+greet:build: done (0.54s)
+app:build: running
+app:build: done (0.44s)
+lattice: 2 tasks, 0 cached, 0 failed, 1.12s
+```
 
 Run it again. Nothing changed, so nothing runs:
 
 ```text
-$ lattice run build --filter lattice-runner
-lattice-events:build: cache hit [91d1654e]
-lattice-config:build: cache hit [69fddcff]
-lattice-cache:build: cache hit [941d68ea]
-lattice-workspace:build: cache hit [d9533b10]
-dagger:build: cache hit [eb6d4dc3]
-lattice-runner:build: cache hit [59afe0f7]
-lattice: 6 tasks, 6 cached, 0 failed, 0.03s, 3.32s saved
+$ lattice run build | cat
+greet:build: cache hit [11330699]
+app:build: cache hit [3f0a3810]
+lattice: 2 tasks, 2 cached, 0 failed, 0.01s, 0.98s saved
 lattice: full power, nothing to run
 ```
 
-Both blocks are captured from this repo, which declares each of its crates as a
-workspace and builds itself with Lattice.
+On a terminal, the same run draws a live display: each running task with the
+last lines it printed, the tasks waiting and what they wait on, and progress.
 
 ## lattice.json
 
-One file at the root declares the workspaces and the task graph. Every command in
-it is a real shell command that you can also run by hand.
+Every key is optional. A monorepo whose packages sit in one workspace file needs
+nothing beyond a version. A repo with several languages says what no single
+manifest can:
 
 ```json
 {
-  "latticeVersion": "1.1.1",
-  "workspaces": [
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=20" } },
-    { "name": "api", "path": "services/api", "engines": { "go": ">=1.22" } },
-    {
-      "name": "utils",
-      "path": "libs/utils",
-      "auto": false,
-      "scripts": { "build": "python3 -m build", "test": "pytest" }
-    }
-  ],
+  "latticeVersion": "2.0.0",
+  "workspaces": ["services/*", "tools/codegen"],
+  "engines": { "node": ">=22", "go": ">=1.23" },
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
-    "test": { "dependsOn": ["build"] },
-    "dev": { "persistent": true, "cache": false }
+    "test": { "dependsOn": ["build"] }
+  },
+  "overrides": {
+    "web": { "dependsOn": ["api"] },
+    "tools/codegen": { "name": "codegen", "driver": "none", "tasks": { "build": "make proto" } }
   }
 }
 ```
 
-`web` and `api` are detected: Lattice reads the lockfile or declaration file
-already in each directory and runs the tool that file identifies. `utils` sets
-`auto: false` and declares its own commands.
+`workspaces` adds directories to the ones the root's workspace files already
+name. `overrides` holds what belongs to particular workspaces, keyed by name or
+path: an edge between languages, a command written out by hand, a tool Lattice
+cannot pick on its own.
 
-In `dependsOn`, `^build` means `build` in this workspace's dependencies. A bare
-task name, like `build` under `test`, means that task in this same workspace.
+A task runs wherever it exists: a `package.json` script, a justfile recipe, a
+Rakefile task, or a verb the workspace's tool has — `lattice run lint` is
+`cargo clippy` in a crate and `go vet ./...` in a module. A workspace without the
+task sits the run out. In `dependsOn`, `^build` means `build` in the workspaces
+this one depends on; `build` depends on `^build` by default.
+
+Moving from 1.x: `lattice migrate` rewrites the old config, keeping every
+workspace's name.
 
 ## How it works
 
 A task's cache key is a hash of everything that can change what the task
 produces: the command it resolved to, the files in its workspace, the manifests
 and lockfiles the workspace and the repo root hold, the environment values it
-names, the toolchain it resolved to, and the cache keys of the tasks it depends
-on. Declaring `inputs` narrows the file set to the globs you list. Change one
-file and every task downstream of it runs again, and nothing else does.
-
-A stored result counts as a hit only when its metadata parses and the archive's
+names, the tool versions it resolved to, and the cache keys of the tasks it
+depends on. Change one file and every task downstream of it runs again, and
+nothing else does. A stored result counts as a hit only when its archive's
 sha256 matches the digest recorded when it was written, so a corrupt artifact is
 a miss and never a false hit.
 
-Every run appends what its hits skipped to a ledger kept beside the cache, and
-`lattice stats` adds those lines up. The figure is task time rather than wall
-clock: each hit contributes the time the run that wrote its entry spent.
+Each workspace's tool comes from the evidence in its files: a `packageManager`
+field, a lockfile only one tool writes, a wrapper like `gradlew`, a manifest only
+one tool reads. A package inside a pnpm monorepo takes pnpm from the lockfile at
+the root. When nothing decides, the run stops before any task starts and prints
+the line that settles it. A Gradle, Maven or .NET build is one workspace, and
+its own tool orders its subprojects.
 
-A workspace left on `auto` gets its tool from the evidence in its own directory:
-a declaration file such as `packageManager` or `rust-toolchain.toml`, or a
-lockfile only one tool produces. Lattice then calls that tool, whether that is
-`npm`, `pnpm`, `cargo`, `go`, `uv`, `poetry`, `bundler`, `gradle`, `maven`,
-`dotnet`, or one of the others. If two tools of the same kind both have evidence,
-the run stops before any task starts and prints the `engines` line that settles
-it. A subtree with its own task runner becomes one workspace whose script calls
-that runner.
+An `engines` entry either checks the tool already on `PATH` or, with an
+`installCmd`, installs the tool under `./.lattice/toolchains/` and puts it on the
+`PATH` of each task. A tool that is wrong stops the run with the version wanted,
+the one found and where, the command that ran, and the fix. `lattice env` prints
+the same `PATH` for your own shell.
 
-An `engines` entry takes a version constraint, and the shape of the constraint
-decides what Lattice does with it. A version with no `installCmd` checks the tool
-already on `PATH` and fails the run if the version does not satisfy the
-constraint. A constraint with an `installCmd` installs the tool under
-`./.lattice/toolchains/`, records the version it resolved, and prepends that
-install's `bin` directory to the `PATH` of each task that needs it.
-
-A task's `PATH` also gets the project's own dependency binaries —
-`node_modules/.bin`, `vendor/bin`, `.venv/bin` and the rest, walked from the
-workspace up to the repo root — after any pinned toolchain. A task can name
-`eslint` or `pytest` directly, the way your package manager's own scripts do.
-
-Persistent tasks, such as dev servers, stream their output line by line and are
-never cached.
+Every task runs with an empty stdin and no controlling terminal, so a tool that
+reads the terminal fails with its own error instead of hanging the run.
 
 ## Documentation
 
@@ -239,9 +218,10 @@ the [CLI reference](https://latticeandcompany.github.io/lattice/docs/cli).
 ## For agents
 
 Lattice is new enough that a coding agent will guess at `lattice.json` from the
-shape of other config files. [`skills/lattice/`](../skills/lattice/SKILL.md) is a
-skill that replaces the guess. It carries the commands, the fields, the driver
-and engine tables, and the failures a run produces:
+shape of other config files, listing every workspace by hand.
+[`skills/lattice/`](../skills/lattice/SKILL.md) is a skill that replaces the
+guess. It carries the discovery rules, the commands, the fields, the driver and
+engine tables, and the failures a run produces:
 
 ```bash
 npx skills add latticeandcompany/lattice

@@ -1,6 +1,6 @@
 //! E2E tests for the passthrough pattern: a nested repo that already owns its
-//! own task runner, wired into the Lattice graph as one manual workspace whose
-//! scripts shell out to that runner. Lattice has no knowledge of the inner
+//! own task runner, wired into the Lattice graph as one workspace whose tasks
+//! shell out to that runner. Lattice has no knowledge of the inner
 //! graph; the nested repo is a single node it schedules and caches as one unit.
 //!
 //! The inner runner here is a stub executable named `turbo` dropped on `PATH`:
@@ -54,12 +54,11 @@ fn nested_repo(fx: &Fixture, ignore: &str) {
 	fx.config(&format!(
 		r#"{{
   "latticeVersion": "0.1.0",
-  "workspaces": [
-    {{ "name": "frontend", "path": "frontend", "auto": false,
-      "scripts": {{ "build": "turbo run build" }} }},
-    {{ "name": "api", "path": "api", "auto": false, "dependsOn": ["frontend"],
-      "scripts": {{ "build": {api} }} }}
-  ],
+  "workspaces": ["frontend", "api"],
+  "overrides": {{
+    "frontend": {{ "tasks": {{ "build": "turbo run build" }} }},
+    "api": {{ "dependsOn": ["frontend"], "tasks": {{ "build": {api} }} }}
+  }},
   "tasks": {{
     "build": {{
       "dependsOn": ["^build"],
