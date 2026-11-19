@@ -16,6 +16,17 @@ miss and the first run after an upgrade re-runs everything. Run
 `lattice version` to see which version is installed. See
 [Upgrading](/lattice/docs/upgrading) and [Caching](/lattice/docs/caching).
 
+## Lattice 2.0 — 2026-11-18
+
+- `lattice.json` changed shape: workspaces, the dependencies between them and
+  their tasks now come from the repo's own manifests, and the file says only
+  what those cannot. A 1.x config no longer loads; `lattice migrate` rewrites
+  it and keeps every workspace's name. The entries below have the details. See
+  [Upgrading to 2.0](/lattice/docs/upgrading#upgrading-to-20)
+- A Gradle build no longer hangs a run started from a terminal
+- The running version is hashed into every task's cache key, so the first run
+  after upgrading re-runs everything
+
 ## What a review of 2.0 turned up — 2026-10-01
 
 - A task's cache key now covers the files of every workspace it depends on,
@@ -53,17 +64,6 @@ miss and the first run after an upgrade re-runs everything. Run
   instead of the project before it; Toolchains, Cache and Migrate start over
   when the project changes; a stopped run's late messages no longer land on the
   next project; reading the cache no longer blocks the window
-
-## Lattice 2.0 — 2026-09-25
-
-- `lattice.json` changed shape: workspaces, the dependencies between them and
-  their tasks now come from the repo's own manifests, and the file says only
-  what those cannot. A 1.x config no longer loads; `lattice migrate` rewrites
-  it and keeps every workspace's name. The entries below have the details. See
-  [Upgrading to 2.0](/lattice/docs/upgrading#upgrading-to-20)
-- A Gradle build no longer hangs a run started from a terminal
-- The running version is hashed into every task's cache key, so the first run
-  after upgrading re-runs everything
 
 ## Tasks no longer share Lattice's terminal — 2026-09-25
 

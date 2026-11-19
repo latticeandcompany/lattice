@@ -16,6 +16,16 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
 `Added`/`Changed`/`Fixed` buckets, bold lead-ins, or marketing.
 -->
 
+### Lattice 2.0 — 2026-11-18
+
+- `lattice.json` changed shape: workspaces, the dependencies between them and
+  their tasks now come from the repo's own manifests, and the file says only
+  what those cannot. A 1.x config no longer loads; `lattice migrate` rewrites
+  it and keeps every workspace's name. The entries below have the details
+- A Gradle build no longer hangs a run started from a terminal
+- The running version is hashed into every task's cache key, so the first run
+  after upgrading re-runs everything
+
 ### What a review of 2.0 turned up — 2026-10-01
 
 - A task's cache key now covers the files of every workspace it depends on,
@@ -53,16 +63,6 @@ bullet. Where a reader needs it, say what the previous behavior was. Do not use
   instead of the project before it; Toolchains, Cache and Migrate start over
   when the project changes; a stopped run's late messages no longer land on the
   next project; reading the cache no longer blocks the window
-
-### Lattice 2.0 — 2026-09-25
-
-- `lattice.json` changed shape: workspaces, the dependencies between them and
-  their tasks now come from the repo's own manifests, and the file says only
-  what those cannot. A 1.x config no longer loads; `lattice migrate` rewrites
-  it and keeps every workspace's name. The entries below have the details
-- A Gradle build no longer hangs a run started from a terminal
-- The running version is hashed into every task's cache key, so the first run
-  after upgrading re-runs everything
 
 ### Tasks no longer share Lattice's terminal — 2026-09-25
 
