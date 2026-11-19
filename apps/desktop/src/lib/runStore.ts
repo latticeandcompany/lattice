@@ -25,7 +25,20 @@ export interface TaskView extends TaskSnapshot {
 	readonly missComponents?: readonly string[];
 	readonly missMessage?: string;
 	readonly hasOutput: boolean;
+	/** `workspace:task` labels this task waits on, from the run's plan. */
+	readonly waitsOn?: readonly string[];
 }
+
+/** How far a run has got: every task it will reach, and how many have settled. */
+export interface RunProgress {
+	readonly total: number;
+	readonly settled: number;
+	readonly cached: number;
+	readonly failed: number;
+	readonly running: number;
+}
+
+const SETTLED: ReadonlySet<TaskState> = new Set(['done', 'cached', 'failed', 'skipped', 'exited']);
 
 export interface RunView {
 	readonly phase: RunPhase;
@@ -112,6 +125,35 @@ class RunStore {
 
 	outputRev(taskKey: string): number {
 		return this.slots.get(taskKey)?.outputRev ?? 0;
+	}
+
+	/** The last `count` lines a task printed, for a row's live tail. */
+	tail(taskKey: string, count: number): readonly OutputLine[] {
+		const slot = this.slots.get(taskKey);
+		if (!slot) return [];
+		const lines = slot.buffer.all();
+		return lines.slice(Math.max(0, lines.length - count));
+	}
+
+	/** Counted across every task the run has seen. Re-read it when `viewsRev` moves. */
+	progress(): RunProgress {
+		let settled = 0;
+		let cached = 0;
+		let failed = 0;
+		let running = 0;
+		for (const { view } of this.slots.values()) {
+			if (SETTLED.has(view.state)) settled += 1;
+			if (view.state === 'cached') cached += 1;
+			if (view.state === 'failed' || view.state === 'exited') failed += 1;
+			if (view.state === 'running') running += 1;
+		}
+		return { total: this.slots.size, settled, cached, failed, running };
+	}
+
+	/** Whether a task another one waits on has not settled yet. */
+	unsettled(taskKey: string): boolean {
+		const view = this.slots.get(taskKey)?.view;
+		return view !== undefined && !SETTLED.has(view.state);
 	}
 
 	linesSince(taskKey: string, mark: number): Since {
@@ -299,6 +341,17 @@ class RunStore {
 			switch (message.kind) {
 				case 'runStarted':
 					this.begin(message.graph);
+					break;
+				case 'plan':
+					for (const planned of message.tasks) {
+						const taskKey = key(planned.workspace, planned.task);
+						const slot = this.slot(taskKey);
+						this.patch(taskKey, {
+							waitsOn: planned.waitsOn,
+							state: slot.view.state === 'idle' ? 'queued' : slot.view.state,
+						});
+						views.add(taskKey);
+					}
 					break;
 				case 'event': {
 					const event = message.event;

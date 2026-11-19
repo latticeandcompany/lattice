@@ -1,0 +1,109 @@
+// Toolchains and Cache: facts laid out to be read, not dashboards.
+
+.facts {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 0.55rem 2rem;
+	margin: 0;
+
+	dt {
+		font-weight: 400;
+		color: var(--text-muted);
+	}
+
+	dd {
+		margin: 0;
+	}
+}
+
+.fact-number {
+	font-weight: 700;
+	font-size: 1rem;
+	letter-spacing: -0.01em;
+}
+
+.fact-aside {
+	margin-left: 0.5rem;
+	font-size: 0.8125rem;
+	color: var(--text-muted);
+}
+
+// Size against the limit, drawn as the one measure on the screen that has a scale.
+.cache-gauge {
+	max-width: 32rem;
+	margin-bottom: 1.5rem;
+
+	.progress {
+		margin-top: 0.5rem;
+	}
+}
+
+.cache-gauge__size {
+	font-size: 1.75rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.cache-gauge__of {
+	margin-left: 0.4rem;
+	color: var(--text-muted);
+}
+
+.confirm-line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 0.85rem;
+	border: 1px solid var(--border);
+	border-radius: var(--bs-border-radius);
+}
+
+.tool-group {
+	padding: 1rem 0;
+	border-top: 1px solid var(--border-subtle);
+
+	&:first-child {
+		border-top: 0;
+		padding-top: 0;
+	}
+
+	h2 {
+		margin-bottom: 0.6rem;
+	}
+
+	.table {
+		margin-bottom: 0;
+	}
+
+	td {
+		vertical-align: baseline;
+	}
+}
+
+.tool-location {
+	display: block;
+	max-width: 22rem;
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+
+// A failure laid out the way the CLI prints it, so the two read the same.
+.cli-error {
+	margin: 0.75rem 0 0;
+	padding: 0.7rem 0.9rem;
+	border-left: 2px solid var(--fail);
+	background: var(--surface-2);
+	border-radius: 0 var(--bs-border-radius) var(--bs-border-radius) 0;
+	font-family: var(--mono);
+	font-size: 0.76rem;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-x: auto;
+}

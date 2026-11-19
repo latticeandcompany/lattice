@@ -39,17 +39,19 @@ impl Reporter for StartWatcher {
 fn workspace(name: &str, root: &std::path::Path, task: &str, command: &str) -> Workspace {
 	let path = root.join(name);
 	std::fs::create_dir_all(&path).unwrap();
-	let mut commands = indexmap::IndexMap::new();
-	commands.insert(task.to_string(), command.to_string());
-	Workspace {
-		name: name.to_string(),
-		path,
-		auto: false,
-		depends_on: Vec::new(),
-		engines: lattice_config::EngineMap::new(),
-		driver: None,
-		commands,
+	Workspace::new(name, path).with_task(task, command, PipelineTask::default())
+}
+
+fn apply(workspaces: &[Workspace], config: &LatticeConfig) -> Vec<Workspace> {
+	let mut out = workspaces.to_vec();
+	for w in &mut out {
+		for (name, settings) in &config.tasks {
+			if let Some(task) = w.tasks.get_mut(name) {
+				task.config = settings.clone();
+			}
+		}
 	}
+	out
 }
 
 /// A cancelled CI job arrives as `SIGTERM`, not as Ctrl-C. The runner's own
@@ -75,7 +77,8 @@ async fn sigterm_ends_a_run_that_persistent_tasks_are_holding_open() {
 			..Default::default()
 		},
 	);
-	let graph = build_execution_graph(&workspaces, "dev", &config).unwrap();
+	let workspaces = apply(&workspaces, &config);
+	let graph = build_execution_graph(&workspaces, &["dev"]).unwrap();
 
 	let started = Arc::new(AtomicBool::new(false));
 	let reporter = StartWatcher {

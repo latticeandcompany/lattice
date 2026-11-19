@@ -168,9 +168,9 @@ script --version 2>/dev/null | grep -q util-linux && PTY_FLAVOR="util-linux"
 ptylat() {
   local envs="$1"; local dir="$2"; shift 2
   if [ "$PTY_FLAVOR" = "util-linux" ]; then
-    OUTPUT="$(cd "$dir" && env $envs script -qe -c "$(printf '%q ' "$BIN" "$@")" /dev/null 2>&1)"
+    OUTPUT="$(cd "$dir" && env $envs script -qe -c "$(printf '%q ' "$BIN" "$@")" /dev/null </dev/null 2>&1)"
   else
-    OUTPUT="$(cd "$dir" && env $envs script -q /dev/null "$BIN" "$@" 2>&1)"
+    OUTPUT="$(cd "$dir" && env $envs script -q /dev/null "$BIN" "$@" </dev/null 2>&1)"
   fi
 }
 
@@ -182,6 +182,15 @@ TRUECOLOR="$(printf '\033[38;2;')"
 # =========================================================================
 sect "Top-level surfaces"
 
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'FROM rust:latest' "the devcontainer is based on the Rust latest image"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'FROM node:latest AS node' "the devcontainer includes the Node latest image"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'COPY --from=node /usr/local/ /usr/local/' "the devcontainer installs Node tools"
+t_grepfile "$REPO_ROOT/.devcontainer/devcontainer.json" '"dockerfile": "Dockerfile"' "the devcontainer builds from its Dockerfile"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'libwebkit2gtk-4.1-dev' "the devcontainer installs GTK and WebKit build dependencies"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'libayatana-appindicator3-dev' "the devcontainer installs the app indicator build dependency"
+t_grepfile "$REPO_ROOT/.devcontainer/devcontainer.json" 'rust-lang.rust-analyzer' "the devcontainer includes rust-analyzer"
+t_grepfile "$REPO_ROOT/.devcontainer/devcontainer.json" 'serayuzgur.crates' "the devcontainer includes Cargo support"
+
 lat "$ENVROOT" ; t_ok "bare \`lattice\` exits 0"
 t_has "bare \`lattice\` points at help" "lattice --help"
 
@@ -189,10 +198,13 @@ lat "$ENVROOT" --help ; t_ok "\`--help\` exits 0"
 t_has "help lists run"         "Run one or more tasks"
 t_has "help lists setup"       "Provision"
 t_has "help lists init"        "Create a lattice.json"
+t_has "help lists migrate"     "Rewrite a Lattice 1.x"
+t_has "help lists env"         "Print the PATH a task sees"
 t_has "help lists prune"       "Evict cache"
 t_has "help lists upgrade"     "another version of Lattice"
 t_has "help lists completions" "completion"
 t_has "help lists version"     "version information"
+t_has "help lists --stream"           "--stream"
 t_has "help lists --theme"            "--theme"
 t_has "help lists --release-base-url" "--release-base-url"
 
@@ -224,6 +236,7 @@ t_hasE "version json target is a triple" '"target":"[a-z0-9_]+-[a-z0-9_-]+"'
 lat "$ENVROOT" run --help ; t_ok "\`run --help\` exits 0"
 t_has "run help documents --filter"   "--filter"
 t_has "run help documents --continue" "--continue"
+t_has "run help documents passthrough args" "ARGS"
 
 for sh in bash zsh fish powershell elvish; do
   lat "$ENVROOT" completions "$sh"
@@ -244,10 +257,13 @@ w "$INITDIR/.gitignore" "node_modules/
 lat "$INITDIR" init --yes ; t_ok "init --yes exits 0"
 t_has "init reports lattice.json"  "wrote lattice.json"
 t_has "init reports schema.json"   "wrote .lattice/schema.json"
-t_has "init reports gitignore"     "updated .gitignore"
+t_has "init says an empty directory holds no workspaces" "found no workspaces"
 t_file "$INITDIR/lattice.json"          "init created lattice.json"
 t_file "$INITDIR/.lattice/schema.json"  "init created schema.json"
-t_grepfile "$INITDIR/lattice.json" "\"build\"" "skeleton has a build task"
+# Nothing needs saying about an empty repo: every workspace, dependency and task
+# comes from the repo's own files.
+t_nogrepfile "$INITDIR/lattice.json" "\"workspaces\"" "the skeleton lists no workspaces"
+t_nogrepfile "$INITDIR/lattice.json" "\"tasks\""      "the skeleton declares no tasks"
 t_grepfile "$INITDIR/lattice.json" "$VERSION"  "skeleton pins current version"
 t_grepfile "$INITDIR/.gitignore" ".lattice/cache/"      "gitignore has cache/"
 t_grepfile "$INITDIR/.gitignore" ".lattice/toolchains/" "gitignore has toolchains/"
@@ -292,28 +308,51 @@ t_nogrepfile "$SCANDIR/lattice.json" "node_modules" "scan skips node_modules"
 t_nogrepfile "$SCANDIR/lattice.json" "generated"    "scan skips gitignored dirs"
 t_nogrepfile "$SCANDIR/lattice.json" "\"dist\""     "scan skips output dirs"
 lat "$SCANDIR" run build --dry-run ; t_ok "scanned config drives a real run"
-t_has "scanned run plans web" "web"
-t_has "scanned run plans api" "api"
+t_has "scanned run plans web" "web:build  pnpm run build"
+t_has "scanned run plans api" "api:build  cargo build"
 
 # A directory whose driver stays ambiguous is held back, so what init writes
-# runs instead of halting on the ambiguity.
+# runs instead of halting on the ambiguity. A bare Cargo.toml is not ambiguous
+# any more — only cargo reads one — but a bare package.json still is.
 UNDRIVEN="$ENVROOT/undriven"
 mkdir -p "$UNDRIVEN"
 w "$UNDRIVEN/apps/web/package.json" '{ "name": "web", "scripts": { "build": "tsc" } }'
 w "$UNDRIVEN/apps/web/package-lock.json" '{}'
+w "$UNDRIVEN/tools/gen/package.json" '{ "name": "gen" }'
 w "$UNDRIVEN/crates/core/Cargo.toml" "[package]
 name = \"core\"
 "
 lat "$UNDRIVEN" init --yes ; t_ok "init --yes exits 0 with an undriveable candidate"
-t_has "init names the held-back directory" "crates/core"
-t_has "init explains the hold-back"        "driver resolved"
-t_nogrepfile "$UNDRIVEN/lattice.json" "crates/core" "undriveable candidate is not declared"
+t_has "init names the held-back directory" "tools/gen"
+t_has "init says how to name its driver"   "driver"
+t_nogrepfile "$UNDRIVEN/lattice.json" "tools/gen"   "undriveable candidate is not declared"
 t_grepfile   "$UNDRIVEN/lattice.json" "apps/web"    "driveable candidate is declared"
+t_grepfile   "$UNDRIVEN/lattice.json" "crates/core" "a bare Cargo.toml is enough to declare"
 lat "$UNDRIVEN" run build --dry-run ; t_ok "a scanned config never halts on ambiguity"
+t_has "a bare Cargo.toml drives cargo" "core:build  cargo build"
 
-# A repo whose task runner already declares a pipeline gets that pipeline, not a
-# lone `build`: every other task it runs would otherwise be undeclared, and an
-# undeclared task is one `lattice run` refuses.
+# A workspace file at the root already names its members, so init writes none of
+# them — only the projects no workspace file knows about, collapsed into a glob
+# when they are every project under their parent.
+NATIVEINIT="$ENVROOT/native-init"
+mkdir -p "$NATIVEINIT"
+w "$NATIVEINIT/package.json" '{ "private": true, "workspaces": ["packages/*"] }'
+w "$NATIVEINIT/package-lock.json" '{}'
+w "$NATIVEINIT/packages/ui/package.json" '{ "name": "ui", "scripts": { "build": "tsc" } }'
+w "$NATIVEINIT/services/api/go.mod" "module example.com/api
+"
+w "$NATIVEINIT/services/api/go.sum" ""
+w "$NATIVEINIT/services/worker/go.mod" "module example.com/worker
+"
+w "$NATIVEINIT/services/worker/go.sum" ""
+lat "$NATIVEINIT" init --yes ; t_ok "init --yes on a repo with a workspace file exits 0"
+t_nogrepfile "$NATIVEINIT/lattice.json" "packages/ui" "a member the workspace file names is not written"
+t_grepfile   "$NATIVEINIT/lattice.json" '"services/*"' "every project under a parent collapses into a glob"
+t_has "init lists what it found, members included" "ui"
+t_has "init lists the go services"                  "worker"
+
+# A repo whose task runner already spells out task settings gets them carried
+# over. A task the file only names needs no entry: it runs by name as it is.
 IMPORTED="$ENVROOT/imported"
 mkdir -p "$IMPORTED/packages/ui/src"
 w "$IMPORTED/package.json" '{ "name": "demo", "private": true }'
@@ -349,8 +388,8 @@ chmod +x "$IMPORTED/node_modules/.bin/turbo"
 w "$IMPORTED/packages/ui/src/index.js" "ui v1
 "
 lat "$IMPORTED" init --yes ; t_ok "init --yes exits 0 on a task-runner repo"
-t_grepfile "$IMPORTED/lattice.json" '"lint"'      "init imports lint from turbo.json"
-t_grepfile "$IMPORTED/lattice.json" '"typecheck"' "init imports typecheck from turbo.json"
+t_nogrepfile "$IMPORTED/lattice.json" '"lint"'    "a task turbo.json only names is not copied"
+t_grepfile "$IMPORTED/lattice.json" '"typecheck"' "init imports typecheck's settings from turbo.json"
 t_grepfile "$IMPORTED/lattice.json" '"persistent": true'  "init carries persistent over"
 t_grepfile "$IMPORTED/lattice.json" '"cache": false'      "init carries cache over"
 t_grepfile "$IMPORTED/lattice.json" 'globalDependencies'  "init imports globalDependencies"
@@ -363,18 +402,30 @@ t_nogrepfile "$IMPORTED/lattice.json" "ui#deploy" "a package-scoped entry is not
 lat "$IMPORTED" run lint ; t_ok "a task finds a tool the project installed"
 lat "$IMPORTED" run build ; t_ok "an imported build task runs"
 t_file "$IMPORTED/packages/ui/dist/bundle.js" "the project's own runner produced the build"
-lat "$IMPORTED" run typecheck ; t_ok "every imported task is runnable, not just build"
+lat "$IMPORTED" run typecheck ; t_ok "every task turbo.json names is runnable, not just build"
 
-# A workspace whose driver takes the task name on its command line publishes no
-# list to import, so `build` stays the one proposal.
+# A single Cargo project needs nothing written: the root is the workspace, and
+# cargo's verbs are its tasks.
 NOLIST="$ENVROOT/nolist"
-mkdir -p "$NOLIST/crates/core"
-w "$NOLIST/Cargo.toml" "[workspace]
+mkdir -p "$NOLIST"
+w "$NOLIST/Cargo.toml" "[package]
+name = \"solo\"
 "
 w "$NOLIST/Cargo.lock" ""
-lat "$NOLIST" init --yes ; t_ok "init --yes exits 0 without a task list to read"
-t_grepfile   "$NOLIST/lattice.json" '"build"' "a driver with no task list still gets build"
-t_nogrepfile "$NOLIST/lattice.json" '"lint"'  "and nothing is invented alongside it"
+lat "$NOLIST" init --yes ; t_ok "init --yes exits 0 on a single project"
+t_nogrepfile "$NOLIST/lattice.json" '"tasks"'      "a single project needs no task map"
+t_nogrepfile "$NOLIST/lattice.json" '"workspaces"' "a single project needs no workspace list"
+lat "$NOLIST" run build --dry-run ; t_ok "the single project plans a build"
+t_has "the root runs cargo build" "solo:build  cargo build"
+lat "$NOLIST" run lint --dry-run ; t_ok "the single project plans a lint"
+t_has   "lint is cargo clippy"          "solo:lint  cargo clippy"
+t_hasnt "nothing becomes cargo lint"    "cargo lint"
+
+# init points a 1.x config at `lattice migrate` rather than overwriting it.
+V1INIT="$ENVROOT/v1-init"; mkdir -p "$V1INIT/a"
+w "$V1INIT/lattice.json" '{ "workspaces": [ { "name": "a", "path": "a" } ] }'
+lat "$V1INIT" init --yes ; t_bad "init refuses to replace a 1.x config"
+t_has "init points a 1.x config at migrate" "lattice migrate"
 
 # Self-heal: a missing schema (wiped cache dir, uncommitted clone) is rewritten
 # by any command that loads the config, so editors always resolve `$schema`.
@@ -408,41 +459,45 @@ sed "s#__ORDER__#$ORDER#g" > "$PROD/lattice.json" <<'JSON'
     "hosttool": { "version": ">=1.0.0", "versionCmd": "echo 9.9.9" },
     "anytool": {}
   },
-  "workspaces": [
-    { "name": "core", "path": "libs/core", "auto": false, "scripts": {
+  "workspaces": ["libs/*", "services/*", "apps/*", "docs"],
+  "overrides": {
+    "core": { "tasks": {
       "build": "mkdir -p dist && echo core-lib > dist/lib.txt && echo core >> '__ORDER__'",
       "test": "test -f dist/lib.txt && echo core-test-ok",
       "lint": "echo core-lint-ok",
       "clean": "rm -rf dist && echo core-clean-ok",
       "envtask": "echo envval $STRESS_VAR",
-      "nocache": "echo nocache-ran"
+      "nocache": "echo nocache-ran",
+      "args": "echo ARGS-SEEN:"
     } },
-    { "name": "api", "path": "services/api", "auto": false, "dependsOn": ["core"], "scripts": {
+    "api": { "dependsOn": ["core"], "tasks": {
       "build": "mkdir -p dist && faketool > dist/api.txt && echo api >> '__ORDER__'",
       "test": "echo api-test-ok",
       "lint": "echo api-lint-ok",
-      "clean": "rm -rf dist && echo api-clean-ok"
+      "clean": "rm -rf dist && echo api-clean-ok",
+      "args": "echo API-ARGS:"
     } },
-    { "name": "web", "path": "apps/web", "auto": false, "dependsOn": ["core"], "scripts": {
+    "web": { "dependsOn": ["core"], "tasks": {
       "build": "mkdir -p dist && echo '<html></html>' > dist/index.html && echo web >> '__ORDER__'",
       "test": "echo web-test-ok",
       "lint": "echo web-lint-ok",
       "clean": "rm -rf dist && echo web-clean-ok"
     } },
-    { "name": "worker", "path": "services/worker", "auto": false, "dependsOn": ["api"], "scripts": {
+    "worker": { "dependsOn": ["api"], "tasks": {
       "build": "mkdir -p dist && echo worker-bin > dist/worker && echo worker >> '__ORDER__'",
       "test": "echo worker-test-ok",
       "lint": "echo worker-lint-ok",
-      "clean": "rm -rf dist && echo worker-clean-ok"
+      "clean": "rm -rf dist && echo worker-clean-ok",
+      "args": "echo WORKER-ARGS:"
     } },
-    { "name": "docs", "path": "docs", "auto": false, "scripts": {
+    "docs": { "tasks": {
       "build": "mkdir -p dist && echo docs > dist/docs.txt",
       "test": "echo docs-test-ok",
       "lint": "echo docs-lint-ok",
       "clean": "rm -rf dist && echo docs-clean-ok",
       "dev": "echo READY_DEV && sleep 3117"
     } }
-  ],
+  },
   "tasks": {
     "build":   { "dependsOn": ["^build"], "inputs": ["src/**"], "outputs": ["dist/**"], "ignore": ["**/*.md"] },
     "test":    { "dependsOn": ["build"], "inputs": ["src/**", "tests/**"] },
@@ -450,7 +505,8 @@ sed "s#__ORDER__#$ORDER#g" > "$PROD/lattice.json" <<'JSON'
     "clean":   {},
     "envtask": { "env": ["STRESS_VAR"] },
     "nocache": { "cache": false },
-    "dev":     { "persistent": true, "dependsOn": ["^build"] }
+    "args":    { "dependsOn": ["^args"], "cache": false },
+    "dev":     { "dependsOn": ["^build"] }
   },
   "settings": { "maxCacheSize": "1GB", "loquacious": false, "versionCheck": true }
 }
@@ -461,7 +517,9 @@ sed "s#LATTICE_VERSION#$VERSION#" "$PROD/lattice.json" > "$PROD/lattice.json.tmp
 # Sanity: config must load.
 lat "$PROD" run definitely-not-a-task ; t_bad "prod config loads (unknown task still parses config)"
 t_has "unknown task names the task"     "definitely-not-a-task"
-t_has "unknown task lists available"    "Defined tasks:"
+t_has "unknown task lists available"    "Tasks:"
+lat "$PROD" run tset ; t_bad "a misspelled task is refused"
+t_has "a misspelled task gets a suggestion" "Did you mean 'test'?"
 
 # =========================================================================
 # 4. setup / toolchain gradient (host / validate / provision).
@@ -488,7 +546,7 @@ t_nofile "$PROD/services/api/.lattice-setup-marker" "setup leaves no marker in a
 # a typo in CI installed nothing and still went green.
 lat "$PROD" setup no-such-workspace ; t_bad "setup rejects an undeclared workspace name"
 t_has "unknown-workspace names the offender" "no-such-workspace"
-t_has "unknown-workspace lists what is declared" "core"
+t_has "unknown-workspace lists what there is" "core"
 
 # =========================================================================
 # 5. run: ordering, dependencies, dry-run, filter.
@@ -535,10 +593,39 @@ lat "$PROD" run build --dry-run --filter worker ; t_ok "filtered --dry-run exits
 t_has   "dry run tags a pulled-in dependency" "core:build (dependency)"
 t_hasnt "dry run leaves the match untagged"   "worker:build (dependency)"
 
-# `dev` is only declared by docs, and every other workspace is "auto": false. A
-# filtered run must not hold them to a task it never asked them for.
-lat "$PROD" run dev --dry-run --filter docs ; t_ok "filtered run skips the task check outside the filter"
+# `dev` is only declared by docs. A filtered run asks nothing of the others.
+lat "$PROD" run dev --dry-run --filter docs ; t_ok "a filtered run of a task one workspace has"
 t_has "filtered dry run lists the persistent task" "docs:dev"
+# dev is persistent without the config saying so: the name is enough.
+lat "$PROD" -v run dev --dry-run ; t_ok "an unfiltered run of a task one workspace has"
+t_has "the others sit dev out, and are named" "so they sit this one out"
+
+# --- running from inside a workspace ---------------------------------------
+# Started from a workspace's directory, a run is for that workspace and what it
+# depends on, the way cargo scopes itself in a member directory.
+mkdir -p "$PROD/services/worker/src/deep"
+lat "$PROD/services/worker/src/deep" run build --dry-run ; t_ok "a run from inside a workspace exits 0"
+t_has   "the scoped run is for that workspace" "worker:build"
+t_has   "and pulls in what it depends on"      "core:build (dependency)"
+t_hasnt "and nothing else"                     "docs:build"
+lat "$PROD/services/worker" run build --no-cache ; t_ok "a scoped real run exits 0"
+t_has   "the scoped run says where it is" "running in worker, the workspace you are in"
+lat "$PROD/services/worker" run build --dry-run --filter docs ; t_ok "a filter from inside a workspace"
+t_has   "a filter wins over the directory" "docs:build"
+t_hasnt "and drops the directory's scope"  "worker:build"
+lat "$PROD/libs" run build --dry-run ; t_ok "a run from a directory that is no workspace"
+t_has   "is a run of the whole repo" "docs:build"
+
+# --- arguments after -- ----------------------------------------------------
+# Arguments go to the tasks the run named, in the workspaces it is for — not to a
+# prerequisite pulled in along the way.
+lat "$PROD" run args --filter worker -- --flag "two words" ; t_ok "a run with passthrough args exits 0"
+t_has   "the named task gets the args"          "WORKER-ARGS: --flag two words"
+t_has   "the prerequisites still run"            "API-ARGS:"
+t_has   "all the way down"                       "ARGS-SEEN:"
+t_hasnt "a prerequisite does not get the args"   "API-ARGS: --flag"
+lat "$PROD" run args --filter worker --dry-run -- --flag ; t_ok "passthrough args show in a dry run"
+t_has "the dry run shows the command with its args" "echo WORKER-ARGS: --flag"
 
 # =========================================================================
 # 6. Caching: store, hit, invalidate, cache:false, env-keyed, --force.
@@ -644,10 +731,7 @@ t_hasnt "its dependents did not hit the cache"    "full power"
 CROSSWS="$ENVROOT/cross-ws"
 mkdir -p "$CROSSWS/alpha" "$CROSSWS/beta"
 w "$CROSSWS/lattice.json" '{
-  "workspaces": [
-    { "name": "alpha", "path": "alpha", "auto": false, "scripts": { "build": "echo I-AM-ALPHA > out.txt" } },
-    { "name": "beta",  "path": "beta",  "auto": false, "scripts": { "build": "echo I-AM-BETA > out.txt" } }
-  ],
+  "workspaces": ["alpha", "beta"], "overrides": {"alpha": {"tasks": {"build": "echo I-AM-ALPHA > out.txt"}}, "beta": {"tasks": {"build": "echo I-AM-BETA > out.txt"}}},
   "tasks": { "build": { "outputs": ["out.txt"] } }
 }'
 lat "$CROSSWS" run build ; t_ok "two workspaces sharing a command run"
@@ -659,7 +743,7 @@ t_grepfile "$CROSSWS/beta/out.txt"  "I-AM-BETA"  "beta was not handed alpha's ar
 NOINPUTS="$ENVROOT/no-inputs"
 mkdir -p "$NOINPUTS/w"
 w "$NOINPUTS/lattice.json" '{
-  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "cat src.txt" } } ],
+  "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "cat src.txt"}}},
   "tasks": { "build": {} }
 }'
 w "$NOINPUTS/w/src.txt" "version one"
@@ -673,7 +757,7 @@ lat "$NOINPUTS" run build ; t_hasnt "a task with no inputs still notices a sourc
 EMPTYOUT="$ENVROOT/empty-outputs"
 mkdir -p "$EMPTYOUT/w"
 w "$EMPTYOUT/lattice.json" '{
-  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo built nothing" } } ],
+  "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "echo built nothing"}}},
   "tasks": { "build": { "outputs": ["dist/**"] } }
 }'
 lat "$EMPTYOUT" run build ; t_ok "a task producing none of its declared outputs still succeeds"
@@ -686,7 +770,7 @@ lat "$EMPTYOUT" run build ; t_hasnt "an unmatched-outputs task is not a hit next
 BAREOUT="$ENVROOT/bare-empty-output"
 mkdir -p "$BAREOUT/w"
 w "$BAREOUT/lattice.json" '{
-  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "mkdir -p dist" } } ],
+  "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "mkdir -p dist"}}},
   "tasks": { "build": { "outputs": ["dist"] } }
 }'
 lat "$BAREOUT" run build ; t_ok "a bare-directory output that stays empty still succeeds"
@@ -695,7 +779,7 @@ lat "$BAREOUT" run build ; t_hasnt "an empty-directory output is not a hit next 
 
 # A bare directory that actually holds something is still captured whole.
 w "$BAREOUT/lattice.json" '{
-  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "mkdir -p dist/deep && echo out > dist/deep/o.txt" } } ],
+  "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "mkdir -p dist/deep && echo out > dist/deep/o.txt"}}},
   "tasks": { "build": { "outputs": ["dist"] } }
 }'
 lat "$BAREOUT" run build ; t_ok "a bare-directory output with content primes"
@@ -721,7 +805,7 @@ if [ "$LN_OK" = "1" ]; then
   w "$SYMIN/real/nested/a.txt" "one"
   ( cd "$SYMIN/w" && ln -s ../real src )
   w "$SYMIN/lattice.json" '{
-    "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo built" } } ],
+    "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "echo built"}}},
     "tasks": { "build": { "inputs": ["src/**"] } }
   }'
   lat "$SYMIN" run build ; t_ok "a task whose inputs are behind a symlink primes"
@@ -737,7 +821,7 @@ if [ "$LN_OK" = "1" ]; then
   w "$SYMFILE/w/staging.yaml" "staging"
   ( cd "$SYMFILE/w" && ln -s prod.yaml active.yaml )
   w "$SYMFILE/lattice.json" '{
-    "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo built" } } ],
+    "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "echo built"}}},
     "tasks": { "build": { "inputs": ["active.yaml"] } }
   }'
   lat "$SYMFILE" run build ; t_ok "a symlinked input file primes"
@@ -752,7 +836,7 @@ if [ "$LN_OK" = "1" ]; then
 echo hi
 "
   w "$EXECBIT/lattice.json" '{
-    "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": { "build": "echo packaged" } } ],
+    "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "echo packaged"}}},
     "tasks": { "build": { "inputs": ["bin/**"] } }
   }'
   lat "$EXECBIT" run build ; t_ok "a task keyed on a bin directory primes"
@@ -777,33 +861,69 @@ t_has "loquacious emits hash trace" "hash"
 t_hasnt "piped -v emits no ANSI escapes" "$TRUECOLOR"
 lat "$PROD" run build --filter core --no-cache -l ; t_ok "hidden -l alias exits 0"
 
-# Label colors: `-v` at a real terminal paints each `workspace:task` label its
-# own color, and every task in the run gets a different one. Piped (asserted
+# Label colors: `--stream` at a real terminal paints each `workspace:task` label
+# its own color, and every task in the run gets a different one. Piped (asserted
 # above) and under NO_COLOR, the same run emits nothing to strip.
 if [ "$PTY_OK" = "1" ]; then
-  ptylat "" "$PROD" run build --no-cache -v
-  t_has "-v under a pty colors the workspace:task label" "$TRUECOLOR"
+  ptylat "" "$PROD" run build --no-cache --stream
+  t_has "--stream under a pty colors the workspace:task label" "$TRUECOLOR"
+  PLAIN="$(printf '%s' "$OUTPUT" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')"
+  if printf '%s\n' "$PLAIN" | grep -qF "core:build: running"; then pass "--stream under a pty prints the line stream"
+  else fail "--stream under a pty prints the line stream" "$(printf '%s' "$PLAIN" | tr '\n' '|' | cut -c1-300)"; fi
   HUES="$(printf '%s\n' "$OUTPUT" | grep -o "$TRUECOLOR"'[0-9;]*m' | sort -u | wc -l | tr -d ' ')"
   if [ "${HUES:-0}" -ge 2 ]; then
     pass "each task's label gets a distinct color ($HUES in the run)"
   else
     fail "each task's label gets a distinct color" "only $HUES distinct | $(snip)"
   fi
-  ptylat "NO_COLOR=1" "$PROD" run build --no-cache -v
+  ptylat "NO_COLOR=1" "$PROD" run build --no-cache --stream
   t_hasnt "NO_COLOR suppresses label color under a pty" "$TRUECOLOR"
+
+  # -v adds the trace without switching the display: under a pty it is still
+  # the live display, not the line stream.
+  ptylat "" "$PROD" run build --no-cache -v
+  OUTPUT="$(printf '%s' "$OUTPUT" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')"
+  t_hasnt "-v under a pty keeps the live display" "core:build: running"
+  t_has   "the live display settles each task into a line" "✓ core"
+  t_has   "the live display ends on the summary" "tasks"
+
+  # The Gradle hang: every task used to share the terminal while sitting in a
+  # background process group, so the first read from it stopped the task with
+  # SIGTTIN and the run waited forever. A task that reads stdin has to finish.
+  TTYREAD="$ENVROOT/tty-read"; mkdir -p "$TTYREAD/app"
+  cat > "$TTYREAD/lattice.json" <<'JSON'
+{ "workspaces": ["app"], "overrides": { "app": { "tasks": { "build": "read line; echo AFTER_THE_READ" } } },
+  "tasks": { "build": { "cache": false } } }
+JSON
+  TTYOUT="$ENVROOT/tty-read.out"; : > "$TTYOUT"
+  if [ "$PTY_FLAVOR" = "util-linux" ]; then
+    ( cd "$TTYREAD" && sleep 47 | script -qe -c "$(printf '%q ' "$BIN" run build --stream)" /dev/null > "$TTYOUT" 2>&1 ) &
+  else
+    ( cd "$TTYREAD" && sleep 47 | script -q /dev/null "$BIN" run build --stream > "$TTYOUT" 2>&1 ) &
+  fi
+  TTYPID=$!
+  k=0
+  while [ $k -lt 200 ] && ! grep -q "lattice: 1 tasks" "$TTYOUT" 2>/dev/null; do sleep 0.1; k=$((k + 1)); done
+  OUTPUT="$(cat "$TTYOUT")"
+  kill "$TTYPID" 2>/dev/null; pkill -f "sleep 47" 2>/dev/null; wait "$TTYPID" 2>/dev/null
+  t_has "a task that reads stdin on a terminal finishes instead of hanging" "AFTER_THE_READ"
+  t_has "and the run reports it" "lattice: 1 tasks"
 else
   say "  ${YEL}skip${RST} label-color assertions (no \`script\` to allocate a pty)"
 fi
 
 lat "$PROD" run build --filter core --no-cache --no-version-check ; t_ok "--no-version-check accepted"
 
-# -v so the CI reporter streams task output (echoed markers) we assert on.
-lat "$PROD" run test  --no-cache -v ; t_ok "run test (full) exits 0"
-t_has "test ran downstream of build" "core-test-ok"
-lat "$PROD" run lint  -v ; t_ok "run lint exits 0"
+# The line stream carries every line a task prints, labeled, without -v.
+lat "$PROD" run test  --no-cache ; t_ok "run test (full) exits 0"
+t_has "task output streams without -v" "core:test: core-test-ok"
+t_hasnt "and without the trace -v adds" "hash "
+lat "$PROD" run lint ; t_ok "run lint exits 0"
 t_has "lint ran"  "core-lint-ok"
-lat "$PROD" run clean -v ; t_ok "run clean exits 0"
+lat "$PROD" run clean ; t_ok "run clean exits 0"
 t_has "clean ran" "core-clean-ok"
+# clean changes something outside the task's outputs, so it never hits.
+lat "$PROD" run clean ; t_hasnt "clean is never answered from the cache" "cache hit"
 
 # Stacked commands: one invocation, one combined graph. lint + test + build run
 # together; test's build dependency runs once, ahead of test.
@@ -868,12 +988,7 @@ EXITREPO="$ENVROOT/exitrepo"
 mkdir -p "$EXITREPO/app"
 cat > "$EXITREPO/lattice.json" <<'JSON'
 {
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false, "scripts": {
-      "dev":  "echo PORT_ALREADY_IN_USE; exit 1",
-      "once": "echo ONE_SHOT_OK"
-    } }
-  ],
+  "workspaces": ["app"], "overrides": {"app": {"tasks": {"dev": "echo PORT_ALREADY_IN_USE; exit 1", "once": "echo ONE_SHOT_OK"}}},
   "tasks": {
     "dev":  { "persistent": true },
     "once": { "persistent": true }
@@ -900,12 +1015,7 @@ FFREPO="$ENVROOT/failfast-persistent"
 mkdir -p "$FFREPO/app"
 cat > "$FFREPO/lattice.json" <<'JSON'
 {
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false, "scripts": {
-      "build": "echo BUILD_BROKE; exit 2",
-      "dev":   "echo READY_FF; sleep 3119"
-    } }
-  ],
+  "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo BUILD_BROKE; exit 2", "dev": "echo READY_FF; sleep 3119"}}},
   "tasks": { "build": {}, "dev": { "persistent": true } }
 }
 JSON
@@ -949,10 +1059,7 @@ FAILREPO="$ENVROOT/failrepo"
 mkdir -p "$FAILREPO"/a "$FAILREPO"/b
 cat > "$FAILREPO/lattice.json" <<'JSON'
 {
-  "workspaces": [
-    { "name": "a", "path": "a", "auto": false, "scripts": { "build": "exit 3", "test": "echo a-test-ran" } },
-    { "name": "b", "path": "b", "auto": false, "scripts": { "build": "echo b-build-ok", "test": "echo b-test-ran" } }
-  ],
+  "workspaces": ["a", "b"], "overrides": {"a": {"tasks": {"build": "exit 3", "test": "echo a-test-ran"}}, "b": {"tasks": {"build": "echo b-build-ok", "test": "echo b-test-ran"}}},
   "tasks": { "build": {}, "test": { "dependsOn": ["build"] } }
 }
 JSON
@@ -964,7 +1071,8 @@ t_has "fail-fast surfaces the failure with the exit code" "FAILED (code 3)"
 # both. Only a pty renders it, so only a pty can assert they are gone.
 if [ "$PTY_OK" = "1" ]; then
   ptylat "" "$FAILREPO" run build
-  t_has   "the live display names the exit code"        "FAILED (code 3)"
+  OUTPUT="$(printf '%s' "$OUTPUT" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')"
+  t_has   "the live display names the exit code"        "failed (code 3)"
   t_hasnt "the live display carries no hash trace"      "hash "
   t_hasnt "the live display carries no cache-miss trace" "cache miss"
 else
@@ -978,9 +1086,7 @@ ODDBYTE="$ENVROOT/odd-byte"
 mkdir -p "$ODDBYTE/w"
 cat > "$ODDBYTE/lattice.json" <<'JSON'
 {
-  "workspaces": [ { "name": "w", "path": "w", "auto": false, "scripts": {
-    "build": "printf 'warning \\377 here\\n'; echo THE_REAL_ERROR; exit 1"
-  } } ],
+  "workspaces": ["w"], "overrides": {"w": {"tasks": {"build": "printf 'warning \\377 here\\n'; echo THE_REAL_ERROR; exit 1"}}},
   "tasks": { "build": {} }
 }
 JSON
@@ -993,14 +1099,16 @@ t_has "--continue skips downstream of failure" "a:test: skipped"
 t_has "--continue runs independent work"        "b-test-ran"
 
 # =========================================================================
-# 10. Driver auto-detection across ecosystems (via --dry-run).
+# 10. Driver detection and task resolution across ecosystems (via --dry-run).
 # =========================================================================
-sect "driver detection (never-prescribe) — all ecosystems"
+sect "driver detection & task resolution — all ecosystems"
 
+# A task runs where a workspace's own files define it — a package.json script,
+# a justfile recipe — or where its tool has the verb: `lint` is `cargo clippy`,
+# never an invented `cargo lint`. Verbs that depend on a dev dependency (pytest,
+# ruff, rspec) are offered only where the manifest shows it.
 DET="$ENVROOT/detect"
 PKG='{ "scripts": { "build": "tsc" } }'
-# npm also declares a `dev` script, so a persistent `dev` task resolves here,
-# but must not be fabricated for the direct-invoke drivers (cargo/go/…).
 PKG_DEV='{ "scripts": { "build": "tsc", "dev": "vite" } }'
 mkdir -p "$DET"
 w "$DET/pkgs/npm/package-lock.json" "";      w "$DET/pkgs/npm/package.json" "$PKG_DEV"
@@ -1009,27 +1117,52 @@ w "$DET/pkgs/yarn/yarn.lock" "";              w "$DET/pkgs/yarn/package.json" "$
 w "$DET/pkgs/bun/bun.lockb" "";               w "$DET/pkgs/bun/package.json" "$PKG"
 w "$DET/pkgs/deno/deno.json" '{ "tasks": { "build": "echo x" } }'
 w "$DET/pkgs/cargo/Cargo.lock" "";            w "$DET/pkgs/cargo/Cargo.toml" "[package]
-name=\"c\""
-w "$DET/pkgs/go/go.sum" "";                   w "$DET/pkgs/go/go.mod" "module c
-go 1.21"
-w "$DET/pkgs/uv/uv.lock" "";                  w "$DET/pkgs/uv/pyproject.toml" "[project]"
-w "$DET/pkgs/poetry/poetry.lock" "";          w "$DET/pkgs/poetry/pyproject.toml" "[project]"
-w "$DET/pkgs/bundler/Gemfile.lock" "";        w "$DET/pkgs/bundler/Gemfile" "source 'x'"
+name = \"cargo\"
+"
+w "$DET/pkgs/go/go.sum" "";                   w "$DET/pkgs/go/go.mod" "module example.com/go
+go 1.21
+"
+w "$DET/pkgs/uv/uv.lock" "";                  w "$DET/pkgs/uv/pyproject.toml" "[project]
+name = \"uv\"
+[dependency-groups]
+dev = [\"pytest>=8\", \"ruff\"]
+"
+w "$DET/pkgs/poetry/poetry.lock" "";          w "$DET/pkgs/poetry/pyproject.toml" "[project]
+name = \"poetry\"
+"
+w "$DET/pkgs/pdm/pdm.lock" "";                w "$DET/pkgs/pdm/pyproject.toml" "[project]
+name = \"pdm\"
+[tool.pdm.scripts]
+build = \"python -m build\"
+"
+w "$DET/pkgs/pipenv/Pipfile.lock" "";         w "$DET/pkgs/pipenv/Pipfile" "[scripts]
+build = \"python setup.py build\"
+"
+w "$DET/pkgs/pip/requirements.txt" "pytest
+flask
+"
+w "$DET/pkgs/bundler/Gemfile" "source 'x'";   w "$DET/pkgs/bundler/Gemfile.lock" "    rspec (3.13.0)
+"
 w "$DET/pkgs/rake/Rakefile" "task :build"
 w "$DET/pkgs/gradle/gradlew" "#!/bin/sh";     w "$DET/pkgs/gradle/build.gradle" ""
 w "$DET/pkgs/maven/mvnw" "#!/bin/sh";         w "$DET/pkgs/maven/pom.xml" "<project/>"
 w "$DET/pkgs/dotnet/global.json" "{}"
-w "$DET/pkgs/pdm/pdm.lock" "";                w "$DET/pkgs/pdm/pyproject.toml" "[project]"
-w "$DET/pkgs/pipenv/Pipfile.lock" "";         w "$DET/pkgs/pipenv/Pipfile" ""
-w "$DET/pkgs/pip/requirements.txt" "flask"
 w "$DET/pkgs/nuget/packages.config" "<packages/>"
 w "$DET/pkgs/pod/Podfile.lock" "";            w "$DET/pkgs/pod/Podfile" "platform :ios"
 w "$DET/pkgs/swift/Package.resolved" "{}";    w "$DET/pkgs/swift/Package.swift" ""
-w "$DET/pkgs/composer/composer.lock" "";      w "$DET/pkgs/composer/composer.json" "{}"
+w "$DET/pkgs/composer/composer.lock" "";      w "$DET/pkgs/composer/composer.json" '{ "scripts": { "build": "php build.php" } }'
 w "$DET/pkgs/mix/mix.lock" "";                w "$DET/pkgs/mix/mix.exs" ""
 w "$DET/pkgs/dart/pubspec.lock" "";           w "$DET/pkgs/dart/pubspec.yaml" "name: d"
 w "$DET/pkgs/stack/stack.yaml.lock" "";       w "$DET/pkgs/stack/stack.yaml" ""
 w "$DET/pkgs/cabal/cabal.project.freeze" ""
+w "$DET/pkgs/just/justfile" "build:
+	echo x
+"
+w "$DET/pkgs/taskfile/Taskfile.yml" "tasks:
+  build:
+    cmds: [echo x]
+"
+w "$DET/pkgs/turbo/turbo.json" '{ "tasks": { "build": {} } }'; w "$DET/pkgs/turbo/package.json" '{}'
 w "$DET/pkgs/shrinkwrap/npm-shrinkwrap.json" "{}"; w "$DET/pkgs/shrinkwrap/package.json" "$PKG"
 # An SDK-style .NET project may carry a nuget lockfile and still be dotnet-driven.
 w "$DET/pkgs/dotnet-locked/global.json" "{}"; w "$DET/pkgs/dotnet-locked/packages.lock.json" "{}"
@@ -1039,111 +1172,183 @@ w "$DET/pkgs/override/pnpm-lock.yaml" "";     w "$DET/pkgs/override/package.json
 w "$DET/pkgs/composition/.nvmrc" "20";        w "$DET/pkgs/composition/pnpm-lock.yaml" "";  w "$DET/pkgs/composition/package.json" "$PKG"
 # bun is a runtime *and* a package manager; it outranks a bare node runtime.
 w "$DET/pkgs/dual-role/.nvmrc" "20";          w "$DET/pkgs/dual-role/bun.lockb" "";         w "$DET/pkgs/dual-role/package.json" "$PKG"
-# deno.jsonc allows comments. Parsed as strict JSON it fails, and a failed parse
-# used to be indistinguishable from "this driver has no manifest" — which meant
-# every task got a command invented for it.
 w "$DET/pkgs/deno-jsonc/deno.jsonc" '{
   // the tasks this package actually declares
   "tasks": { "build": "echo x" }
 }'
-# A manifest with no scripts at all is a complete, ordinary package. The task
-# simply does not exist here, so it drops out of the graph instead of becoming
-# an invented `npm run build` that fails the whole run.
-w "$DET/pkgs/no-scripts/package-lock.json" ""; w "$DET/pkgs/no-scripts/package.json" '{ "name": "types" }'
-# A manifest that declares a scripts section but misspells the task is the case
-# worth saying something about: the package clearly meant to build.
-w "$DET/pkgs/typo-script/package-lock.json" ""; w "$DET/pkgs/typo-script/package.json" '{ "name": "typo", "scripts": { "biuld": "tsc" } }'
+# A manifest with no scripts at all is a complete, ordinary package: the task
+# does not exist there, so the workspace sits it out.
+w "$DET/pkgs/no-scripts/package-lock.json" ""; w "$DET/pkgs/no-scripts/package.json" '{}'
+# One that declares scripts and misspells this one is worth a word.
+w "$DET/pkgs/typo-script/package-lock.json" ""; w "$DET/pkgs/typo-script/package.json" '{ "scripts": { "biuld": "tsc" } }'
 cat > "$DET/lattice.json" <<'JSON'
 {
-  "workspaces": [
-    { "name": "npm", "path": "pkgs/npm" },
-    { "name": "pnpm", "path": "pkgs/pnpm" },
-    { "name": "yarn", "path": "pkgs/yarn" },
-    { "name": "bun", "path": "pkgs/bun" },
-    { "name": "deno", "path": "pkgs/deno" },
-    { "name": "cargo", "path": "pkgs/cargo" },
-    { "name": "go", "path": "pkgs/go" },
-    { "name": "uv", "path": "pkgs/uv" },
-    { "name": "poetry", "path": "pkgs/poetry" },
-    { "name": "bundler", "path": "pkgs/bundler" },
-    { "name": "rake", "path": "pkgs/rake" },
-    { "name": "gradle", "path": "pkgs/gradle" },
-    { "name": "maven", "path": "pkgs/maven" },
-    { "name": "dotnet", "path": "pkgs/dotnet" },
-    { "name": "pdm", "path": "pkgs/pdm" },
-    { "name": "pipenv", "path": "pkgs/pipenv" },
-    { "name": "pip", "path": "pkgs/pip", "engines": { "pip": ">=0.0.0" } },
-    { "name": "nuget", "path": "pkgs/nuget" },
-    { "name": "pod", "path": "pkgs/pod" },
-    { "name": "swift", "path": "pkgs/swift" },
-    { "name": "composer", "path": "pkgs/composer" },
-    { "name": "mix", "path": "pkgs/mix" },
-    { "name": "dart", "path": "pkgs/dart" },
-    { "name": "stack", "path": "pkgs/stack" },
-    { "name": "cabal", "path": "pkgs/cabal" },
-    { "name": "shrinkwrap", "path": "pkgs/shrinkwrap" },
-    { "name": "dotnet-locked", "path": "pkgs/dotnet-locked" },
-    { "name": "kotlin", "path": "pkgs/kotlin" },
-    { "name": "override-bun", "path": "pkgs/override", "engines": { "bun": ">=1.0.0" } },
-    { "name": "composition", "path": "pkgs/composition" },
-    { "name": "dual-role", "path": "pkgs/dual-role" },
-    { "name": "deno-jsonc", "path": "pkgs/deno-jsonc" },
-    { "name": "no-scripts", "path": "pkgs/no-scripts" },
-    { "name": "typo-script", "path": "pkgs/typo-script" }
-  ],
-  "tasks": {
-    "build": { "outputs": ["dist/**"] },
-    "dev": { "persistent": true }
-  }
+  "workspaces": ["pkgs/*"],
+  "overrides": { "override": { "driver": "bun" } }
 }
 JSON
 lat "$DET" run build --dry-run ; t_ok "detection dry-run resolves all workspaces"
-t_has   "a commented deno.jsonc still resolves its tasks" "deno-jsonc:build"
-t_hasnt "a manifest with no scripts invents no command"   "no-scripts:build"
-t_hasnt "a manifest with no scripts invents nothing for typos either" "typo-script:build"
-# The skip is silent for a package that declares no scripts at all, and spoken
-# for one that declares some and misspelled this one.
-t_has   "a misspelled script is named once"        'typo-script declares scripts but no "build"'
-t_has   "a misspelled script gets a suggestion"    "biuld"
-t_hasnt "a scriptless package is not nagged about" "no-scripts declares"
-t_has  "detect npm (package-lock.json)"     "npm run build"
-t_has  "detect pnpm (pnpm-lock.yaml)"       "pnpm run build"
-t_has  "detect yarn (yarn.lock)"            "yarn build"
-t_has  "detect bun (bun.lockb)"             "bun run build"
-t_has  "detect deno (deno.json)"            "deno task build"
-t_has  "detect cargo (Cargo.lock)"          "cargo build"
-t_has  "detect go (go.sum)"                 "go build"
-t_has  "detect uv (uv.lock)"                "uv run build"
-t_has  "detect poetry (poetry.lock)"        "poetry run build"
-t_has  "detect bundler (Gemfile.lock)"      "bundle exec build"
-t_has  "detect rake (Rakefile)"             "rake build"
-t_has  "detect gradle (gradlew)"            "./gradlew build"
-t_has  "detect maven (mvnw)"                "./mvnw build"
-t_has  "detect dotnet (global.json)"        "dotnet build"
-t_has  "detect pdm (pdm.lock)"              "pdm run build"
-t_has  "detect pipenv (Pipfile.lock)"       "pipenv run build"
-t_has  "detect nuget (packages.config)"     "nuget build"
-t_has  "detect pod (Podfile.lock)"          "pod build"
-t_has  "detect swift (Package.resolved)"    "swift build"
-t_has  "detect composer (composer.lock)"    "composer build"
-t_has  "detect mix (mix.lock)"              "mix build"
-t_has  "detect dart (pubspec.lock)"         "dart pub build"
-t_has  "detect stack (stack.yaml.lock)"     "stack build"
-t_has  "detect cabal (cabal.project.freeze)" "cabal build"
-t_hasE "detect npm (npm-shrinkwrap.json)"   "shrinkwrap:build.*npm run build"
-t_hasE "declared pip drives (requirements.txt)" "pip:build.*pip build"
-t_hasE "nuget lockfile leaves dotnet driving"  "dotnet-locked:build.*dotnet build"
-t_hasE "kotlin composes under gradle"       "kotlin:build.*\./gradlew build"
-t_hasE "declaration overrides lockfile"     "override-bun:build.*bun run build"
-t_hasE "roles compose (node+pnpm→pnpm)"     "composition:build.*pnpm run build"
-t_hasE "dual-role bun outranks node"        "dual-role:build.*bun run build"
+t_has  "detect npm (package-lock.json)"      "npm:build  npm run build"
+t_has  "detect pnpm (pnpm-lock.yaml)"        "pnpm:build  pnpm run build"
+t_has  "detect yarn (yarn.lock)"             "yarn:build  yarn run build"
+t_has  "detect bun (bun.lockb)"              "bun:build  bun run build"
+t_has  "detect deno (deno.json)"             "deno:build  deno task build"
+t_has  "detect cargo (Cargo.toml)"           "cargo:build  cargo build"
+t_has  "detect go (go.mod) with ./..."       "go:build  go build ./..."
+t_has  "detect uv (uv.lock) builds a wheel"  "uv:build  uv build"
+t_has  "detect poetry (poetry.lock)"         "poetry:build  poetry build"
+t_has  "a pdm script beats the build verb"   "pdm:build  pdm run build"
+t_has  "detect pipenv scripts (Pipfile)"     "pipenv:build  pipenv run build"
+t_has  "detect rake (Rakefile)"              "rake:build  rake build"
+t_has  "detect gradle (gradlew)"             "gradle:build  ./gradlew build"
+t_has  "detect maven (mvnw), a real goal"    "maven:build  ./mvnw package -DskipTests"
+t_has  "detect dotnet (global.json)"         "dotnet:build  dotnet build"
+t_has  "detect swift (Package.resolved)"     "swift:build  swift build"
+t_has  "detect composer scripts"             "composer:build  composer run-script build"
+t_has  "detect mix, build is compile"        "mix:build  mix compile"
+t_has  "detect stack (stack.yaml.lock)"      "stack:build  stack build"
+t_has  "detect cabal (cabal.project.freeze)" "cabal:build  cabal build all"
+t_has  "detect just recipes"                 "just:build  just build"
+t_has  "detect Taskfile tasks"               "taskfile:build  task build"
+t_has  "detect turbo (turbo.json)"           "turbo:build  turbo run build"
+t_has  "detect npm (npm-shrinkwrap.json)"    "shrinkwrap:build  npm run build"
+t_has  "a nuget lockfile leaves dotnet driving" "dotnet-locked:build  dotnet build"
+t_has  "kotlin composes under gradle"        "kotlin:build  ./gradlew build"
+t_has  "a declared driver overrides a lockfile" "override:build  bun run build"
+t_has  "roles compose (node+pnpm→pnpm)"      "composition:build  pnpm run build"
+t_has  "dual-role bun outranks node"         "dual-role:build  bun run build"
+t_has  "a commented deno.jsonc still resolves its tasks" "deno-jsonc:build  deno task build"
+t_hasnt "a manifest with no scripts invents no command" "no-scripts:build"
+t_hasnt "a misspelled script invents nothing"           "typo-script:build"
+t_hasnt "nuget has no build verb to invent"             "nuget:build"
+t_hasnt "pip has no build verb to invent"               "pip:build"
+t_has   "a misspelled script gets a suggestion" "typo-script has no 'build' task. Did you mean 'biuld'?"
+lat "$DET" -v run build --dry-run
+t_has   "the workspaces without build are named once" "so they sit this one out"
 
-# Persistent tasks are never fabricated for direct-invoke drivers: `run dev`
-# resolves only the workspace that declares a `dev` script (npm), never cargo/go.
+# Verbs that follow a dev dependency, and the ones every tool of a kind has.
+lat "$DET" run test --dry-run ; t_ok "test resolves across ecosystems"
+t_has "pytest in a uv project"         "uv:test  uv run pytest"
+t_has "pytest in a requirements file"  "pip:test  python -m pytest"
+t_has "rspec in a Gemfile"             "bundler:test  bundle exec rspec"
+t_has "dart test"                      "dart:test  dart test"
+t_has "cargo test"                     "cargo:test  cargo test"
+t_has "go test"                        "go:test  go test ./..."
+t_hasnt "poetry with no pytest has no test" "poetry:test"
+
+lat "$DET" run lint --dry-run ; t_ok "lint resolves across ecosystems"
+t_has   "cargo lint is clippy"  "cargo:lint  cargo clippy"
+t_has   "go lint is vet"        "go:lint  go vet ./..."
+t_has   "ruff lints a uv project" "uv:lint  uv run ruff check ."
+t_hasnt "never an invented cargo lint" "cargo lint"
+t_hasnt "never an invented gradle lint" "gradlew lint"
+
+# Persistent tasks are never fabricated for a build tool: `run dev` resolves only
+# where a workspace declares one.
 lat "$DET" run dev --dry-run ; t_ok "persistent-task dry-run exits 0"
-t_hasE "persistent dev runs where declared" "npm:dev.*npm run dev"
+t_has   "persistent dev runs where declared" "npm:dev  npm run dev"
 t_hasnt "persistent dev not fabricated for cargo" "cargo dev"
 t_hasnt "persistent dev not fabricated for go"    "go dev"
+
+# =========================================================================
+# 10b. Workspaces from the repo's own workspace files; order from manifests.
+# =========================================================================
+sect "native workspace discovery & inferred order"
+
+NAT="$ENVROOT/native"
+mkdir -p "$NAT"
+w "$NAT/package.json" '{ "name": "native-root", "private": true, "scripts": { "build": "lattice run build" } }'
+w "$NAT/pnpm-workspace.yaml" "packages:
+  - 'packages/*'
+  - '!packages/legacy'
+"
+w "$NAT/pnpm-lock.yaml" ""
+w "$NAT/packages/ui/package.json"     '{ "name": "@acme/ui", "scripts": { "build": "tsc" } }'
+w "$NAT/packages/web/package.json"    '{ "name": "web", "scripts": { "build": "vite build", "dev": "vite" }, "dependencies": { "@acme/ui": "workspace:*" } }'
+w "$NAT/packages/legacy/package.json" '{ "name": "legacy", "scripts": { "build": "tsc" } }'
+w "$NAT/Cargo.toml" "[workspace]
+members = [\"crates/*\"]
+"
+w "$NAT/Cargo.lock" ""
+w "$NAT/crates/core/Cargo.toml" "[package]
+name = \"core\"
+"
+w "$NAT/crates/cli/Cargo.toml" "[package]
+name = \"cli\"
+[dependencies]
+core = { path = \"../core\" }
+"
+w "$NAT/crates/skip/Cargo.toml" "[package]
+name = \"skip\"
+"
+w "$NAT/go.work" "go 1.22
+
+use (
+	./svc/api
+	./svc/lib
+)
+"
+w "$NAT/svc/lib/go.mod" "module example.com/lib
+"
+w "$NAT/svc/api/go.mod" "module example.com/api
+
+require example.com/lib v0.0.0
+"
+w "$NAT/pyproject.toml" "[tool.uv.workspace]
+members = [\"py/*\"]
+"
+w "$NAT/uv.lock" ""
+w "$NAT/py/pa/pyproject.toml" "[project]
+name = \"pa\"
+"
+w "$NAT/py/pb/pyproject.toml" "[project]
+name = \"pb\"
+dependencies = [\"pa>=0.1\"]
+"
+w "$NAT/tools/gen/justfile" "build:
+	echo gen
+"
+cat > "$NAT/lattice.json" <<'JSON'
+{
+  "workspaces": ["tools/*"],
+  "exclude": ["crates/skip"],
+  "overrides": {
+    "web": { "dependsOn": ["api"] },
+    "svc/*": { "tasks": { "lint": "echo go-lint" } }
+  }
+}
+JSON
+lat "$NAT" run build --dry-run ; t_ok "a repo described by its workspace files plans a build"
+t_has   "pnpm-workspace.yaml names @acme/ui"    "@acme/ui:build  pnpm run build"
+t_has   "a member finds the root's lockfile"    "web:build  pnpm run build"
+t_has   "Cargo [workspace] names its members"   "cli:build  cargo build"
+t_has   "go.work names its modules"             "api:build  go build ./..."
+t_has   "uv workspace names its members"        "pb:build  uv build"
+t_has   "lattice.json adds a directory"         "gen:build  just build"
+t_hasnt "a root that names workspaces is not one" "native-root:build"
+t_hasnt "a pnpm negation leaves a package out" "legacy:build"
+t_hasnt "exclude leaves a member out"          "skip:build"
+DRY="$OUTPUT"
+pos() { printf '%s\n' "$DRY" | grep -n -- "$1" | head -1 | cut -d: -f1; }
+before() { # before <name> <a> <b>: a's line comes before b's
+  local a b; a="$(pos "$2")"; b="$(pos "$3")"
+  if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then pass "$1"; else fail "$1" "$2@$a $3@$b"; fi
+}
+before "workspace:* orders a JS dependency first"      "@acme/ui:build" "web:build"
+before "a Cargo path dependency orders the crate first" "core:build"     "cli:build"
+before "a go require orders the module first"           "lib:build"      "api:build"
+before "a uv dependency orders the package first"       "pa:build"       "pb:build"
+before "an override adds an edge across languages"      "api:build"      "web:build"
+
+lat "$NAT" run lint --dry-run ; t_ok "lint plans across the native repo"
+t_has "a path-glob override writes a command for every match" "api:lint  echo go-lint"
+t_has "the same override reaches the other match"             "lib:lint  echo go-lint"
+t_has "cargo members lint with clippy"                        "core:lint  cargo clippy"
+
+# The built-in defaults: build waits on its dependencies' builds and caches the
+# tool's build directory; dev is persistent without being told.
+lat "$NAT" run dev --dry-run ; t_ok "dev plans without being declared"
+t_has "a dev script runs as a persistent task" "web:dev  pnpm run dev"
 
 # =========================================================================
 # 11. Error paths & guardrails.
@@ -1162,59 +1367,108 @@ mkerr() { # mkerr <name> ; sets ERR to the repo dir and creates it
 # Ambiguous: a bare package.json names no tool.
 mkerr ambiguity; mkdir -p "$ERR/a"; w "$ERR/a/package.json" '{ "name": "x" }'
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a" } ], "tasks": { "build": {} } }
+{ "workspaces": ["a"], "tasks": { "build": {} } }
 JSON
 lat "$ERR" run build ; t_bad "ambiguous driver halts"
-t_has "ambiguity explains itself"      "ambiguous"
-t_has "ambiguity suggests engines fix" "engines"
+t_has "ambiguity names the candidates"  "npm, pnpm, yarn, bun"
+t_has "ambiguity suggests a driver fix" '"overrides": { "x": { "driver": "npm" } }'
+# ...and pasting the fix in resolves it.
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["a"], "overrides": { "x": { "driver": "npm", "tasks": { "build": "echo built" } } } }
+JSON
+lat "$ERR" run build ; t_ok "the suggested driver fix resolves the halt"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["a"], "overrides": { "x": { "driver": "npmm" } } }
+JSON
+lat "$ERR" run build ; t_bad "a driver Lattice does not know is refused"
+t_has "the unknown driver gets a suggestion" 'Did you mean `npm`?'
 
-# A runtime cannot drive tasks, so the fix offered here must not name one --
-# pasting it in has to resolve the halt rather than reproduce it.
+# A runtime pin names a language, not a tool, and a directory holding nothing
+# else is not a workspace: a glob can match a directory of assets.
 mkerr runtime_only; mkdir -p "$ERR/a"; w "$ERR/a/.nvmrc" "20"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a" } ], "tasks": { "build": {} } }
+{ "workspaces": ["a"] }
 JSON
-lat "$ERR" run build ; t_bad "runtime-only workspace halts"
-t_has "runtime-only suggests scripts, not engines" "scripts"
-t_hasnt "runtime-only does not suggest a runtime" '"node"'
-
-# ...and the suggested fix actually works.
+lat "$ERR" run build ; t_ok "a runtime-only directory is not a workspace"
+t_has "the run says it found none" "found no workspaces"
+# Writing its commands out makes it one.
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false,
-    "scripts": { "build": "echo built" } } ], "tasks": { "build": {} } }
+{ "workspaces": ["a"], "overrides": { "a": { "tasks": { "build": "echo built" } } } }
 JSON
-lat "$ERR" run build ; t_ok "the suggested scripts fix resolves the halt"
+lat "$ERR" run build ; t_ok "written-out commands make a directory a workspace"
+t_has "the written-out command ran" "built"
+# driver "none" keeps Lattice from reading a manifest that is there.
+w "$ERR/a/package.json" '{ "scripts": { "build": "tsc" } }'
+w "$ERR/a/package-lock.json" '{}'
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["a"], "overrides": { "a": { "driver": "none", "tasks": { "test": "echo t" } } } }
+JSON
+lat "$ERR" run build --dry-run ; t_bad "driver none reads no scripts"
+t_has "so the script in the manifest is not a task" "no workspace has a 'build' task"
 
 # Same-role conflict.
 mkerr conflict; mkdir -p "$ERR/a"; w "$ERR/a/bun.lockb" ""; w "$ERR/a/pnpm-lock.yaml" ""; w "$ERR/a/package.json" "{}"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a" } ], "tasks": { "build": {} } }
+{ "workspaces": ["a"], "tasks": { "build": {} } }
 JSON
 lat "$ERR" run build ; t_bad "same-role conflict halts"
 
-# auto:false workspace missing a command for the requested root task.
-mkerr manual_nocmd; mkdir -p "$ERR/a"
+# A task no workspace has is refused, naming the ones there are. Declaring it in
+# the root map only says how it behaves; it does not make it runnable.
+mkerr nocmd; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "test": "echo t" } } ], "tasks": { "build": {}, "test": {} } }
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"test": "echo t"}}}, "tasks": { "build": {}, "test": {} } }
 JSON
-lat "$ERR" run build ; t_bad "manual workspace missing root command halts"
-t_has "manual-missing message" "declares no command"
+lat "$ERR" run build ; t_bad "a task no workspace has is refused"
+t_has "the refusal names the task" "no workspace has a 'build' task"
+t_has "the refusal lists the tasks" "Tasks: test"
 
-# A script naming a task that does not exist is unreachable, so it is refused
-# rather than silently never running.
-mkerr manual_stray; mkdir -p "$ERR/a"
+# A written-out command under a misspelled name is still a task — just not the
+# one the run asked for, which the refusal points out.
+mkerr stray; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "biuld": "echo b" } } ], "tasks": { "build": {} } }
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"biuld": "echo b"}}} }
 JSON
-lat "$ERR" run build ; t_bad "a script naming no task is refused"
-t_has "stray-script message"    "is not defined in \`tasks\`"
-t_has "stray-script suggestion" "Did you mean"
+lat "$ERR" run build ; t_bad "a run of a misspelled task is refused"
+t_has "the misspelling gets a suggestion" "Did you mean 'biuld'?"
+
+# The root map says what a task does everywhere, never what it runs.
+mkerr rootrun; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["a"], "tasks": { "build": { "run": "make" } } }
+JSON
+lat "$ERR" run build ; t_bad "a run in the root task map is refused"
+t_has "the refusal sends it to an override" '"overrides"'
+
+# An override that matches nothing would change nothing without saying so.
+mkerr unmatched; mkdir -p "$ERR/web"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["web"], "overrides": { "web": { "tasks": { "build": "echo b" } }, "weeb": {} } }
+JSON
+lat "$ERR" run build ; t_bad "an override key that names no workspace is refused"
+t_has "the unmatched key is named"      "'weeb' names no workspace"
+t_has "the unmatched key gets a suggestion" 'Did you mean `web`?'
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["web"], "overrides": { "web": { "tasks": { "build": "echo b" } }, "apps/*": {} } }
+JSON
+lat "$ERR" run build ; t_bad "a path-glob override that matches nothing is refused"
+t_has "the unmatched glob is named" "'apps/*' matches no workspace path"
+
+# A 1.x config is pointed at the command that rewrites it, rather than failing
+# on its first unknown shape.
+mkerr v1config; mkdir -p "$ERR/a"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+  "tasks": { "build": {} } }
+JSON
+lat "$ERR" run build ; t_bad "a 1.x config does not run"
+t_has "a 1.x config is pointed at migrate" "Run \`lattice migrate\`"
 
 # A repeated key is last-wins in JSON, so the first declaration vanishes — and
 # with it whatever it said about what the task hashes and caches.
 mkerr dupkey; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"build": "echo b"}}},
   "tasks": { "build": { "outputs": ["dist/**"] }, "build": {} } }
 JSON
 lat "$ERR" run build ; t_bad "a duplicate task key is refused"
@@ -1224,7 +1478,7 @@ t_has "duplicate-key message" "duplicate key \`build\`"
 # of what was asked for.
 mkerr bigtimeout; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"build": "echo b"}}},
   "tasks": { "build": { "timeout": 1e30 } } }
 JSON
 lat "$ERR" run build ; t_bad "an oversized timeout is refused"
@@ -1232,7 +1486,7 @@ t_has "oversized-timeout message" "maximum of 365 days"
 
 mkerr fractimeout; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"build": "echo b"}}},
   "tasks": { "build": { "timeout": 1.5 } } }
 JSON
 lat "$ERR" run build ; t_bad "a fractional timeout is refused rather than rounded"
@@ -1242,7 +1496,7 @@ t_has "fractional-timeout message" "whole number of seconds"
 # would put a host directory on every task's PATH while claiming a pinned tool.
 mkerr enginebin; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "build": "echo b" } } ],
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"build": "echo b"}}},
   "tasks": { "build": {} },
   "engines": { "alpes": { "installCmd": "true", "bin": "/usr/bin" } } }
 JSON
@@ -1252,7 +1506,7 @@ t_has "engine-bin message" "toolchain"
 # Dependency cycle.
 mkerr cycle; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "x": "echo x", "y": "echo y" } } ],
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"x": "echo x", "y": "echo y"}}},
   "tasks": { "x": { "dependsOn": ["y"] }, "y": { "dependsOn": ["x"] } } }
 JSON
 lat "$ERR" run x ; t_bad "task cycle is rejected"
@@ -1261,7 +1515,7 @@ t_has "cycle message" "the task graph has a cycle"
 # Persistent task depended upon.
 mkerr persist_dep; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a", "auto": false, "scripts": { "srv": "sleep 1", "use": "echo use" } } ],
+{ "workspaces": ["a"], "overrides": {"a": {"tasks": {"srv": "sleep 1", "use": "echo use"}}},
   "tasks": { "srv": { "persistent": true }, "use": { "dependsOn": ["srv"] } } }
 JSON
 lat "$ERR" run use ; t_bad "depending on a persistent task is rejected"
@@ -1270,21 +1524,30 @@ t_has "persistent-dep message" "no other task may depend on it"
 # Duplicate workspace name.
 mkerr dupname; mkdir -p "$ERR/a" "$ERR/b"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "x", "path": "a" }, { "name": "x", "path": "b" } ], "tasks": { "build": {} } }
+{ "workspaces": ["a", "b"],
+  "overrides": { "./a": { "name": "x", "tasks": { "build": "echo a" } }, "./b": { "name": "x", "tasks": { "build": "echo b" } } } }
 JSON
-lat "$ERR" run build ; t_bad "duplicate workspace name is rejected"
-t_has "dup-name message" "duplicate workspace name"
+lat "$ERR" run build ; t_bad "two workspaces renamed to one name are rejected"
+t_has "dup-name message" "two workspaces are named 'x'"
 
-# Duplicate workspace path (auto:false so driver detection can't pre-empt it).
+# Two directories that derive one name are told apart by path, not refused.
+mkerr samename; mkdir -p "$ERR/apps/web" "$ERR/sites/web"
+cat > "$ERR/lattice.json" <<'JSON'
+{ "workspaces": ["apps/*", "sites/*"],
+  "overrides": { "apps/*": { "tasks": { "build": "echo a" } }, "sites/*": { "tasks": { "build": "echo s" } } } }
+JSON
+lat "$ERR" run build --dry-run ; t_ok "two directories named alike both run"
+t_has "the first is named by its path"  "apps/web:build"
+t_has "the second is named by its path" "sites/web:build"
+
+# A directory named twice is one workspace.
 mkerr duppath; mkdir -p "$ERR/a"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [
-    { "name": "x", "path": "a", "auto": false, "scripts": { "build": "echo x" } },
-    { "name": "y", "path": "a", "auto": false, "scripts": { "build": "echo y" } }
-  ], "tasks": { "build": {} } }
+{ "workspaces": ["a", "a", "*"], "overrides": { "a": { "tasks": { "build": "echo once" } } } }
 JSON
-lat "$ERR" run build ; t_bad "duplicate workspace path is rejected"
-t_has "dup-path message" "duplicate workspace path"
+lat "$ERR" run build --dry-run ; t_ok "a directory listed twice resolves"
+if [ "$(printf '%s\n' "$OUTPUT" | grep -c 'a:build')" -eq 1 ]; then pass "a directory listed twice is one workspace"
+else fail "a directory listed twice is one workspace" "$(snip)"; fi
 
 # Unknown string-form engine.
 mkerr badengine
@@ -1297,10 +1560,10 @@ t_has "bad-engine suggests versionCmd" "versionCmd"
 # Workspace path that isn't a directory.
 mkerr notadir
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "gone", "path": "does/not/exist" } ], "tasks": { "build": {} } }
+{ "workspaces": ["does/not/exist"] }
 JSON
-lat "$ERR" run build ; t_bad "non-directory workspace path is rejected"
-t_has "not-a-dir message" "does not point to a directory"
+lat "$ERR" run build ; t_bad "a workspaces entry that matches nothing is rejected"
+t_has "not-a-dir message" "matches no directory"
 
 # Provisioning: installCmd that fails.
 mkerr install_fail
@@ -1309,7 +1572,9 @@ cat > "$ERR/lattice.json" <<'JSON'
   "workspaces": [], "tasks": { "build": {} } }
 JSON
 lat "$ERR" setup ; t_bad "failing installCmd fails setup"
-t_has "install-fail message" "installCmd failed"
+t_has "install-fail headline names the status" "could not be installed: its installCmd exited with code 7"
+t_has "install-fail shows the command that ran" "ran      exit 7"
+t_has "install-fail says where the tool goes"   "LATTICE_TOOLCHAIN_DIR"
 
 # An unknown key is refused rather than ignored. A `output` written for `outputs`
 # would otherwise decide, silently, what the task caches.
@@ -1336,16 +1601,15 @@ lat "$ERR" run build ; t_bad "a misspelled outputs key is rejected"
 t_has "the typo is placed in its task" 'unknown field `output` in tasks.build'
 t_has "the typo gets a suggestion"     'Did you mean `outputs`?'
 
-# Inside a workspace entry, which is indexed so the right one gets read.
+# Inside an override, which is named by its key so the right one gets read.
 mkerr unknown_ws; mkdir -p "$ERR/a" "$ERR/b"
 cat > "$ERR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "a", "path": "a" },
-                  { "name": "b", "path": "b", "dependOn": ["a"] } ],
-  "tasks": { "build": {} } }
+{ "workspaces": ["a", "b"],
+  "overrides": { "a": {}, "b": { "dependOn": ["a"] } } }
 JSON
-lat "$ERR" run build ; t_bad "an unknown workspace key is rejected"
-t_has "the offending workspace is indexed"   'unknown field `dependOn` in workspaces[1]'
-t_has "the workspace typo gets a suggestion" 'Did you mean `dependsOn`?'
+lat "$ERR" run build ; t_bad "an unknown override key is rejected"
+t_has "the offending override is named"     'unknown field `dependOn` in overrides.b'
+t_has "the override typo gets a suggestion" 'Did you mean `dependsOn`?'
 
 # An engine object reports its own unknown key, rather than the enclosing
 # either/or reporting that neither form matched.
@@ -1373,7 +1637,20 @@ cat > "$ERR/lattice.json" <<'JSON'
   "workspaces": [], "tasks": { "build": {} } }
 JSON
 lat "$ERR" setup ; t_bad "unsatisfied version constraint fails setup"
-t_has "validate-unsat message" "does not satisfy"
+t_has "validate-unsat headline" "engine 'picky' does not match the version this repo pins"
+t_has "validate-unsat names what was wanted" "wanted   >=100.0.0"
+t_has "validate-unsat names what was found"  "found    1.0.0"
+t_has "validate-unsat names what ran"        "ran      echo 1.0.0"
+t_has "validate-unsat says what to do"       "fix      install picky >=100.0.0"
+
+# A tool that is not there at all is named as missing, not as a failed command.
+mkerr missing_tool
+cat > "$ERR/lattice.json" <<'JSON'
+{ "engines": { "ghosttool": { "version": ">=1.0.0", "versionCmd": "lattice-stress-no-such-tool --version" } } }
+JSON
+lat "$ERR" setup ; t_bad "a missing tool fails setup"
+t_has "a missing tool is named as missing" "engine 'ghosttool' is not installed, or not on PATH"
+t_has "a missing tool offers the installCmd way out" "installCmd"
 
 # =========================================================================
 # 12. prune & custom cache dir.
@@ -1383,7 +1660,7 @@ sect "prune & settings.cacheDir"
 # Custom cache directory.
 CDIR="$ENVROOT/cachedir"; mkdir -p "$CDIR/pkg"
 cat > "$CDIR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
+{ "workspaces": ["pkg"], "overrides": {"pkg": {"tasks": {"build": "mkdir -p dist && echo out > dist/o.txt"}}},
   "tasks": { "build": { "outputs": ["dist/**"] } },
   "settings": { "cacheDir": "custom-cache" } }
 JSON
@@ -1395,7 +1672,7 @@ t_has "prune reports removal" "removed"
 # A retired setting is a parse error like any other unknown key: `logging` was
 # removed, and a config still carrying it has to be told so rather than run.
 cat > "$CDIR/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
+{ "workspaces": ["pkg"], "overrides": {"pkg": {"tasks": {"build": "mkdir -p dist && echo out > dist/o.txt"}}},
   "tasks": { "build": { "outputs": ["dist/**"] } },
   "settings": { "cacheDir": "custom-cache", "logging": "debug" } }
 JSON
@@ -1419,7 +1696,7 @@ t_has "prune-no-size message" "no cache size limit set"
 # sweeping eagerly meant two Lattice runs on one repo deleted each other's work.
 SWEEP="$ENVROOT/sweep-grace"; mkdir -p "$SWEEP/pkg/.cache"
 cat > "$SWEEP/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "mkdir -p dist && echo out > dist/o.txt" } } ],
+{ "workspaces": ["pkg"], "overrides": {"pkg": {"tasks": {"build": "mkdir -p dist && echo out > dist/o.txt"}}},
   "tasks": { "build": { "outputs": ["dist/**"] } },
   "settings": { "cacheDir": ".lattice/cache" } }
 JSON
@@ -1436,7 +1713,7 @@ t_nofile "$SWEEP/.lattice/cache/deadbeef.tar.gz" "prune still reclaims an abando
 badcache() {
   BADC="$ENVROOT/badcache"; rm -rf "$BADC"; mkdir -p "$BADC/pkg"
   cat > "$BADC/lattice.json" <<JSON
-{ "workspaces": [ { "name": "pkg", "path": "pkg", "auto": false, "scripts": { "build": "echo b" } } ],
+{ "workspaces": ["pkg"], "overrides": {"pkg": {"tasks": {"build": "echo b"}}},
   "tasks": { "build": {} },
   "settings": { "cacheDir": "$1" } }
 JSON
@@ -1462,8 +1739,7 @@ sect "guardrails — shared files, references, signals, budgets, timeouts"
 GDEP="$ENVROOT/globaldeps"; mkdir -p "$GDEP/app"
 w "$GDEP/shared.config.json" '{"mode":"one"}'
 cat > "$GDEP/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "cat ../shared.config.json > out.txt" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "cat ../shared.config.json > out.txt"}}},
   "globalDependencies": ["shared.config.json"],
   "tasks": { "build": { "outputs": ["out.txt"] } } }
 JSON
@@ -1481,8 +1757,7 @@ lat "$GDEP" -v run build ; t_has "a miss names globalDependencies as the cause" 
 # --- globalEnv -------------------------------------------------------------
 GENV="$ENVROOT/globalenv"; mkdir -p "$GENV/app"
 cat > "$GENV/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "echo built > out.txt" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo built > out.txt"}}},
   "globalEnv": ["STRESS_GLOBAL"],
   "tasks": { "build": { "outputs": ["out.txt"] } } }
 JSON
@@ -1494,8 +1769,7 @@ late "STRESS_GLOBAL=two" "$GENV" -v run build --force ; t_ok "globalEnv: --force
 # --- a miss with nothing to compare against --------------------------------
 NEVER="$ENVROOT/neverrun"; mkdir -p "$NEVER/app"
 cat > "$NEVER/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "echo hi > out.txt" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo hi > out.txt"}}},
   "tasks": { "build": { "outputs": ["out.txt"] } } }
 JSON
 lat "$NEVER" -v run build ; t_has "a task that never ran says so instead of naming a component" "nothing cached"
@@ -1505,38 +1779,32 @@ lat "$NEVER" -v run build ; t_has "a task that never ran says so instead of nami
 # guarantee simply did not happen, with nothing printed.
 BADREF="$ENVROOT/badref"; mkdir -p "$BADREF/lib" "$BADREF/app"
 cat > "$BADREF/lattice.json" <<'JSON'
-{ "workspaces": [
-    { "name": "lib", "path": "lib", "auto": false, "scripts": { "build": "echo lib" } },
-    { "name": "app", "path": "app", "auto": false, "dependsOn": ["libb"],
-      "scripts": { "build": "echo app" } } ],
+{ "workspaces": ["lib", "app"], "overrides": {"lib": {"tasks": {"build": "echo lib"}}, "app": {"dependsOn": ["libb"], "tasks": {"build": "echo app"}}},
   "tasks": { "build": { "dependsOn": ["^build"] } } }
 JSON
 lat "$BADREF" run build --dry-run ; t_bad "a workspace dependsOn naming nothing is rejected"
-t_has "the unresolvable workspace name is named" "not a declared workspace"
+t_has "the unresolvable workspace name is named" "'libb', which is not a workspace"
 t_has "the nearest workspace name is offered"    "Did you mean \`lib\`?"
 
 cat > "$BADREF/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false, "scripts": { "build": "echo app" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo app"}}},
   "tasks": { "build": { "dependsOn": ["codegen"] } } }
 JSON
 lat "$BADREF" run build --dry-run ; t_bad "a task dependsOn naming nothing is rejected"
-t_has "the undefined task is named" "is not defined in"
-t_has "the defined tasks are listed" "Defined tasks: build"
+t_has "the undefined task is named" "task 'build' depends on 'codegen', but no workspace has a 'codegen' task"
+t_has "the tasks there are are listed" "Tasks: build"
 
 # The `^` form resolves against the same task map, so it is checked the same way.
 cat > "$BADREF/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false, "scripts": { "build": "echo app" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo app"}}},
   "tasks": { "build": { "dependsOn": ["^compile"] } } }
 JSON
 lat "$BADREF" run build --dry-run ; t_bad "a caret dependsOn naming nothing is rejected"
-t_has "the caret form is checked against the task map" "'compile'"
+t_has "the caret form is checked the same way" "no workspace has a 'compile' task"
 
 # A resolvable graph still loads, so the check is not simply rejecting everything.
 cat > "$BADREF/lattice.json" <<'JSON'
-{ "workspaces": [
-    { "name": "lib", "path": "lib", "auto": false, "scripts": { "build": "echo lib" } },
-    { "name": "app", "path": "app", "auto": false, "dependsOn": ["lib"],
-      "scripts": { "build": "echo app" } } ],
+{ "workspaces": ["lib", "app"], "overrides": {"lib": {"tasks": {"build": "echo lib"}}, "app": {"dependsOn": ["lib"], "tasks": {"build": "echo app"}}},
   "tasks": { "build": { "dependsOn": ["^build"] } } }
 JSON
 lat "$BADREF" run build --dry-run ; t_ok "a resolvable dependsOn still loads"
@@ -1544,9 +1812,7 @@ lat "$BADREF" run build --dry-run ; t_ok "a resolvable dependsOn still loads"
 # --- a workspace path that leaves the repo ---------------------------------
 ESC="$ENVROOT/escape"; mkdir -p "$ESC/repo"; mkdir -p "$ESC/outside"
 cat > "$ESC/repo/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "esc", "path": "../outside", "auto": false,
-                    "scripts": { "build": "echo x > out.txt" } } ],
-  "tasks": { "build": { "outputs": ["out.txt"] } } }
+{ "workspaces": ["../outside"] }
 JSON
 lat "$ESC/repo" run build --dry-run ; t_bad "a workspace path outside the repo is rejected"
 t_has "the escaping path is named" "outside the repo root"
@@ -1557,8 +1823,7 @@ t_has "the escaping path is named" "outside the repo root"
 # provisioned toolchains and the installed binary with it.
 KEEP="$ENVROOT/prunekeep"; mkdir -p "$KEEP/app"
 cat > "$KEEP/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "echo hi > out.txt" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo hi > out.txt"}}},
   "tasks": { "build": { "outputs": ["out.txt"] } },
   "settings": { "cacheDir": ".lattice", "maxCacheSize": "1B" } }
 JSON
@@ -1580,8 +1845,7 @@ t_dir    "$KEEP/.lattice/v1" "prune removes no directories, including an unreach
 # `lattice prune` alone meant a repo that set one still grew without limit.
 BUDGET="$ENVROOT/budget"; mkdir -p "$BUDGET/app"
 cat > "$BUDGET/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "head -c 200000 /dev/zero | tr '\\0' 'x' > big.bin" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "head -c 200000 /dev/zero | tr '\\0' 'x' > big.bin"}}},
   "tasks": { "build": { "outputs": ["big.bin"] } },
   "settings": { "maxCacheSize": "1KB" } }
 JSON
@@ -1605,8 +1869,7 @@ fi
 # A task with no limit that never exits hangs the run, in CI as much as locally.
 TMO="$ENVROOT/timeout"; mkdir -p "$TMO/app"
 cat > "$TMO/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "sleep 60; touch finished.txt" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "sleep 60; touch finished.txt"}}},
   "tasks": { "build": { "timeout": "1s" } } }
 JSON
 lat_timeout "$TMO" 45 run build
@@ -1617,8 +1880,7 @@ t_nofile "$TMO/app/finished.txt" "the task did not run to completion"
 
 # A limit the task stays inside changes nothing.
 cat > "$TMO/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "echo hi > out.txt" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo hi > out.txt"}}},
   "tasks": { "build": { "timeout": "5m", "outputs": ["out.txt"] } } }
 JSON
 lat "$TMO" run build ; t_ok "a task inside its timeout is untouched"
@@ -1627,8 +1889,7 @@ t_file "$TMO/app/out.txt" "a task inside its timeout still produces its outputs"
 # A timeout on a persistent task is ignored: a dev server is asked to keep
 # running, so a limit would only cut short the thing it exists to hold open.
 cat > "$TMO/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "dev": "echo serving; sleep 3117" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"dev": "echo serving; sleep 3117"}}},
   "tasks": { "dev": { "persistent": true, "timeout": "1s" } } }
 JSON
 lat_timeout "$TMO" 8 run dev
@@ -1646,8 +1907,7 @@ pkill -f "sleep 3117" 2>/dev/null
 # exits: the build succeeded and the run then waited for good.
 DMN="$ENVROOT/daemon"; mkdir -p "$DMN/app"
 cat > "$DMN/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "echo built; sleep 5171 &" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "echo built; sleep 5171 &"}}},
   "tasks": { "build": { "cache": false } } }
 JSON
 lat_timeout "$DMN" 20 run build --loquacious
@@ -1670,8 +1930,7 @@ pkill -f "sleep 5171" 2>/dev/null
 # take the same path.
 SIG="$ENVROOT/signals"; mkdir -p "$SIG/app"
 cat > "$SIG/lattice.json" <<'JSON'
-{ "workspaces": [ { "name": "app", "path": "app", "auto": false,
-                    "scripts": { "build": "sleep 4271" } } ],
+{ "workspaces": ["app"], "overrides": {"app": {"tasks": {"build": "sleep 4271"}}},
   "tasks": { "build": {} } }
 JSON
 # `exec`, so `$!` is the binary's own pid. Without it the subshell stays in the
@@ -1716,10 +1975,11 @@ fi
 # =========================================================================
 sect "passthrough — nested repo with its own runner"
 
-# A manual workspace whose script shells out to a nested repo's own runner. The
-# runner is a stub on PATH that fans a task over the nested packages and leaves a
-# nondeterministic marker in its own cache dir — which the `ignore` set must keep
-# out of Lattice's key.
+# A workspace that is itself a monorepo with its own runner. Lattice sees its
+# turbo.json and hands each task to that runner; nothing in lattice.json names the
+# inner packages. The runner is a stub on PATH that fans a task over the nested
+# packages and leaves a nondeterministic marker in its own cache dir — which the
+# `ignore` set must keep out of Lattice's key.
 NEST="$ENVROOT/nested"
 mkdir -p "$NEST/bin" "$NEST/frontend/packages/ui/src" "$NEST/frontend/packages/site/src" "$NEST/api/src"
 cat > "$NEST/bin/turbo" <<'SH'
@@ -1745,12 +2005,8 @@ w "$NEST/api/src/main.txt" "api v1
 "
 cat > "$NEST/lattice.json" <<'JSON'
 {
-  "workspaces": [
-    { "name": "frontend", "path": "frontend", "auto": false,
-      "scripts": { "build": "turbo run build" } },
-    { "name": "api", "path": "api", "auto": false, "dependsOn": ["frontend"],
-      "scripts": { "build": "mkdir -p dist && cp ../frontend/packages/site/dist/bundle.js dist/site.js && echo api-built" } }
-  ],
+  "workspaces": ["frontend", "api"],
+  "overrides": { "api": { "dependsOn": ["frontend"], "tasks": { "build": "mkdir -p dist && cp ../frontend/packages/site/dist/bundle.js dist/site.js && echo api-built" } } },
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -1764,6 +2020,8 @@ cat > "$NEST/lattice.json" <<'JSON'
 JSON
 
 NESTPATH="PATH=$NEST/bin:$PATH"
+late "$NESTPATH" "$NEST" run build --dry-run ; t_ok "passthrough dry run exits 0"
+t_has "a nested monorepo is handed to its own runner" "frontend:build  turbo run build"
 late "$NESTPATH" "$NEST" run build -v ; t_ok "passthrough cold run exits 0"
 t_has "inner runner was invoked"        "turbo-stub: build complete"
 t_has "downstream ran after the nested repo" "api-built"
@@ -1784,9 +2042,178 @@ late "$NESTPATH" "$NEST" run build -v ; t_ok "passthrough run after inner edit e
 t_hasnt "an inner source edit busts the nested key" "frontend:build: cache hit"
 t_has   "the busted key re-invokes the inner runner" "turbo-stub: build complete"
 
-# A manual workspace must declare any task invoked directly.
-late "$NESTPATH" "$NEST" run lint ; t_bad "root task missing from a manual workspace fails"
-t_has "missing-script message names the workspace" "declares no command for task"
+# A task the inner runner does not declare is one no workspace has.
+late "$NESTPATH" "$NEST" run lint ; t_bad "a task the inner runner lacks is refused"
+t_has "the refusal names it" "no workspace has a 'lint' task"
+
+# =========================================================================
+# 13b. migrate: a 1.x config rewritten to say only what manifests cannot.
+# =========================================================================
+sect "migrate"
+
+MIG="$ENVROOT/migrate"
+mkdir -p "$MIG"
+w "$MIG/Cargo.toml" "[workspace]
+members = [\"crates/*\"]
+"
+w "$MIG/Cargo.lock" ""
+w "$MIG/crates/core/Cargo.toml" "[package]
+name = \"core\"
+"
+w "$MIG/crates/cli/Cargo.toml" "[package]
+name = \"cli\"
+[dependencies]
+core = { path = \"../core\" }
+"
+w "$MIG/web/package.json" '{ "scripts": { "build": "vite build" } }'
+w "$MIG/web/package-lock.json" '{}'
+cat > "$MIG/lattice.json" <<'JSON'
+{
+  "latticeVersion": "1.1.1",
+  "workspaces": [
+    { "name": "core", "path": "crates/core" },
+    { "name": "cli", "path": "crates/cli", "dependsOn": ["core"] },
+    { "name": "site", "path": "web", "dependsOn": ["cli"], "scripts": { "dev": "vite" } }
+  ],
+  "engines": { "npm": ">=0.0.0" },
+  "tasks": { "build": { "dependsOn": ["^build"] }, "dev": { "persistent": true } }
+}
+JSON
+cp "$MIG/lattice.json" "$MIG/lattice.v1.json"
+lat "$MIG" run build ; t_bad "a 1.x config does not run as-is"
+t_has "the refusal names the fix" "lattice migrate"
+
+lat "$MIG" migrate --dry-run ; t_ok "migrate --dry-run exits 0"
+t_has "the dry run prints the new config" '"overrides"'
+if cmp -s "$MIG/lattice.json" "$MIG/lattice.v1.json"; then pass "migrate --dry-run writes nothing"
+else fail "migrate --dry-run writes nothing" "lattice.json changed"; fi
+
+lat "$MIG" migrate ; t_ok "migrate exits 0"
+t_has "migrate reports the rewrite" "rewrote lattice.json"
+t_has "migrate names a placeholder engine it dropped" "dropped the \`npm\` engine"
+t_has "migrate names an edge the manifest now carries" "cli: dropped dependsOn core"
+t_grepfile   "$MIG/lattice.json" '"workspaces": ["web"]' "only the workspace no manifest names is listed"
+t_grepfile   "$MIG/lattice.json" '"name": "site"'        "a workspace keeps its 1.x name"
+t_grepfile   "$MIG/lattice.json" '"dependsOn": ["cli"]'  "an edge across languages is kept"
+t_grepfile   "$MIG/lattice.json" '"dev": "vite"'         "a written-out command is kept"
+t_nogrepfile "$MIG/lattice.json" '"crates/core"'         "a Cargo member is not listed"
+# A root engine only ever broke ties in 1.x, so it must not become every
+# workspace's driver on the way through.
+t_nogrepfile "$MIG/lattice.json" '"npm"'                 "the placeholder engine is gone"
+t_grepfile   "$MIG/lattice.json" "\"latticeVersion\": \"$VERSION\"" "the pin moves to this version"
+t_grepfile   "$MIG/.lattice/schema.json" '"overrides"'   "the schema is refreshed for this version"
+
+lat "$MIG" run build --dry-run ; t_ok "the migrated config plans a build"
+DRY="$OUTPUT"
+before "the migrated repo keeps its order (core, cli)" "core:build" "cli:build"
+before "the migrated repo keeps its order (cli, site)" "cli:build"  "site:build"
+t_has "the renamed workspace runs its manifest's script" "site:build  npm run build"
+
+lat "$MIG" migrate ; t_ok "migrating a current config exits 0"
+t_has "a current config is left alone" "already written for this version"
+
+# =========================================================================
+# 13c. env: the PATH a task sees, for the developer's own shell.
+# =========================================================================
+sect "env"
+
+ENVR="$ENVROOT/envrepo"; mkdir -p "$ENVR/app/node_modules/.bin"
+cat > "$ENVR/lattice.json" <<'JSON'
+{
+  "workspaces": ["app"],
+  "engines": {
+    "faketool": {
+      "version": ">=1.0.0",
+      "versionCmd": "faketool",
+      "installCmd": "mkdir -p '$LATTICE_TOOLCHAIN_DIR/bin' && echo '#!/bin/sh' > '$LATTICE_TOOLCHAIN_DIR/bin/faketool' && echo 'echo faketool 1.4.2' >> '$LATTICE_TOOLCHAIN_DIR/bin/faketool' && chmod +x '$LATTICE_TOOLCHAIN_DIR/bin/faketool'"
+    }
+  },
+  "overrides": { "app": { "tasks": { "build": "faketool" } } }
+}
+JSON
+OUTPUT="$(cd "$ENVR" && "$BIN" env --shell posix 2>/dev/null)"; RC=$?
+t_ok   "env --shell posix exits 0"
+t_hasE "env prints an export for a POSIX shell" '^export PATH=".*:\$PATH"$'
+t_has  "the export names the provisioned toolchain" ".lattice/toolchains/faketool/"
+EVALED="$(cd "$ENVR" && sh -c 'eval "$1"; faketool' _ "$OUTPUT" 2>&1)"
+if [ "$EVALED" = "faketool 1.4.2" ]; then pass "evaluating env puts the pinned tool on the shell's PATH"
+else fail "evaluating env puts the pinned tool on the shell's PATH" "$EVALED"; fi
+
+OUTPUT="$(cd "$ENVR" && "$BIN" env --shell fish 2>/dev/null)"; RC=$?
+t_ok  "env --shell fish exits 0"
+t_has "env prints fish grammar" "set -gx PATH '"
+
+OUTPUT="$(cd "$ENVR/app" && "$BIN" env --shell posix 2>/dev/null)"; RC=$?
+t_ok  "env from inside a workspace exits 0"
+t_has "a workspace's env adds the tools its package manager installed" "app/node_modules/.bin"
+
+OUTPUT="$(cd "$ENVR" && "$BIN" env --workspace nope 2>&1)"; RC=$?
+t_bad "env for a workspace that does not exist fails"
+t_has "and names the workspaces there are" "Workspaces: app"
+
+BARE="$ENVROOT/envbare"; mkdir -p "$BARE/app"
+w "$BARE/lattice.json" '{ "workspaces": ["app"], "overrides": { "app": { "tasks": { "build": "echo b" } } } }'
+STDOUT_ONLY="$(cd "$BARE" && "$BIN" env --shell posix 2>/dev/null)"
+lat "$BARE" env --shell posix ; t_ok "env with nothing to add exits 0"
+t_has "env says why there is nothing to add" "nothing to add to PATH"
+if [ -z "$STDOUT_ONLY" ]; then pass "env with nothing to add prints nothing to evaluate"
+else fail "env with nothing to add prints nothing to evaluate" "$STDOUT_ONLY"; fi
+
+# =========================================================================
+# 13d. Build-tool wrappers, and the defaults a build gets.
+# =========================================================================
+sect "build-tool wrappers & built-in defaults"
+
+# A Gradle or Maven wrapper usually sits at the root of the build, above the
+# project directory. It is found there, run from the project, and it is the
+# version the build checks — whatever is on PATH.
+WRAP="$ENVROOT/wrappers"; mkdir -p "$WRAP/jvm/app" "$WRAP/java/lib"
+cat > "$WRAP/gradlew" <<'SH'
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo "Gradle 8.10.2"; exit 0; fi
+mkdir -p build/libs && echo jar > build/libs/app.jar
+echo "fake-gradlew $* in $(basename "$PWD")"
+SH
+cat > "$WRAP/mvnw" <<'SH'
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo "Apache Maven 3.9.9"; exit 0; fi
+echo "fake-mvnw $* in $(basename "$PWD")"
+SH
+chmod +x "$WRAP/gradlew" "$WRAP/mvnw"
+w "$WRAP/jvm/app/build.gradle.kts" "plugins { application }
+"
+w "$WRAP/java/lib/pom.xml" "<project/>"
+cat > "$WRAP/lattice.json" <<'JSON'
+{
+  "workspaces": ["jvm/*", "java/*"],
+  "engines": { "gradle": ">=8.0", "maven": ">=3.9" }
+}
+JSON
+lat "$WRAP" run build --dry-run ; t_ok "a build with its wrapper above it plans"
+t_has "a gradle project calls the wrapper at the build root" "app:build  ../../gradlew build"
+t_has "a maven project calls the wrapper at the build root"  "lib:build  ../../mvnw package -DskipTests"
+lat "$WRAP" run run --dry-run ; t_ok "the application plugin offers run"
+t_has "the application plugin's run task" "app:run  ../../gradlew run"
+
+lat "$WRAP" run build ; t_ok "a build through parent wrappers runs"
+t_has "the gradle wrapper ran in the project" "fake-gradlew build in app"
+t_has "the maven wrapper ran in the project"  "fake-mvnw package -DskipTests in lib"
+lat "$WRAP" -v run build --force ; t_ok "the wrappers satisfy the pinned versions"
+t_has "the run says which gradle it uses" "gradle 8.10.2"
+
+# A build caches the tool's own build directory without being told, and restores
+# it on a hit.
+rm -rf "$WRAP/jvm/app/build"
+lat "$WRAP" run build ; t_ok "a second build exits 0"
+t_has  "an unchanged build is a hit" "app:build: cache hit"
+t_file "$WRAP/jvm/app/build/libs/app.jar" "a hit restores the gradle build directory by default"
+
+# A wrapper that reports another version fails the check with the full story.
+sed -i.bak 's/Gradle 8.10.2/Gradle 7.6/' "$WRAP/gradlew" && rm -f "$WRAP/gradlew.bak"
+lat "$WRAP" run build --force ; t_bad "a wrapper below the pinned version fails the run"
+t_has "the failure names the wrapper it checked" "ran      ../../gradlew --version"
+t_has "the failure names the version it found"   "found    7.6.0"
+t_has "the fix is to move the wrapper"          "./gradlew wrapper --gradle-version"
 
 # =========================================================================
 # 14. Distribution: the installer, `upgrade`, and the pinned-version handover.
@@ -2095,7 +2522,7 @@ t_has "the failure names the way out"        "--no-version-check"
 # =========================================================================
 # skills/lattice/ is what other people's agents learn Lattice from, so it is
 # checked against this binary rather than trusted. A command, a flag, an engine
-# name or an invoke template that drifts out of it fails here instead of in
+# name that drifts out of it fails here instead of in
 # someone else's repo. Every expectation below is read out of the skill files,
 # so updating them is what makes this section pass again.
 sect "the shipped agent skill"
@@ -2168,7 +2595,15 @@ $OUTPUT"
     fi
   done
 done
-for f in $(grep -ohE '\-\-[a-z][a-z-]+' "$SKILL" "$SKILLCLI" | sort -u); do
+# Three kinds of flag in the skill are not Lattice's: anything after a ` -- `,
+# which is handed to the task; another tool's own flags in a table of what
+# `setup` runs; and the flags the skill lists as not existing.
+SKILL_FLAGS="$(cat "$SKILL" "$SKILLCLI" |
+  grep -vE '^\| `(stack|cabal)`' |
+  grep -vE '\| Nothing\.' |
+  sed 's/ -- .*//' |
+  grep -oE '\-\-[a-z][a-z-]+' | sort -u)"
+for f in $SKILL_FLAGS; do
   case "$f" in --loquacious | --help | --version) continue ;; esac
   if printf '%s\n' "$ALLHELP" | grep -qF -- "$f"; then
     pass "\`$f\` exists, as the skill says"
@@ -2210,50 +2645,6 @@ for e in $(comm -23 <(printf '%s\n' "$SKILL_DRIVERS") <(printf '%s\n' "$SKILL_EN
   t_bad "engine '$e' is rejected in string form, as the skill says"
   t_has "the rejection of '$e' names versionCmd" "versionCmd"
 done
-
-# --- the invoke templates ------------------------------------------------
-# Every build-tool row of the skill's driver table, verified from its own
-# fingerprint: these invoke a task directly, with no manifest to consult.
-#
-# Column positions track the table's header at
-# skills/lattice/references/toolchains.md: Tool, Language, Roles, Fingerprint,
-# Version command, Invoke template. A row can hold several roles, so match
-# inside $4 rather than comparing it.
-DRVDIR="$ENVROOT/skill-drivers"
-mkdir -p "$DRVDIR"
-awk -F'|' 'NF >= 7 && $4 ~ /Build tool/ {
-  tool = $2; fps = $5; inv = $7
-  gsub(/[` ]/, "", tool)
-  gsub(/`/, "", fps); split(fps, a, ","); fp = a[1]; gsub(/^ +| +$/, "", fp)
-  gsub(/`/, "", inv); gsub(/^ +| +$/, "", inv)
-  print tool "\t" fp "\t" inv
-}' "$SKILLTOOLS" > "$DRVDIR/rows.tsv"
-
-# An extraction that matches nothing would build a config with no workspaces, and
-# every assertion below it would pass without running. Reshaping the table in the
-# skill has broken this parse before, so check the row count first.
-DRVROWS="$(wc -l < "$DRVDIR/rows.tsv" | tr -d ' ')"
-if [ "$DRVROWS" -eq 8 ]; then
-  pass "the skill's driver table yields 8 build-tool rows"
-else
-  fail "the skill's driver table yields 8 build-tool rows" \
-    "got $DRVROWS — check the column order against the table's header"
-fi
-
-DRVWS=""
-while IFS=$'\t' read -r tool fp inv; do
-  mkdir -p "$DRVDIR/d/$tool"
-  : > "$DRVDIR/d/$tool/$fp"
-  [ -n "$DRVWS" ] && DRVWS="$DRVWS,"
-  DRVWS="$DRVWS{\"name\":\"$tool\",\"path\":\"d/$tool\"}"
-done < "$DRVDIR/rows.tsv"
-printf '{ "workspaces": [%s], "tasks": { "build": {} } }' "$DRVWS" > "$DRVDIR/lattice.json"
-
-lat "$DRVDIR" run build --dry-run
-t_ok "every fingerprint in the skill's driver table resolves a driver"
-while IFS=$'\t' read -r tool fp inv; do
-  t_has "the skill's invoke template for $tool ($fp)" "$tool:build  ${inv/\{task\}/build}"
-done < "$DRVDIR/rows.tsv"
 
 # =========================================================================
 # The desktop app's wiring.

@@ -1,134 +1,119 @@
 ---
 title: Engines and provisioning
-description: How an engine constraint's shape picks host, validate, or provision.
+description: How an engine entry's shape picks host, check, or install, and what Lattice says when a tool is wrong.
 group: Concepts
 order: 5
 ---
 
 # Engines and provisioning
 
-An engine is a versioned tool a workspace needs to run its tasks: `node`,
-`rust`, `go`, a linter, anything whose version matters. Declare engines under
-the root `engines` key, under a workspace's own `engines` key, or both.
+An engine is a versioned tool a workspace's tasks run with: `node`, `rust`,
+`go`, a linter, anything whose version matters. Declare engines under the root
+`engines` key, where they apply to every workspace, and change them for some
+workspaces in `overrides`.
 
-The shape of the constraint you write selects what Lattice does with it. The
-engine's name does not. A name decides only two things: whether the bare-string
-form is allowed, and whether Lattice already knows a version command for it.
+The shape of what you write decides what Lattice does. The engine's name decides
+only whether the bare-string form is allowed and whether Lattice already knows a
+version command for it. An engine never decides which tool runs a workspace's
+tasks; that is [driver detection](/lattice/docs/drivers).
 
 ## Three modes, chosen by shape
 
 | You write | Mode | What happens |
 | --- | --- | --- |
-| Nothing, or an empty object | **host PATH** | Trusts whatever is on `PATH`. Installs nothing, checks nothing. |
-| A version constraint, no `installCmd` | **validate-only** | Runs a version command against the host tool and fails if the result does not satisfy the constraint. Installs nothing. |
-| An `installCmd` | **provisioned** | Runs `installCmd` into a content-addressed directory, version-checks the result, pins it, and prepends its `bin` directory to the task's `PATH`. |
+| Nothing, or an empty object | **host** | Uses whatever is on `PATH`. Checks nothing |
+| A version constraint, no `installCmd` | **check** | Runs the version command on the host and stops the run if the result does not satisfy the constraint |
+| An `installCmd` | **install** | Runs `installCmd` once into `.lattice/toolchains`, checks the result, and puts its `bin` on every task's `PATH` |
 
-### Host PATH: no constraint, no install command
-
-```json
-{
-  "engines": {
-    "go": {}
-  }
-}
-```
-
-`go` tasks run against whatever `go` resolves to on `PATH`. No version command,
-no provisioning. A workspace that declares no `engines` at all behaves the same
-way.
-
-### Validate-only: a version constraint, no install command
+### Check the host tool
 
 ```json
-{
-  "engines": {
-    "node": ">=20.0.0"
-  }
-}
+{ "engines": { "node": ">=22" } }
 ```
 
-Before any task that needs `node` runs, Lattice runs `node --version` on the
-host, parses a version out of the output, and checks it against `>=20.0.0`. On a
-host with Node 18 the run fails before any task starts:
+Before any task runs, Lattice runs `node --version`, reads a version out of the
+output, and checks it against `>=22`. On a machine with Node 20 the run stops
+before anything starts:
 
 ```text
-engine 'node' on PATH is 18.19.0, which does not satisfy the constraint '>=20.0.0'
+error: workspace 'web' cannot run
+  engine 'node' does not match the version this repo pins
+    wanted   >=22
+    found    20.11.1 at /usr/local/bin/node
+    ran      node --version
+    fix      install node >=22, or give the engine an installCmd so Lattice installs it for this repo
 ```
 
-Version parsing is deliberately loose, because tools disagree about how to print
-a version. Lattice takes the first run of digits and dots it finds, so
-`v20.11.1`, `go1.22`, and `rustc 1.75.0 (abc 2024)` all parse. A constraint that
-`semver` can read is matched as a range. A bare or loose constraint such as
-`"1.22"` is read as a lower bound. An empty constraint matches anything.
+Version parsing is loose, because tools disagree about how to print one: the
+first run of digits and dots counts, so `v20.11.1`, `go1.22` and `rustc 1.75.0
+(abc 2024)` all parse. A constraint that is a semver range is matched as one; a
+bare version such as `"22.11.0"` means `^22.11.0`.
 
-### Provisioned: an `installCmd`
+Check mode reads each machine's own `PATH`, so a constraint that passes on one
+machine and fails on another is behaving as written. An `installCmd` is what
+makes every machine agree.
+
+### Have Lattice install it
 
 ```json
 {
   "engines": {
     "just": {
       "version": ">=1.30.0",
-      "installCmd": "curl -fsSL https://just.systems/install.sh | bash -s -- --to \"$LATTICE_TOOLCHAIN_DIR/bin\"",
-      "versionCmd": "just --version",
-      "bin": "bin"
+      "installCmd": "curl -fsSL https://just.systems/install.sh | bash -s -- --to \"$LATTICE_TOOLCHAIN_DIR/bin\""
     }
   }
 }
 ```
 
-`installCmd` is what opts an engine into provisioning. `version` means the same
-thing it does in validate-only mode. `bin` is read only here, and it names the
-directory inside the install that holds the executables. What changes is that
-Lattice runs the install itself, into a directory it controls, instead of
-checking `PATH`. The result is pinned, so a second run reuses it. See [Where a
-provisioned tool lives](#where-a-provisioned-tool-lives) for the layout.
+`installCmd` opts the engine into installing. Lattice runs it into a directory
+it controls, checks the version of what it installed, and reuses the result on
+every later run. `bin` names the directory inside the install that holds the
+executables, and defaults to `bin`.
 
-## String form versus object form
+## String form and object form
 
-`"node": ">=20.0.0"` is the string form: a bare version constraint. It works
-only for the 40 engines Lattice has a built-in version rule for, which include
-`node`, `rust`, `go`, `python`, and `java`. The full list is on
-[Toolchains](/lattice/docs/toolchains#well-known-engines). Anything else needs
-the object form:
+`"node": ">=22"` is the string form. It works for the 40 engines Lattice has a
+version rule for, listed on
+[Toolchains](/lattice/docs/toolchains#well-known-engines). Any other tool needs
+the object form, `{ version, versionCmd, installCmd, bin }`:
 
 ```json
-{
-  "engines": {
-    "protoc": { "version": ">=25.0", "versionCmd": "protoc --version" }
-  }
-}
+{ "engines": { "protoc": { "version": ">=25.0", "versionCmd": "protoc --version" } } }
 ```
 
-The object form is `{ version, versionCmd, installCmd, bin }`, all optional,
-with `bin` defaulting to `bin`. `versionCmd` tells Lattice how to read the
-version of a tool it has no rule for.
+A string for an unknown name is rejected when `lattice.json` loads. An object
+with a `version` but no `versionCmd` loads, and fails the first run with
+`engine 'protoc' has a version constraint but no way to check the installed
+version`.
 
-The string form for an engine outside the well-known list is rejected when
-`lattice.json` loads, before any task runs:
+`gradle` and `maven` are checked through the build's wrapper when the engine has
+no `versionCmd` of its own: `./gradlew --version`, run inside the workspace,
+because the wrapper decides which Gradle the build uses.
+
+## What a failed check says
+
+Every engine failure says what was wanted, what was found and where, the command
+that ran, what it printed, and what to do:
+
+| Headline | Meaning |
+| --- | --- |
+| `is not installed, or not on PATH` | The shell could not find the program |
+| `does not match the version this repo pins` | The host tool's version fails the constraint |
+| `could not be checked: its version command failed` | The version command exited non-zero; its output follows |
+| `could not be checked: Lattice found no version in what it printed` | The output had no version in it |
+| `could not be installed: its installCmd exited with code 7` | The install failed; the command and its output follow |
+| `was installed, but its version command failed` | The installed tool is not where `bin` says, or does not run |
+| `installed a version that does not match its constraint` | The install worked but installed the wrong version |
+
+A run also notes the versions it uses, at the top of the live display and in the
+stream with `-v`:
 
 ```text
-engine 'protoc' in root uses the string (version-only) form, but 'protoc'
-is not a well-known engine Lattice can version-check on its own. Use the
-object form with an explicit `versionCmd`, e.g. "protoc": { "version":
-">=1.0.0", "versionCmd": "protoc --version" }
+· using node 22.11.0 · just 1.30.0 (installed by Lattice) · go (unchecked)
 ```
 
-The object form with a version constraint but no `versionCmd` parses. It fails
-later, when Lattice needs the version:
-
-```text
-engine 'protoc' has a version constraint but no way to check it (not a
-well-known engine and no `versionCmd`)
-```
-
-Either way, an unknown tool with a version constraint needs an explicit
-`versionCmd`.
-
-## Where a provisioned tool lives
-
-A provisioned engine installs under `.lattice/toolchains/<engine>/`, in a
-directory named for the resolved version and the first 8 hex characters of
-`sha256(installCmd)`:
+## Where an installed tool lives
 
 ```text
 .lattice/toolchains/
@@ -138,111 +123,67 @@ directory named for the resolved version and the first 8 hex characters of
       pins.json
 ```
 
-The version is not known while `installCmd` is running, so Lattice installs into
-a staging directory beside the final one and renames it to `<version>-<hash>`
-only after the new tool passes its version check. The staging directory's name
-carries the process id, so two `lattice setup` runs that provision the same
-engine at once each get their own. They used to share one, clear it before use,
-and promote a tree assembled from both installs. Lattice deletes a staging
-directory a killed run left behind once it is 24 hours old, and no live install
-lasts that long.
+The directory is named for the version the tool reported and the first 8 hex
+characters of `sha256(installCmd)`, so editing the install command installs into
+a new directory rather than reusing a stale one. `pins.json` records the engine,
+version, hash and `bin`. Before installing, Lattice reuses a directory whose pin
+matches the current hash, re-checking the version where it can.
 
-With no `versionCmd` and no built-in rule for the engine's name, the version
-records as `unknown`, and the install hash identifies the toolchain. Lattice used
-to record `0.0.0`, a version nothing had installed. That value also went into
-every task's cache key as `<name>=0.0.0@<hash>`, and the key now reads
-`<name>=unknown@<hash>`. A `version` constraint with no way to check it is an
-error rather than a recorded guess, because Lattice cannot enforce a constraint
-it cannot check. See
-[Provisioning failures](/lattice/docs/errors#provisioning-failures).
+The install runs in a staging directory and is renamed into place only after its
+version check passes, so a failed install leaves nothing behind to trip the next
+run. Two `lattice` processes installing the same engine at once each get their
+own staging directory. A tool with no way to read its version installs under
+`unknown-<hash>`; a `version` constraint on such a tool is an error rather than
+a check nobody runs.
 
-`pins.json` records what produced the directory:
+`installCmd` receives the target directory twice: as the
+`LATTICE_TOOLCHAIN_DIR` environment variable, and by literal substitution of
+`$LATTICE_TOOLCHAIN_DIR` in the command before it runs, so either spelling works
+on every platform. It runs through the platform shell, `sh -c` on Unix and
+`cmd /C` on Windows.
 
-```json
-{
-  "engine": "just",
-  "version": "1.30.0",
-  "installHash": "1a2b3c4d",
-  "bin": "bin"
-}
-```
-
-Before installing, Lattice looks for an existing `<version>-<hash>` directory
-whose `pins.json` matches the current `installCmd` hash and whose `bin`
-directory still exists. Where both a version command and a constraint are
-available, it re-checks that the installed version still satisfies the
-constraint. A match is reused, so installation happens once per distinct
-`installCmd`.
-
-The hash covers the literal `installCmd` string rather than the engine name and
-version, so editing the install command provisions into a new directory instead
-of reusing a stale one.
-
-### How `installCmd` sees `$LATTICE_TOOLCHAIN_DIR`
-
-Lattice passes the target directory to `installCmd` two ways at once: as the
-`LATTICE_TOOLCHAIN_DIR` environment variable, and by substituting the literal
-string `$LATTICE_TOOLCHAIN_DIR` into the command before running it. The `just`
-example above works whether the installer reads an environment variable or
-expects the path on its command line.
-
-`installCmd` and `versionCmd` both run through the platform shell, `sh -c` on
-Unix and `cmd /C` on Windows, the same way a task's command does.
-
-`bin` names the directory inside the install that goes on `PATH`, and it has to
-stay inside the install. Give a relative path, with no `..`, no leading `/`, and
-no drive letter. An absolute `bin` would replace the install path outright and
-put a directory Lattice never provisioned in front of every command, and the run
-would still report a provisioned toolchain. Lattice checks the value when the
-config loads and again when it reads a pin back from `pins.json`, so a
-hand-edited pin cannot get past the check either.
+`bin` has to stay inside the install. An absolute `bin` would put a directory
+Lattice never installed at the front of every task's `PATH` while the run still
+reported an installed toolchain, so it fails at load, and again if a hand-edited
+`pins.json` tries it.
 
 ## Activation is per task
 
-Provisioning and version resolution happen once per distinct merged engine map.
-Two workspaces that resolve to the same map provision once and share the result.
+Checks and installs happen once per distinct set of engines, on the first run,
+`setup` or `env` that needs them. Putting a `bin` directory on `PATH` happens per
+task: only that task's process gets it. No shell is sourced and no profile is
+written, so `rm -rf .lattice/toolchains` is a complete uninstall.
 
-Activation, meaning putting a `bin` directory on `PATH`, happens per task. Each
-task spawns its own child process, and only that child's environment gets the
-provisioned `bin` directories prepended to a `PATH` cloned from the current one.
-No shell is sourced and no profile is written, so the change lives and dies with
-that one process.
-
-The project's own dependency bin directories go on that same `PATH`, after the
-provisioned ones and never before them: a pin exists to decide which copy of a
-tool runs, and a `node_modules/.bin` that shadowed it would undo that. See
-[Environment
+The directories a package manager installed tools into, such as
+`node_modules/.bin`, go on the same `PATH` after the pinned tools, never before:
+a pin decides which copy of a tool runs. See [Environment
 variables](/lattice/docs/environment-variables#tools-the-project-installed).
 
-Every provisioned tool lives under `.lattice/toolchains`, which makes
-`rm -rf .lattice` a complete uninstall. The next run provisions again from
-`installCmd`.
+To use the pinned tools in your own terminal, `lattice env` prints the same
+`PATH` as a command your shell can evaluate:
+
+```sh
+eval "$(lattice env)"
+```
 
 ## Root and per-workspace engines
 
-A workspace's `engines` map merges with the root's, and the workspace's entries
-win per key:
+An override's `engines` merge with the root's, its entries winning per name:
 
 ```json
 {
-  "engines": { "node": ">=20.0.0", "rust": ">=1.75" },
-  "workspaces": [
-    { "name": "web", "path": "apps/web", "engines": { "node": ">=22" } }
-  ]
+  "engines": { "node": ">=20", "rust": ">=1.75" },
+  "overrides": {
+    "web": { "engines": { "node": ">=22" } }
+  }
 }
 ```
 
-`web` validates Node against `>=22`, and every other workspace validates against
-the root's `>=20.0.0`. `rust` applies to `web` unchanged, since `web` never
-mentions it. The merge runs before any task in that workspace, under both
-`lattice run` and `lattice setup`. See [Workspaces](/lattice/docs/workspaces)
-for how a workspace's `engines` key sits alongside `path`, `auto`, `dependsOn`,
-and `scripts`.
+`web` checks Node against `>=22`; every other workspace against `>=20`. `rust`
+applies to `web` unchanged.
 
 ## Related pages
 
-[Toolchains](/lattice/docs/toolchains) has the full well-known-engine list and
-the built-in driver table. [Pinning tool
-versions](/lattice/docs/pinning-tool-versions) walks through pinning a version
-day to day. [Configuration](/lattice/docs/configuration#engines) is the field
-reference for the `engines` map.
+[Pinning tool versions](/lattice/docs/pinning-tool-versions) walks through each
+intent. [Toolchains](/lattice/docs/toolchains) has the well-known engine list.
+[Configuration](/lattice/docs/configuration#engines) is the field reference.

@@ -1,17 +1,19 @@
-import { LEGEND } from '../lib/graphOption.ts';
+import { DECLARED_LEGEND, LEGEND } from '../lib/graphOption.ts';
 
-const GraphLegend = () => (
-	<div className="d-flex flex-wrap gap-2">
-		{LEGEND.map((entry) => (
-			<span
-				className="badge border bg-body-tertiary text-body-secondary fw-normal d-inline-flex align-items-center gap-1"
-				key={entry.label}
-			>
+interface GraphLegendProps {
+	/** The graph has an edge lattice.json declares, so that line style needs a name. */
+	declared?: boolean;
+}
+
+const GraphLegend = ({ declared = false }: GraphLegendProps) => (
+	<ul className="graph-legend">
+		{[...LEGEND, ...(declared ? [DECLARED_LEGEND] : [])].map((entry) => (
+			<li key={entry.label}>
 				<i className={`bi ${entry.icon}`} aria-hidden="true" />
 				{entry.label}
-			</span>
+			</li>
 		))}
-	</div>
+	</ul>
 );
 
 export default GraphLegend;

@@ -9,6 +9,7 @@
 //! [`lattice_events::Reporter`] and returns a [`RunOutcome`]; the caller decides
 //! whether that is an exit status or a window.
 
+pub mod migrate;
 pub mod scaffold;
 pub mod view;
 
@@ -20,7 +21,7 @@ use std::pin::Pin;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-use dagger::{build_execution_graph_selected, ExecutionGraph};
+use dagger::{build_execution_graph_selected, known_tasks, ExecutionGraph};
 use lattice_config::LatticeConfig;
 use lattice_events::Reporter;
 use lattice_runner::{
@@ -35,6 +36,9 @@ pub struct Project {
 	pub root: PathBuf,
 	pub config: LatticeConfig,
 	pub workspaces: Vec<Workspace>,
+	/// The workspace the project was opened from inside, when it was opened from
+	/// a directory below the root rather than the root itself.
+	pub cwd_workspace: Option<String>,
 }
 
 impl Project {
@@ -46,7 +50,28 @@ impl Project {
 				 Run `lattice init` to create one"
 			)
 		})?;
-		Self::open_root(&root)
+		let mut project = Self::open_root(&root)?;
+		project.cwd_workspace = project.workspace_containing(start);
+		Ok(project)
+	}
+
+	/// The deepest workspace whose directory holds `dir`. The root counts only
+	/// when it is a workspace in its own right.
+	pub fn workspace_containing(&self, dir: &Path) -> Option<String> {
+		let dir = dir.canonicalize().ok()?;
+		let root = self.root.canonicalize().ok()?;
+		if dir == root {
+			return None;
+		}
+		self.workspaces
+			.iter()
+			.filter_map(|ws| {
+				let path = ws.path.canonicalize().ok()?;
+				dir.starts_with(&path)
+					.then(|| (path.components().count(), ws))
+			})
+			.max_by_key(|(depth, _)| *depth)
+			.map(|(_, ws)| ws.name.clone())
 	}
 
 	/// Open a directory already known to be the repo root.
@@ -58,6 +83,7 @@ impl Project {
 			root: root.to_path_buf(),
 			config,
 			workspaces,
+			cwd_workspace: None,
 		})
 	}
 
@@ -69,52 +95,72 @@ impl Project {
 		Ok(())
 	}
 
-	/// Fail if any of `tasks` is not defined in the pipeline, naming the ones that
-	/// are. A run is refused before anything is provisioned or spawned.
+	/// Fail if no workspace can run one of `tasks`, naming the ones there are.
+	/// A run is refused before anything is provisioned or spawned.
 	pub fn require_known_tasks(&self, tasks: &[String]) -> Result<()> {
+		// A repo with no workspaces has nothing to run, which the plan says
+		// without calling any task unknown.
+		if self.workspaces.is_empty() {
+			return Ok(());
+		}
+		let known = known_tasks(&self.workspaces);
 		for task in tasks {
-			if !self.config.tasks.contains_key(task.as_str()) {
-				let mut available: Vec<&str> =
-					self.config.tasks.keys().map(|s| s.as_str()).collect();
-				available.sort_unstable();
-				let listed = if available.is_empty() {
-					"lattice.json defines no tasks".to_string()
-				} else {
-					format!("Defined tasks: {}", available.join(", "))
-				};
-				bail!(
-					"task '{}' is not defined in the `tasks` map in lattice.json. {}",
-					task,
-					listed
-				);
+			if known.contains(task) {
+				continue;
 			}
+			let mut message = format!("no workspace has a '{task}' task");
+			if let Some(near) = lattice_config::closest_field(task, &known) {
+				message.push_str(&format!(". Did you mean '{near}'?"));
+			}
+			if known.is_empty() {
+				message.push_str(". Lattice found no tasks in any workspace");
+			} else {
+				message.push_str(&format!("\nTasks: {}", known.join(", ")));
+			}
+			// A manifest that would not parse lists nothing, and is the likeliest
+			// reason a task is missing.
+			for problem in self.workspaces.iter().flat_map(|ws| &ws.problems) {
+				message.push_str(&format!("\n{problem}"));
+			}
+			bail!(message);
 		}
 		Ok(())
 	}
 
-	/// Warn about `tasks` a workspace dropped because its manifest declares a
-	/// script map without them — the shape a typo takes. Silent otherwise.
+	/// Say which workspaces sit out a task because they have none, and point out
+	/// a near miss where one looks like a typo.
 	///
 	/// Called once per run rather than on open: opening a project is something a
 	/// front end does whenever it likes, and a reload is not news.
 	pub fn report_skipped_tasks(&self, tasks: &[String], reporter: &dyn Reporter) {
-		for note in skipped_task_notes(&self.workspaces, tasks) {
-			reporter.warn(&note);
+		let skipped = skipped_task_notes(&self.workspaces, tasks);
+		for warning in &skipped.warnings {
+			reporter.warn(warning);
+		}
+		for note in &skipped.notes {
+			reporter.note(note);
 		}
 	}
 
-	/// The workspace names a `--filter` selects, or `None` for no filter.
+	/// The workspace names a request selects, or `None` for every workspace.
 	///
-	/// The filter picks the workspaces a run is *for*; the graph builder pulls in
-	/// whatever they depend on. An empty match is [`Plan::NoMatch`], not an error.
-	pub fn select(&self, filter: Option<&str>) -> Option<HashSet<String>> {
-		filter.map(|pattern| {
-			self.workspaces
-				.iter()
-				.filter(|ws| ws.name.contains(pattern))
-				.map(|ws| ws.name.clone())
-				.collect()
-		})
+	/// The selection picks the workspaces a run is *for*; the graph builder pulls
+	/// in whatever they depend on. An empty match is [`Plan::NoMatch`], not an
+	/// error.
+	pub fn select(&self, request: &PlanRequest) -> Option<HashSet<String>> {
+		if let Some(pattern) = &request.filter {
+			return Some(
+				self.workspaces
+					.iter()
+					.filter(|ws| ws.name.contains(pattern.as_str()))
+					.map(|ws| ws.name.clone())
+					.collect(),
+			);
+		}
+		request
+			.workspaces
+			.as_ref()
+			.map(|names| names.iter().cloned().collect())
 	}
 
 	/// Build the graphs a request would run, without running them.
@@ -122,7 +168,7 @@ impl Project {
 		if self.workspaces.is_empty() {
 			return Ok(Plan::NoWorkspaces);
 		}
-		let selected = self.select(request.filter.as_deref());
+		let selected = self.select(request);
 		if let Some(matched) = &selected {
 			if matched.is_empty() {
 				return Ok(Plan::NoMatch {
@@ -133,28 +179,42 @@ impl Project {
 		let selected = selected.as_ref();
 
 		let tasks: Vec<&str> = request.tasks.iter().map(|t| t.as_str()).collect();
-		let phases = if request.sequentially {
-			// Each task is its own graph, run to completion in order.
+		let mut phases = if request.sequentially {
 			tasks
 				.iter()
-				.map(|task| {
-					build_execution_graph_selected(
-						&self.workspaces,
-						&[task],
-						&self.config,
-						selected,
-					)
-				})
+				.map(|task| build_execution_graph_selected(&self.workspaces, &[task], selected))
 				.collect::<Result<Vec<_>>>()?
 		} else {
 			vec![build_execution_graph_selected(
 				&self.workspaces,
 				&tasks,
-				&self.config,
 				selected,
 			)?]
 		};
+		if !request.args.is_empty() {
+			for graph in &mut phases {
+				self.pass_args(graph, request);
+			}
+		}
 		Ok(Plan::Phases(phases))
+	}
+
+	/// Hand `request.args` to the tasks the request named, in the workspaces it
+	/// was for. A prerequisite pulled in along the way did not ask for them.
+	fn pass_args(&self, graph: &mut ExecutionGraph, request: &PlanRequest) {
+		for node in graph.graph.node_weights_mut() {
+			if node.pulled_in || !request.tasks.contains(&node.task_name) {
+				continue;
+			}
+			let task = self
+				.workspaces
+				.iter()
+				.find(|ws| ws.name == node.workspace_name)
+				.and_then(|ws| ws.task(&node.task_name));
+			if let Some(task) = task {
+				node.command = task.command_with_args(&request.args);
+			}
+		}
 	}
 }
 
@@ -165,6 +225,11 @@ pub struct PlanRequest {
 	pub tasks: Vec<String>,
 	/// Substring matched against workspace names.
 	pub filter: Option<String>,
+	/// Exact workspace names, as scoping to the directory a run started in picks.
+	/// Ignored when `filter` is set.
+	pub workspaces: Option<Vec<String>>,
+	/// Passed through to the requested tasks' commands.
+	pub args: Vec<String>,
 	/// Run each task's graph to completion before starting the next, instead of
 	/// merging them into one graph.
 	pub sequentially: bool,
@@ -351,16 +416,18 @@ mod tests {
 	use super::*;
 
 	#[derive(Default)]
-	struct Warnings(Mutex<Vec<String>>);
+	struct Notes(Mutex<Vec<String>>);
 
-	impl Reporter for Warnings {
+	impl Reporter for Notes {
 		fn run_start(&self, _task: &str, _workspaces: usize) {}
 		fn event(&self, _ev: TaskEvent) {}
 		fn surface_failure(&self, _workspace: &str, _task: &str, _captured: &[(bool, String)]) {}
 		fn run_summary(&self, _summary: RunSummary) {}
-		fn note(&self, _msg: &str) {}
+		fn note(&self, msg: &str) {
+			self.0.lock().unwrap().push(format!("note: {msg}"));
+		}
 		fn warn(&self, msg: &str) {
-			self.0.lock().unwrap().push(msg.to_string());
+			self.0.lock().unwrap().push(format!("warn: {msg}"));
 		}
 		fn finish(&self) {}
 	}
@@ -371,42 +438,79 @@ mod tests {
 		std::fs::write(path, contents).unwrap();
 	}
 
-	/// The note exists so a typo is not invisible, which it is again the moment
-	/// nothing carries it to a reporter.
-	#[test]
-	fn a_skipped_task_reaches_the_reporter_once() {
+	fn two_packages() -> tempfile::TempDir {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let root = tmp.path();
-		write(
-			root,
-			"lattice.json",
-			r#"{ "tasks": { "build": {} }, "workspaces": [
-				{ "name": "web", "path": "apps/web" },
-				{ "name": "types", "path": "apps/types" }
-			] }"#,
-		);
+		write(root, "lattice.json", r#"{ "workspaces": ["apps/*"] }"#);
 		write(
 			root,
 			"apps/web/package.json",
-			r#"{ "scripts": { "biuld": "tsc" } }"#,
+			r#"{ "name": "web", "scripts": { "biuld": "tsc", "test": "vitest" } }"#,
 		);
 		write(root, "apps/web/pnpm-lock.yaml", "");
-		write(root, "apps/types/package.json", r#"{ "name": "types" }"#);
-		write(root, "apps/types/package-lock.json", "{}");
+		write(
+			root,
+			"apps/api/package.json",
+			r#"{ "name": "api", "scripts": { "build": "tsc", "test": "vitest" } }"#,
+		);
+		write(root, "apps/api/package-lock.json", "{}");
+		tmp
+	}
 
-		let project = Project::open_root(root).unwrap();
-		let reporter = Warnings::default();
+	#[test]
+	fn a_skipped_task_reaches_the_reporter_once() {
+		let tmp = two_packages();
+		let project = Project::open_root(tmp.path()).unwrap();
+		let reporter = Notes::default();
 		project.report_skipped_tasks(&["build".to_string()], &reporter);
 
-		let warned = reporter.0.lock().unwrap().clone();
+		let notes = reporter.0.lock().unwrap().clone();
 		assert_eq!(
-			warned,
-			vec![
-				"web declares scripts but no \"build\", so the task was skipped. \
-				 Did you mean \"biuld\"?"
-			],
-			"one warning, and nothing about a package that declares no scripts"
+			notes,
+			["warn: web has no 'build' task. Did you mean 'biuld'?"],
+			"a near miss is worth a warning; nothing sat out, so there is no note"
 		);
+	}
+
+	#[test]
+	fn opening_from_inside_a_workspace_scopes_to_it() {
+		let tmp = two_packages();
+		let project = Project::open(&tmp.path().join("apps/api")).unwrap();
+		assert_eq!(project.cwd_workspace.as_deref(), Some("api"));
+		let root = Project::open(tmp.path()).unwrap();
+		assert_eq!(root.cwd_workspace, None);
+	}
+
+	#[test]
+	fn args_reach_only_the_requested_task_in_the_selected_workspaces() {
+		let tmp = two_packages();
+		let project = Project::open_root(tmp.path()).unwrap();
+		let request = PlanRequest {
+			tasks: vec!["test".into()],
+			workspaces: Some(vec!["api".into()]),
+			args: vec!["--watch=false".into()],
+			..Default::default()
+		};
+		let Plan::Phases(phases) = project.plan(&request).unwrap() else {
+			panic!("expected a plan");
+		};
+		let commands: Vec<&str> = phases[0]
+			.graph
+			.node_weights()
+			.map(|n| n.command.as_str())
+			.collect();
+		assert_eq!(commands, ["npm run test -- --watch=false"]);
+	}
+
+	#[test]
+	fn a_task_nobody_has_is_refused_with_a_suggestion() {
+		let tmp = two_packages();
+		let project = Project::open_root(tmp.path()).unwrap();
+		let err = project
+			.require_known_tasks(&["tset".into()])
+			.unwrap_err()
+			.to_string();
+		assert!(err.contains("Did you mean 'test'?"), "{err}");
 	}
 
 	#[test]

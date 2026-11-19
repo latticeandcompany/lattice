@@ -11,8 +11,8 @@ import { withBase } from '../lib/base.ts';
 // Crimson is this product's accent, so it carries the product word and the one
 // primary action. Everything structural stays monochrome, as it does site-wide.
 //
-// The four headings match the home page band's, because they name the same four
-// things. The bodies go one detail deeper than the band does.
+// The four headings name the same four things as the home page band. The bodies
+// go one detail deeper than the band does.
 
 interface Capability {
 	title: string;
@@ -23,20 +23,20 @@ interface Capability {
 
 const capabilities: Capability[] = [
 	{
-		title: 'Every task in one list',
-		body: 'Every workspace in the repo, with the tasks it can run. Lattice names the tool it picked for each one, so a workspace headed for the wrong driver shows up before you start it.',
+		title: 'What every workspace can run',
+		body: 'Every workspace in the repo with the tasks its manifest and its tool give it, and the tool Lattice picked for it, so a workspace headed for the wrong tool shows up before you start anything.',
 	},
 	{
-		title: 'Visualize your dependency graph',
-		body: 'The graph is drawn in dependency order and fills in as your build moves through it, so you can see where a run stopped. Click any task to isolate it with everything it depends on and everything that depends on it.',
+		title: 'The graph, filling in',
+		body: 'The graph is drawn in dependency order and fills in as the build moves through it, so you can see where a run stopped. Focus a task to light up everything it depends on and everything that depends on it.',
 	},
 	{
-		title: 'Edit the config without editing JSON',
-		body: 'Workspaces, tasks, and tool versions as a form. The same parser a run uses checks every edit as you type, so you can\'t save a config the CLI would reject.',
+		title: 'Tool versions and the cache',
+		body: 'The version of each pinned tool every workspace runs with, where it was found, and what to do when it is wrong. How much the cache holds, the task time it has saved, and a way to prune it.',
 	},
 	{
-		title: 'Find out why a task re-ran',
-		body: 'When a task misses the cache, the app names the part of the key that moved: the inputs, the toolchain, the command, or a task it depends on. You get a reason instead of a bare hash.',
+		title: 'Why a task ran again',
+		body: 'When a task misses the cache, the app names the part of the key that moved: the inputs, a tool version, the command, or a task it depends on.',
 		sample: 'cache miss: toolchain, inputs changed',
 	},
 ];
@@ -65,7 +65,7 @@ const firstLaunch = [
 
 <Layout
 	title="Lattice Desktop · Run and inspect your monorepo"
-	description="A desktop app for Lattice. Run your tasks, watch the graph fill in, edit lattice.json as a form, and find out why a task re-ran. Downloads for macOS, Windows, and Linux."
+	description="Lattice Desktop runs your repo's tasks with the whole repo on screen: every workspace and its tasks, the graph as it fills in, tool versions, the cache, and why a task ran again. Downloads for macOS, Windows, and Linux."
 >
 	<section class="desktop-hero px-3">
 		<div class="mx-auto text-center" style="max-width: 46rem;">
@@ -76,10 +76,10 @@ const firstLaunch = [
 				</span>
 			</div>
 
-			<h1 class="desktop-hero__title fw-bold mb-3">The power of Lattice. To your desktop.</h1>
+			<h1 class="desktop-hero__title fw-bold mb-3">Your monorepo, with every run on screen</h1>
 
 			<p class="fs-5 mb-4 mx-auto" style="color: var(--text-muted); max-width: 38rem;">
-				Lattice Desktop brings a beautiful user interface to your monorepo. Run every task, watch the graph fill in, edit lattice.json as a form, and find out why a task re-ran.
+				Lattice Desktop runs the same tasks as the CLI, on the same engine and cache. It shows what a terminal scrolls past: every workspace and what it can run, the graph as it fills in, the tool versions each workspace uses, and why a task ran again.
 			</p>
 
 			<DownloadPicker client:load />
@@ -123,7 +123,7 @@ const firstLaunch = [
 	<section id="downloads" class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
 		<div class="mx-auto" style="max-width: 52rem;">
 			<h2 class="fw-bold mb-3" style="font-size: clamp(1.75rem, 3.5vw, 2.25rem); letter-spacing: -0.02em;">
-				Download Now
+				Download for your platform
 			</h2>
 
 			{
@@ -153,10 +153,11 @@ const firstLaunch = [
 	<section id="first-launch" class="px-3 py-5" style="border-top: 1px solid var(--border-subtle);">
 		<div class="mx-auto" style="max-width: 52rem;">
 			<h2 class="fw-bold mb-3" style="font-size: clamp(1.75rem, 3.5vw, 2.25rem); letter-spacing: -0.02em;">
-				Safety
+				The first launch
 			</h2>
 			<p class="mb-5" style="color: var(--text-muted);">
-				These builds aren't signed. Verify the checksum below if you'd rather not take that on trust.
+				These builds aren't code-signed, so macOS and Windows ask before the first launch. Verify the
+				checksum below if you'd rather not take that on trust.
 			</p>
 
 			{

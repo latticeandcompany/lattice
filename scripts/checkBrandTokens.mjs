@@ -7,14 +7,16 @@
 // rewriting the docs workflow's cache key — a lot of moving parts to share about
 // 350 lines of SCSS.
 //
-// The cost of copying is silent drift, and this is what stops it. Three files must be
+// The cost of copying is silent drift, and this is what stops it. Two files must be
 // byte-identical, and two carry a deliberate difference each:
 //
 // _paths.scss — the site is served from a GitHub Pages subpath and the app from the
 // webview root, and Sass cannot read the base URL from the environment, so the literal
 // lives in each copy.
 //
-// bootstrap.scss — the site is the standalone brand, which stays monochrome, so its
+// bootstrap.scss — the settings the site makes are the brand and must match; the app
+// adds its own density settings on top. The site is the standalone brand, which stays
+// monochrome, so its
 // $primary is ink. The app is Lattice Desktop and spends its own
 // product colour, so its $primary is crimson-500 and it sets $color-contrast-* so the
 // label Bootstrap picks for a filled accent is brand ink or paper rather than pure
@@ -33,7 +35,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const web = join(root, 'apps/web/src/styles');
 const desktop = join(root, 'apps/desktop/src/styles');
 
-const identical = ['_tokens.scss', '_fonts.scss', 'tailwind.css'];
+const identical = ['_tokens.scss', '_fonts.scss'];
 const divergent = ['$primary', '$color-contrast-dark', '$color-contrast-light'];
 
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
@@ -66,7 +68,10 @@ const settings = {
 	desktop: declarations(read(join(desktop, 'bootstrap.scss'))),
 };
 
-for (const name of new Set([...settings.web.keys(), ...settings.desktop.keys()])) {
+// The site's settings are the brand, so every one of them has to read the same in the
+// app. The app may add settings of its own — a desktop tool is denser than a page, so
+// it sets its own sizes and paddings — but it cannot restate a brand one differently.
+for (const name of settings.web.keys()) {
 	if (divergent.includes(name)) continue;
 	if (settings.web.get(name) !== settings.desktop.get(name)) {
 		failures.push(`bootstrap.scss sets a different ${name} in apps/web and apps/desktop`);

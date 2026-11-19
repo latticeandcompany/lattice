@@ -1,5 +1,7 @@
 pub mod completions;
+pub mod env;
 pub mod init;
+pub mod migrate;
 pub mod prune;
 pub mod run;
 pub mod setup;

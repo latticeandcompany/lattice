@@ -10,8 +10,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use lattice_config::{EngineSpec, LatticeConfig};
-use lattice_workspace::{DriverResolution, Evidence, Role, Workspace};
+use lattice_config::EngineSpec;
+use lattice_workspace::{DriverResolution, Evidence, Role, TaskOrigin, Workspace};
 
 use crate::Project;
 
@@ -38,13 +38,16 @@ pub struct WorkspaceView {
 	pub name: String,
 	/// Repo-relative, forward-slashed on every platform.
 	pub path: String,
-	pub auto: bool,
 	pub depends_on: Vec<String>,
+	/// The part of `depends_on` read from manifests rather than `lattice.json`.
+	pub inferred_deps: Vec<String>,
 	pub driver: Option<DriverView>,
 	pub engines: Vec<EngineView>,
-	/// The tasks that resolve to a command here, in pipeline declaration order.
-	/// A workspace whose toolchain has no `lint` simply has no `lint` entry.
+	/// Every task this workspace can run. A workspace whose tool has no `lint`
+	/// simply has no `lint` entry.
 	pub tasks: Vec<WorkspaceTaskView>,
+	/// What discovery could not read here.
+	pub problems: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,6 +57,9 @@ pub struct WorkspaceTaskView {
 	pub command: String,
 	pub persistent: bool,
 	pub cacheable: bool,
+	/// The file or tool the task came from, or `lattice.json` for a command an
+	/// override writes out.
+	pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,6 +80,7 @@ pub enum EvidenceView {
 	Declaration,
 	NativeFile { file: String },
 	Lockfile { file: String },
+	Manifest { file: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -242,34 +249,36 @@ fn driver_view(resolution: &DriverResolution) -> DriverView {
 			Evidence::Declaration => EvidenceView::Declaration,
 			Evidence::NativeFile(file) => EvidenceView::NativeFile { file: file.clone() },
 			Evidence::Lockfile(file) => EvidenceView::Lockfile { file: file.clone() },
+			Evidence::Manifest(file) => EvidenceView::Manifest { file: file.clone() },
 		},
 	}
 }
 
-fn workspace_view(root: &Path, ws: &Workspace, config: &LatticeConfig) -> WorkspaceView {
-	// Pipeline order, not command-map order: the front end lists tasks in the
-	// order the config declares them, the same order the CLI reports.
-	let tasks = config
+fn workspace_view(root: &Path, ws: &Workspace) -> WorkspaceView {
+	let tasks = ws
 		.tasks
 		.iter()
-		.filter_map(|(name, task)| {
-			ws.command_for(name).map(|command| WorkspaceTaskView {
-				task: name.clone(),
-				command: command.to_string(),
-				persistent: task.is_persistent(),
-				cacheable: task.is_cacheable(),
-			})
+		.map(|(name, task)| WorkspaceTaskView {
+			task: name.clone(),
+			command: task.command.clone(),
+			persistent: task.config.is_persistent(),
+			cacheable: task.config.is_cacheable(),
+			source: match &task.origin {
+				TaskOrigin::Native(source) => source.clone(),
+				TaskOrigin::Config => lattice_config::CONFIG_FILE.to_string(),
+			},
 		})
 		.collect();
 
 	WorkspaceView {
 		name: ws.name.clone(),
 		path: relative(root, &ws.path),
-		auto: ws.auto,
 		depends_on: ws.depends_on.clone(),
+		inferred_deps: ws.inferred_deps.clone(),
 		driver: ws.driver.as_ref().map(driver_view),
 		engines: engine_views(&ws.engines),
 		tasks,
+		problems: ws.problems.clone(),
 	}
 }
 
@@ -303,7 +312,7 @@ impl Project {
 			workspaces: self
 				.workspaces
 				.iter()
-				.map(|ws| workspace_view(&self.root, ws, config))
+				.map(|ws| workspace_view(&self.root, ws))
 				.collect(),
 			engines: engine_views(&config.engines),
 			global_dependencies: config.global_dependencies.clone(),

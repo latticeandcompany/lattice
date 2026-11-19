@@ -58,9 +58,10 @@ task should re-run too eagerly rather than too rarely.
 
 ## Why a change upstream re-runs everything downstream
 
-A task's key includes the keys of every task it depends on. Edit a library and
-every app that builds against it re-runs, whether or not the app reads the file
-you touched.
+A task's key includes the keys of every task it depends on, and the files of
+every workspace its own workspace depends on, directly or not. Edit a library
+and every app that builds against it re-runs, whether or not the app reads the
+file you touched, and whether or not the library has a task of the same name.
 
 This is coarse on purpose. A workspace is one node in the graph, so when its key
 moves, Lattice knows something in it changed and nothing more. It cannot tell
@@ -80,6 +81,14 @@ worth deleting. See [Task graph](/lattice/docs/task-graph).
 and it is the only thing a hit restores. A file the command produces that no
 `outputs` pattern matches is never saved, so a later hit will not put it back,
 and whatever consumes it will find it missing.
+
+A `build` a workspace's own files define already has outputs: the directory its
+tool builds into, `dist/**` for JavaScript and Python packages, `build/**` beside each Gradle build file, `target/**` beside each `pom.xml`,
+ `**/bin/Debug/**` and `**/bin/Release/**`
+for .NET. Each subproject of a JVM or .NET build writes its own, so a source
+package named `build` or `target` is never mistaken for output. Cargo and Go get none, because Cargo's `target/` is
+shared across a workspace and `go build ./...` keeps nothing, and neither does a
+uv workspace member, which builds into the workspace root's `dist/`. Set `outputs` on the task to replace the default.
 
 A restore also clears what `outputs` matches before it unpacks. That is a
 correctness decision rather than tidiness. Without it, a hit would layer the
@@ -132,9 +141,12 @@ through `lattice prune` like anything else.
 `cache: false` on a task means never look up and never store. Reach for it when
 a task's result genuinely is not a function of its inputs: something that reads
 the clock, hits the network, or writes to a place outside the workspace.
+`clean`, `deploy`, `publish` and `release` are never cached unless you say
+otherwise, because what they do happens outside the workspace.
 
-`persistent: true` disqualifies a task from caching on its own, no `cache: false`
-needed, because a dev server produces a running process rather than a result.
+A persistent task, `dev` and its kin included, is never cached, no `cache:
+false` needed, because a dev server produces a running process rather than a
+result.
 See [Persistent tasks](/lattice/docs/persistent-tasks).
 
 The two per-run escapes are different in a way that matters when you suspect an
@@ -200,9 +212,8 @@ or a run that scheduled no task at all — appends nothing.
 
 Lattice hashes each part of the key separately and then hashes the parts
 together, which keeps the key one number while letting a miss name the part that
-moved. `lattice run build -v` is the only place Lattice reports which part. The
-live display shows a hit's key on the task's own line and leaves the trace to
-`-v`.
+moved. `lattice run build -v` reports which part: as its own line in the
+stream, and on the task's settled line in the live display.
 
 ```text
 lattice: app:build: cache miss: inputs changed

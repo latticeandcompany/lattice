@@ -5,8 +5,9 @@ use lattice_config::LatticeConfig;
 use lattice_output::{OutputMode, Theme};
 
 use crate::commands::{
-	completions::CompletionsArgs, init::InitArgs, prune::PruneArgs, run::RunArgs, setup::SetupArgs,
-	stats::StatsArgs, upgrade::UpgradeArgs, version::VersionArgs,
+	completions::CompletionsArgs, env::EnvArgs, init::InitArgs, migrate::MigrateArgs,
+	prune::PruneArgs, run::RunArgs, setup::SetupArgs, stats::StatsArgs, upgrade::UpgradeArgs,
+	version::VersionArgs,
 };
 use crate::release::ReleaseUrls;
 
@@ -18,18 +19,23 @@ pub const BIN_VERSION: &str = env!("CARGO_PKG_VERSION");
     name = "lattice",
     about = "A high-performance, local toolchain for managing monorepos.",
     version = BIN_VERSION,
-    long_about = "Lattice runs the tasks you declare in lattice.json across the workspaces \
-of your repo, in dependency order. A task whose inputs have not changed comes back from the \
-cache instead of running again. Lattice also pins the tool versions the repo needs and \
-provisions them into .lattice.\n\n\
+    long_about = "Lattice runs your repo's tasks across its workspaces, in dependency order. \
+It reads the workspaces, the dependencies between them and their tasks from the manifests \
+you already have, and a task whose inputs have not changed comes back from the cache \
+instead of running again. Lattice also pins the tool versions the repo needs.\n\n\
 To start, run `lattice init`. Then run `lattice run <task>`.",
     help_template = "\u{2756} {name} {version}\n{about}\n\n\
 {usage-heading} {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
-	/// Print raw `workspace:task:` lines instead of the live display.
+	/// Show more: why each task missed the cache, its key, and per-task notes.
 	#[arg(short, long, global = true)]
 	pub verbose: bool,
+
+	/// Print a plain `workspace:task` line per event instead of the live display,
+	/// the way a CI log gets it.
+	#[arg(long, global = true)]
+	pub stream: bool,
 
 	/// Hidden alias for --verbose.
 	#[arg(short, long, global = true, hide = true)]
@@ -77,6 +83,12 @@ pub enum Commands {
 	/// Create a lattice.json and a .lattice/schema.json in the current directory.
 	Init(InitArgs),
 
+	/// Rewrite a Lattice 1.x lattice.json for this version.
+	Migrate(MigrateArgs),
+
+	/// Print the PATH a task sees, for your own shell to evaluate.
+	Env(EnvArgs),
+
 	/// Evict cache artifacts until the cache is under a size limit.
 	Prune(PruneArgs),
 
@@ -111,6 +123,7 @@ impl Cli {
 			Some(Commands::Upgrade(_))
 				| Some(Commands::Completions(_))
 				| Some(Commands::Version(_))
+				| Some(Commands::Migrate(_))
 		)
 	}
 
@@ -122,7 +135,10 @@ impl Cli {
 	}
 
 	pub async fn execute(self) -> Result<()> {
-		let flag_loq = self.flag_loquacious();
+		let flags = OutputFlags {
+			verbose: self.flag_loquacious(),
+			stream: self.stream,
+		};
 		let no_version_check = self.no_version_check;
 		let theme = self.effective_theme();
 		let base_url = self.release_base_url.clone();
@@ -138,9 +154,11 @@ impl Cli {
 		}
 
 		match self.command {
-			Some(Commands::Run(args)) => args.execute(flag_loq, no_version_check).await,
-			Some(Commands::Setup(args)) => args.execute(flag_loq, no_version_check).await,
+			Some(Commands::Run(args)) => args.execute(flags, no_version_check).await,
+			Some(Commands::Setup(args)) => args.execute(flags, no_version_check).await,
 			Some(Commands::Init(args)) => args.execute(theme).await,
+			Some(Commands::Migrate(args)) => args.execute().await,
+			Some(Commands::Env(args)) => args.execute().await,
 			Some(Commands::Prune(args)) => args.execute().await,
 			Some(Commands::Stats(args)) => args.execute().await,
 			Some(Commands::Upgrade(args)) => args.execute(base_url.as_deref()).await,
@@ -161,19 +179,27 @@ impl Cli {
 	}
 }
 
-/// Effective loquacious: a CLI flag or the `settings.loquacious` config setting.
-/// Precedence does not matter for a boolean disjunction, but the CLI honors
-/// flag > env > setting > default overall.
+/// The global flags that decide how a run is displayed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OutputFlags {
+	pub verbose: bool,
+	pub stream: bool,
+}
+
+/// Verbose when the flag or `settings.loquacious` asks for it.
 pub fn effective_loquacious(flag_loq: bool, setting_loq: bool) -> bool {
 	flag_loq || setting_loq
 }
 
 /// Detect the output mode for this invocation, consulting the real terminal and
-/// `CI` env. `effective_loq` forces [`OutputMode::Raw`].
-pub fn detect_output_mode(effective_loq: bool) -> OutputMode {
-	let tty = console::user_attended() && console::Term::stdout().is_term();
+/// `CI` env. `stream` forces [`OutputMode::Raw`].
+pub fn detect_output_mode(stream: bool) -> OutputMode {
+	// The live display draws on stderr, so both have to be a terminal for it.
+	let tty = console::user_attended()
+		&& console::Term::stdout().is_term()
+		&& console::Term::stderr().is_term();
 	let ci = std::env::var("CI").is_ok();
-	lattice_output::detect_mode(tty, effective_loq, ci)
+	lattice_output::detect_mode(tty, stream, ci)
 }
 
 /// Gating logic for the one-line version-drift nag.

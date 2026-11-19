@@ -17,23 +17,23 @@ interface Capability {
 const capabilities: Capability[] = [
 	{
 		icon: 'bi-list-task',
-		title: 'Every task in one list',
-		body: 'Every workspace in the repo, with the tasks it can run. Start a task, watch its output stream in, and see which results came from cache.',
+		title: 'What every workspace can run',
+		body: 'Each workspace with the tasks its manifest and its tool give it, and where each came from. Run one, or several across the repo, and read the output as it prints.',
 	},
 	{
 		icon: 'bi-diagram-3',
-		title: 'Watch the graph fill in',
-		body: 'The task graph is drawn in dependency order and fills in as the build moves through it. Click a task to isolate it with everything it depends on and everything that depends on it.',
+		title: 'The graph, filling in',
+		body: 'The task graph in dependency order, updating as the run moves through it. Focus a task to light up everything it depends on and everything that depends on it.',
 	},
 	{
-		icon: 'bi-braces',
-		title: 'Edit the config without editing JSON',
-		body: 'Workspaces, tasks, and tool versions as a form. The same parser a run uses checks every edit as you type, and a repo with no lattice.json gets a four-step walkthrough.',
+		icon: 'bi-tools',
+		title: 'Tool versions and the cache',
+		body: 'Which node, JDK or compiler each workspace runs with and where it lives, checked the way a run checks it. How big the cache is, the time it has saved, and a prune button.',
 	},
 	{
 		icon: 'bi-search',
-		title: 'Find out why a task re-ran',
-		body: 'When a task misses the cache because something changed, the app names what changed. You get the command, the inputs, the toolchain, or a task it depends on, instead of a bare hash.',
+		title: 'Why a task ran again',
+		body: 'A task that missed the cache names what moved: its inputs, its command, a tool version, or a task it depends on.',
 	},
 ];
 ---
@@ -48,11 +48,12 @@ const capabilities: Capability[] = [
 				</span>
 			</div>
 			<h2 class="fw-bold mb-3" style="font-size: clamp(2rem, 4vw, 2.75rem); letter-spacing: -0.02em;">
-				Run and inspect your repo in a desktop app
+				The same runs, with the whole repo on screen
 			</h2>
 			<p class="fs-5 mb-0" style="color: var(--text-muted);">
-				Lattice Desktop runs the same tasks the CLI runs. It also draws the task graph, edits
-				lattice.json as a form, and tells you why a task ran again.
+				Lattice Desktop runs the tasks the CLI runs, with the same engine and the same cache, and
+				shows what a terminal scrolls past: every workspace, the graph, tool versions and what the
+				cache holds.
 			</p>
 		</div>
 

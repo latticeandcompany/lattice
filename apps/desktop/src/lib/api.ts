@@ -10,19 +10,23 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 import type {
 	AppInfo,
+	CacheReport,
 	Catalog,
 	ConfigDiagnostic,
 	GraphDump,
+	InitSelection,
+	MigrationPreview,
+	OutputLine,
+	PlanRequest,
 	ProjectSnapshot,
 	ProjectView,
+	PruneResult,
 	RecentProject,
 	RunMessage,
 	RunOptions,
 	RunOutcome,
-	OutputLine,
 	ScanResult,
-	WorkspaceCandidate,
-	EnginePin,
+	ToolchainGroup,
 } from './types.ts';
 
 /** True inside the app, false under a plain `vite dev`. */
@@ -64,21 +68,20 @@ export const configValidate = (text: string) => call<ConfigDiagnostic[]>('config
 export const configSave = (text: string) => call<ProjectSnapshot>('config_save', { text });
 export const configSchema = () => call<unknown>('config_schema');
 
-export interface InitSelection {
-	candidates: WorkspaceCandidate[];
-	pins: EnginePin[];
-}
-
 export const configScan = (path: string) => call<ScanResult>('config_scan', { path });
 export const configPreview = (selection: InitSelection) => call<string>('config_preview', { selection });
 export const configInit = (path: string, selection: InitSelection, force: boolean) =>
 	call<ProjectSnapshot>('config_init', { path, selection, force });
 
-export interface PlanRequest {
-	tasks: string[];
-	filter?: string;
-	sequentially: boolean;
-}
+export const migratePreview = (path: string) => call<MigrationPreview>('migrate_preview', { path });
+export const migrateApply = (path: string) => call<ProjectSnapshot>('migrate_apply', { path });
+
+/** Runs each engine's check, and its installCmd when it has not run yet. Can take minutes. */
+export const toolchainsCheck = () => call<ToolchainGroup[]>('toolchains_check');
+
+export const cacheReport = () => call<CacheReport>('cache_report');
+/** Evict the oldest entries until the cache fits `maxBytes`. Zero empties it. */
+export const cachePrune = (maxBytes: number) => call<PruneResult>('cache_prune', { maxBytes });
 
 export const graphDump = (request: PlanRequest) => call<GraphDump>('graph_dump', { request });
 

@@ -18,19 +18,20 @@ tenth exists only for the test suites.
 
 | Crate | Owns |
 | --- | --- |
-| `lattice-config` | `lattice.json` types (`LatticeConfig`, `WorkspaceConfig`, `PipelineTask`, `Settings`, `EngineSpec`), the `WELL_KNOWN_ENGINES`, `MANIFESTS`, and `LOCKFILES` tables, `load_config`, `find_root`, validation, and the bundled JSON Schema (`schema::ensure_schema`) |
-| `lattice-workspace` | Workspace discovery, the driver evidence ladder (`DRIVERS`, `detect_drivers`, `infer_task_command`), and, in its `toolchain` submodule, the engine gradient and provisioning |
-| `dagger` | Builds the cross-workspace `ExecutionGraph` from resolved workspaces plus the task map, and flattens it into a `Schedule` |
+| `lattice-config` | `lattice.json` types (`LatticeConfig`, `WorkspaceOverride`, `PipelineTask` and its layering, the built-in task defaults, `Settings`, `EngineSpec`), 1.x detection (`is_v1_config`), the `WELL_KNOWN_ENGINES`, `MANIFESTS`, and `LOCKFILES` tables, `load_config`, `find_root`, validation, and the bundled JSON Schema (`schema::ensure_schema`) |
+| `lattice-workspace` | Workspace discovery (`members`: root workspace files, globs, `exclude`), manifest names and dependency edges (`manifest`), driver detection (`DRIVERS`, `detect_driver`), the tasks each driver can run (`tasks`), and, in its `toolchain` submodule, engine checks and provisioning |
+| `dagger` | Builds the cross-workspace `ExecutionGraph` from each workspace's resolved tasks, and flattens it into a `Schedule` |
 | `lattice-cache` | Cache identity (`compute_key`, `compute_key_detailed`, `KEY_COMPONENTS`) and storage (the `CacheStore` trait, `LocalStore`) |
 | `lattice-runner` | The async scheduler (`execute_tasks`): spawns tasks, wires the cache, injects toolchain `PATH`s, manages persistent children and signal teardown |
-| `lattice-events` | `TaskEvent`, the `Reporter` trait, `CacheMiss`, `OutputLine`. Depends on `serde` and nothing else |
+| `lattice-events` | `TaskEvent`, the `Reporter` trait, `PlannedTask`, `CacheMiss`, `OutputLine`. Depends on `serde` and nothing else |
 | `lattice-output` | `OutputMode`, the two terminal reporters (`InteractiveReporter`, `CiReporter`), and splash rendering |
-| `lattice-project` | One opened repo (`Project`) and the pipeline both front ends run against it: `plan`, `run`, `RunOutcome`, the `scaffold` module `lattice init` writes through, and the `view` wire types |
+| `lattice-project` | One opened repo (`Project`) and the pipeline both front ends run against it: `plan`, `run`, `RunOutcome`, the `scaffold` module `lattice init` writes through, the `migrate` module `lattice migrate` runs, and the `view` wire types |
 | `lattice` | The `lattice` binary: the clap surface, the subcommands, the version-pin handover |
 | `lattice-testkit` | Dev-only. Task commands spelled for whichever shell will run them, so a test means the same thing on every platform, plus the stand-in programs the suites put on `PATH` |
 
-The root `lattice.json` declares every crate plus `apps/web` and `apps/desktop`
-as workspaces, so the repo runs its own tasks through itself.
+The repo runs its own tasks through itself. Its `lattice.json` adds `apps/*` and
+`packages/npm` to the crates Cargo's `[workspace]` already names, and the order
+between crates comes from their `path` dependencies.
 
 ## Dependency direction
 
@@ -97,7 +98,7 @@ the runner.
 The events and the `Reporter` trait live in `lattice-events`. The runner emits
 typed `TaskEvent`s and calls `Reporter` hooks (`run_start`, `event`,
 `surface_failure`, `run_summary`, `note`, `warn`, `task_note`, `task_warn`,
-`finish`), and never touches `console`, `indicatif`, or `println!` for task
+`plan`, `scope`, `finish`), and never touches `console`, `indicatif`, or `println!` for task
 status.
 
 Both lived in `lattice-output` alongside the renderers once, which meant the
@@ -105,8 +106,8 @@ async executor depended on a terminal stack for two type definitions. The
 desktop app is the third `Reporter` implementation and would have had to link
 `indicatif` to watch a run.
 
-`InteractiveReporter` (an `indicatif::MultiProgress` TUI) and `CiReporter`
-(plain, greppable lines) are the two implementations `make_reporter` picks
+`InteractiveReporter` (the live display: settled lines above a redrawn region,
+drawn on stderr) and `CiReporter` (the plain, greppable stream) are the two implementations `make_reporter` picks
 between. `ChannelReporter` in `apps/desktop/src-tauri` is the third, and adding
 it required no change to the runner.
 
@@ -130,7 +131,7 @@ One invocation, end to end:
 
 1. **Entry.** `Cli::parse()` (clap), then `Cli::execute()`.
 2. **Version-pin handover.** Unless the subcommand is `upgrade`, `completions`,
-   or `version` (`Cli::skips_pin_handover`), `Cli::execute` calls
+   `version` or `migrate` (`Cli::skips_pin_handover`), `Cli::execute` calls
    `crate::drift::repo_root()` then `drift::honor_pin`. That reads
    `latticeVersion` out of the `lattice.json` text directly rather than through
    `lattice-config`, so a schema the running binary cannot parse still yields a
@@ -138,35 +139,42 @@ One invocation, end to end:
    `exec`s the pinned version instead.
 3. **Open the repo.** `Project::open` walks up from the cwd with
    `lattice_config::find_root`, calls `lattice_config::schema::ensure_schema` to
-   write `.lattice/schema.json` if absent, then `lattice_config::load_config`
-   (which parses and calls `LatticeConfig::validate`) and
-   `lattice_workspace::discover_workspaces`.
+   keep `.lattice/schema.json` in step with the binary, then
+   `lattice_config::load_config` (which refuses a 1.x config, parses, and calls
+   `LatticeConfig::validate`) and `lattice_workspace::discover_workspaces`. It
+   records which workspace the cwd sits in, so the run can be scoped to it.
 4. **Reject unknown tasks.** `Project::require_known_tasks` fails before anything
-   is provisioned or spawned, listing the tasks that do exist.
-5. **Output mode.** `crate::cli::detect_output_mode` consults the real TTY and
-   the `CI` environment variable through `lattice_output::detect_mode`. If the
-   requested tasks' transitive closure holds a persistent task
-   (`dagger::includes_persistent_task`), an otherwise-`Interactive` run is forced
-   to `Raw`.
+   is provisioned or spawned when no workspace has a requested task, listing the
+   tasks that do exist.
+5. **Output mode.** `crate::cli::detect_output_mode` consults the real TTY,
+   the `CI` environment variable and `--stream` through
+   `lattice_output::detect_mode`. If the requested tasks' transitive closure holds
+   a persistent task (`dagger::includes_persistent_task`), an
+   otherwise-`Interactive` run is forced to `Raw`.
 6. **Workspace discovery and driver detection.** Inside step 3,
-   `discover_workspaces` resolves each workspace's merged engine map
-   (`lattice_config::resolve_engines`), walks the evidence ladder
-   (`detect_drivers`) for `auto` workspaces, and resolves each root task's
-   command (`infer_task_command`) unless a `scripts` entry supplies one. See
-   [Driver detection](/lattice/docs/drivers) for the ladder.
+   `discover_workspaces` finds the members (`members::find_members`: the root's
+   workspace files, then `workspaces` and `exclude`), folds the matching
+   `overrides` into each, picks its driver (`detect_driver`, unless an override
+   names one), lists the tasks that driver can run there (`tasks::native_tasks`),
+   layers each task's settings (built-in defaults, then the root `tasks` map,
+   then overrides), and infers dependency edges from each manifest
+   (`manifest::identity`). See [Driver detection](/lattice/docs/drivers).
 7. **Graph construction.** `dagger::build_execution_graph_selected` expands the
    requested root tasks across the resolved workspaces into `TaskNode`s, wires
-   `^task` and bare-`task` edges, rejects cycles and a persistent task with a
-   dependent, and topologically sorts the result into an `ExecutionGraph`. Under
-   `--filter`, the matched workspaces are the roots: the graph narrows to them
+   `^task` and bare-`task` edges from each workspace's resolved tasks, rejects
+   cycles and a persistent task with a dependent, and topologically sorts the
+   result into an `ExecutionGraph`. Arguments after `--` are appended to the
+   requested tasks' commands here. Under `--filter`, or a scope from the cwd, the
+   selected workspaces are the roots: the graph narrows to them
    plus their transitive prerequisites, flagged on the node so `--dry-run` can
    tag them.
 8. **Schedule.** `dagger::build_schedule` flattens that graph into the
    petgraph-independent `Schedule` above.
 9. **Scheduler execution.** `lattice_runner::execute_tasks` resolves each
    workspace's merged engines into a `PATH` prefix and an identity string through
-   `lattice_workspace::toolchain::provision_and_resolve`, memoized so an
-   identical engine spec provisions once, then appends the project's dependency
+   `lattice_workspace::toolchain::provision_and_resolve_in` (run in the
+   workspace, so a Gradle or Maven wrapper decides that tool's version),
+   memoized so an identical engine spec provisions once, then appends the project's dependency
    bin directories from `lattice_workspace::dependency_bin_dirs`. Those go after
    the toolchain's, so a pin still decides which copy of a tool runs. Then it
    drives the in-degree scheduler:
@@ -174,7 +182,9 @@ One invocation, end to end:
    concurrency. Each spawned task computes its cache key with
    `lattice_cache::compute_key_detailed`, looks it up through the `CacheStore`,
    and either restores the artifact or runs the command through the platform
-   shell (`sh -c` or `cmd /C`) with the resolved `PATH` prepended. On success it
+   shell (`sh -c` or `cmd /C`) with the resolved `PATH` prepended, an empty
+   stdin, and on unix a session of its own, so a task can never read or be
+   stopped by the terminal Lattice runs in. On success it
    stores outputs back through the same `CacheStore`. See
    [Cache internals](/lattice/docs/cache-internals) and
    [Engines and provisioning](/lattice/docs/engines).

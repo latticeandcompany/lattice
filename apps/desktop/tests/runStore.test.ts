@@ -392,3 +392,36 @@ test('starting a run of our own drops the adopted one', () => {
 	assert.ok(!s.adopted);
 	assert.equal(s.runView().phase, 'running');
 });
+
+test('a plan queues every task and says what each one waits on', () => {
+	const s = store();
+	s.begin(null);
+	s.ingest({
+		kind: 'plan',
+		tasks: [
+			{ workspace: 'api', task: 'build', waitsOn: [] },
+			{ workspace: 'web', task: 'build', waitsOn: ['api:build'] },
+		],
+	});
+	assert.equal(s.taskView('web:build').state, 'queued');
+	assert.deepEqual(s.taskView('web:build').waitsOn, ['api:build']);
+	assert.equal(s.unsettled('api:build'), true);
+
+	s.ingest(event({ kind: 'event', event: { type: 'finished', workspace: 'api', task: 'build', durationMs: 5 } }));
+	assert.equal(s.unsettled('api:build'), false);
+	assert.deepEqual(s.progress(), { total: 2, settled: 1, cached: 0, failed: 0, running: 0 });
+});
+
+test('the tail is the last lines a task printed', () => {
+	const s = store();
+	s.begin(graph);
+	s.ingest({
+		kind: 'outputBatch',
+		lines: ['one', 'two', 'three', 'four'].map((line) => ({ workspace: 'api', task: 'build', line, stderr: false })),
+	});
+	assert.deepEqual(
+		s.tail('api:build', 3).map((line) => line.line),
+		['two', 'three', 'four'],
+	);
+	assert.deepEqual(s.tail('web:build', 3), []);
+});

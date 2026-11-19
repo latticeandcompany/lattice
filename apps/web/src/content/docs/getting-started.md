@@ -1,161 +1,95 @@
 ---
 title: Getting started
-description: From an empty repo to a task that comes back from cache on its second run.
+description: From a monorepo with no Lattice config to a build that comes back from cache on its second run.
 group: Overview
 order: 3
 ---
 
 # Getting started
 
-We are going to take one repo from no config to a task that runs once and comes
-back from cache on the next run.
+We are going to take a small npm monorepo from no Lattice config to a build that
+runs once, in dependency order, and comes back from cache on the next run.
 
 You need `lattice` on your `PATH`. See
 [Installation](/lattice/docs/installation) if you do not have it yet.
 
-## Scaffold a config
+## The repo
 
-From the root of your repo, run:
+Two packages. `app` depends on `greet`, and each has a `build` script:
+
+```text
+package.json            { "private": true, "workspaces": ["packages/*"] }
+package-lock.json
+packages/greet/package.json
+packages/greet/src/index.js
+packages/app/package.json
+packages/app/src/main.js
+```
+
+```json
+{
+  "name": "app",
+  "dependencies": { "greet": "*" },
+  "scripts": {
+    "build": "mkdir -p dist && cp src/main.js dist/main.js",
+    "test": "node src/main.js"
+  }
+}
+```
+
+`greet`'s `package.json` has a `build` script and nothing else. If you are
+following along in your own repo, any npm, pnpm, yarn, Cargo, Go or uv
+workspace works the same way.
+
+## Initialize
+
+From the repo root:
 
 ```sh
 lattice init
 ```
 
-`init` reads the repo before it writes anything. On a terminal you get two
-checklists to confirm: every directory holding a manifest it recognizes, and
-every tool version the repo already pins in a file like `.nvmrc`,
-`.tool-versions`, or `rust-toolchain.toml`. Uncheck whatever is wrong.
-
-```text
-found 2 workspaces
-> [x] apps/web        pnpm       package.json
-  [x] services/api    cargo      Cargo.toml
-
-found 1 pinned tool version
-> [x] node         22.11.0        .nvmrc
-```
-
-Tasks are not a third checklist. For each workspace you keep, `init` reads the
-task list out of the file that workspace's driver already reads — a
-`turbo.json`, an `nx.json`, `package.json` scripts, a `justfile`, a
-`pyproject.toml` — and writes every task it finds. A repo that runs twelve tasks
-gets twelve. A workspace whose driver takes the task name on its command line,
-such as `cargo` or `go`, publishes no list to read and contributes `build`. See
-[`lattice init`](/lattice/docs/cli#the-tasks-it-writes).
-
-To take the scan's proposal without confirming, pass `-y`. A pipe or a
-non-interactive shell does the same on its own:
-
-```sh
-lattice init -y
-```
-
-The rest of this guide builds a repo up from nothing, so run it somewhere with
-no manifests to find. You should see three files reported and a hint about what
-to do next:
+`init` reads the repo before it writes anything, then shows what it found:
 
 ```text
 ✓ wrote lattice.json
 ✓ wrote .lattice/schema.json
 ✓ updated .gitignore
 
-next: declare a workspace in lattice.json
+2 workspaces:
+  app    npm      build test
+  greet  npm      build
+
+next: lattice run build
 ```
 
-`lattice.json` is the config. `.lattice/schema.json` is a committed JSON Schema
-your editor validates against as you type. In `.gitignore`, five lines are
-appended and the existing content is left alone: `.lattice/cache/`,
-`.lattice/toolchains/`, `.lattice/bin/`, `.lattice/setup/`, and
-`.lattice-setup-marker`.
-
-To scaffold over a `lattice.json` that already exists, add `--force`. Without
-it, `init` refuses.
-
-## Read what it wrote
-
-Open `lattice.json`. This is the skeleton `init` writes when the scan finds
-nothing — in a repo with manifests, `workspaces` and `tasks` come back filled
-in:
+Open `lattice.json`:
 
 ```json
 {
   "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
-  "tasks": {
-    "build": {
-      "dependsOn": [
-        "^build"
-      ],
-      "outputs": [
-        "dist/**"
-      ]
-    }
-  },
-  "workspaces": []
+  "latticeVersion": "2.0.0"
 }
 ```
 
-Four things are in there. `$schema` points at the committed schema file.
-`latticeVersion` pins the release this repo runs on (see
-[Upgrading](/lattice/docs/upgrading)). `tasks.build` declares one task, where
-`dependsOn: ["^build"]` means "build my dependencies first" and `outputs` tells
-the cache which files to capture (see [Task
-graph](/lattice/docs/task-graph)). `workspaces` is empty, and a workspace is a
-directory with its own manifest that Lattice runs tasks in (see
-[Workspaces](/lattice/docs/workspaces)).
+That is the whole config. The workspaces came from `package.json`'s
+`workspaces`, the tool from `package-lock.json`, the tasks from each package's
+`scripts`, and the order from `app`'s dependency on `greet`. `lattice.json` only
+holds what the repo does not already say, and this repo already says
+everything. `$schema` points at the committed schema your editor validates
+against; `latticeVersion` pins the release this repo runs (see
+[Upgrading](/lattice/docs/upgrading)).
 
-Nothing is declared to run yet. Confirm that:
+`init` also ignores Lattice's per-machine files in `.gitignore`:
+`.lattice/cache/`, `.lattice/toolchains/`, `.lattice/bin/`, `.lattice/setup/`,
+and `.lattice-setup-marker`. Commit `lattice.json` and `.lattice/schema.json`.
 
-```sh
-lattice run build
-```
+In a repo with projects no workspace file names, say a Go service beside the
+packages, `init` offers to add them under `workspaces`, and it offers any tool
+version the repo already pins in `.nvmrc` or `.tool-versions` as an `engines`
+entry. On a terminal you confirm each list; `-y` takes them as offered.
 
-```text
-lattice: no workspaces declared. Add one to the `workspaces` array in lattice.json, then run `build`.
-```
-
-Check the exit code with `echo $?`. It is `0`. An empty repo is nothing to do,
-not a failure.
-
-## Add a workspace
-
-Make a directory with something to build:
-
-```sh
-mkdir -p app/src
-echo hello > app/src/index.txt
-```
-
-Now declare it. Replace `lattice.json` with this:
-
-```json
-{
-  "$schema": ".lattice/schema.json",
-  "latticeVersion": "1.1.1",
-  "workspaces": [
-    {
-      "name": "app",
-      "path": "app",
-      "auto": false,
-      "scripts": { "build": "mkdir -p dist && cp src/index.txt dist/index.txt" }
-    }
-  ],
-  "tasks": {
-    "build": {
-      "inputs": ["src/**/*"],
-      "outputs": ["dist/**"]
-    }
-  }
-}
-```
-
-Two fields are new. `auto: false` opts this workspace out of driver detection,
-so `scripts.build` is exactly what runs (see [Driver
-detection](/lattice/docs/drivers) for what the default, `auto: true`, infers
-instead). The task's `inputs` names the files whose contents decide whether
-`build` needs to run again.
-
-Check that Lattice resolved the command you wrote:
+## Check what will run
 
 ```sh
 lattice run build --dry-run
@@ -163,79 +97,94 @@ lattice run build --dry-run
 
 ```text
 ❖ lattice  dry run · build
-  → app:build  mkdir -p dist && cp src/index.txt dist/index.txt
+  → greet:build  npm run build
+  → app:build  npm run build
 ```
 
-## Provision and install
+`greet` comes first because `app` depends on it. `build` waits on the builds of
+its dependencies without being told to. See [Task
+graph](/lattice/docs/task-graph).
+
+## Install dependencies
 
 ```sh
 lattice setup
 ```
 
-```text
-❖ lattice  setup
-❖ setup complete
-```
+`setup` checks or installs any tool versions pinned under `engines` and runs
+each workspace's installer, once per lockfile: here, one `npm install` at the
+root. On a fresh clone, run it before the first build.
 
-`setup` provisions the toolchains this repo pins under `engines` and installs
-each workspace's dependencies. This repo pins nothing and has no dependencies,
-so it finishes immediately. See [Pinning tool
-versions](/lattice/docs/pinning-tool-versions) for what it does once `engines`
-has an entry.
-
-## Run the task
+## Run it
 
 ```sh
-lattice run build -v
+lattice run build
 ```
+
+On a terminal, the run draws a live display: each running task with the last
+lines it printed, the tasks still waiting and what they wait on, and progress.
+Finished tasks settle into a line each:
 
 ```text
-lattice: running `build` across 1 workspace
-lattice: app:build: hash 92e4f1987f6770d8
-lattice: app:build: cache miss (nothing cached for this task yet)
-app:build: running
-app:build: done (0.01s)
-lattice: 1 tasks, 0 cached, 0 failed, 0.01s
+❖ lattice  build  · 2 workspaces
+
+  ✓ greet  0.12s
+  ✓ app    0.12s
+
+❖  2 tasks  0.27s
 ```
 
-Your hash may differ from this one. It covers the platform, the shell, and the
-Lattice version as well as the task's inputs. `app/dist/index.txt` now exists.
-
-`-v` prints this plain line-by-line log. Drop it and a terminal gets a live
-display of the same run instead. That display leaves out the `hash` and `cache
-miss` lines, which only `-v` prints. See [Output and
-logging](/lattice/docs/output-modes).
+`packages/greet/dist` and `packages/app/dist` now exist. An npm workspace's
+`build` caches `dist/**` unless you say otherwise.
 
 ## Run it again
 
-Nothing under `app/src` changed, so the second run does not execute the command
-at all:
-
-```sh
-lattice run build -v
-```
+Nothing changed, so nothing runs:
 
 ```text
-lattice: running `build` across 1 workspace
-lattice: app:build: hash 92e4f1987f6770d8
-app:build: cache hit [92e4f198]
-lattice: 1 tasks, 1 cached, 0 failed, 0.00s, 0.01s saved
-lattice: full power, nothing to run
+❖ lattice  build  · 2 workspaces
+
+  ● greet  cached · 0.12s saved
+  ● app    cached · 0.12s saved
+
+❖  2 tasks · 2 cached  0.00s · 0.23s saved
+
+❖❖❖ FULL POWER
 ```
 
-Same hash as the first run, so Lattice restored `app/dist` from
-`.lattice/cache/` instead of running `scripts.build` again.
+Each package's `dist` was restored from `.lattice/cache/`. Delete
+`packages/app/dist` and run again: it comes back from the same entry. Edit
+`packages/greet/src/index.js` and run again: `greet` builds, and so does `app`,
+because a dependency's change reaches every package that depends on it. See
+[Caching](/lattice/docs/caching).
 
-Two more things to try. Delete `app/dist` and run again: it comes back from the
-same entry without rebuilding. Then edit `app/src/index.txt` and run again: the
-hash changes and the command runs. See [Caching](/lattice/docs/caching) for
-everything that feeds that hash.
+## Run from inside a package
+
+```sh
+cd packages/greet
+lattice run build
+```
+
+A run started inside a workspace covers that workspace and what it depends on,
+so this builds `greet` alone. From `packages/app` it would build `greet` and
+then `app`.
+
+## Pass arguments through
+
+Anything after `--` goes to the task you named:
+
+```sh
+lattice run test -- --trace-warnings
+```
+
+runs `npm run test -- --trace-warnings` in `app`, the only package with a
+`test` script.
 
 ## Next
 
-- [Adopting Lattice](/lattice/docs/adopting-lattice) to bring a repo that
-  already builds into Lattice one workspace at a time.
-- [Workspaces](/lattice/docs/workspaces) for `path`, `auto`, `dependsOn`, and
-  `scripts` in full.
-- [Task graph](/lattice/docs/task-graph) for how one task expands across
-  workspaces, and what `^build` does.
+- [Adopting Lattice](/lattice/docs/adopting-lattice) for a larger repo, with
+  more than one language.
+- [Workspaces](/lattice/docs/workspaces) for how Lattice finds and names
+  workspaces.
+- [Driver detection](/lattice/docs/drivers) for which tasks each tool can run.
+- [Output and logging](/lattice/docs/output-modes) for the plain stream CI gets.

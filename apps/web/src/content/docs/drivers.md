@@ -1,6 +1,6 @@
 ---
 title: Driver detection
-description: How Lattice picks the tool that runs a workspace's tasks, and when it stops to ask.
+description: How Lattice picks the tool that runs a workspace's tasks, what that tool can run, and when it stops to ask.
 group: Concepts
 order: 4
 ---
@@ -8,206 +8,166 @@ order: 4
 # Driver detection
 
 A task named `build` has to become a real shell command. The tool that supplies
-that command is the workspace's **driver**.
+that command is the workspace's **driver**: `pnpm`, `cargo`, `gradle`, `just`.
 
-The evidence that identifies a language rarely identifies a driver. A lone
+The file that identifies a language does not always identify a tool. A
 `package.json` says JavaScript. It does not say whether `build` means
-`pnpm run build`, `yarn build`, `npm run build`, or `bun run build`, and those
-four commands can behave differently. Lattice looks for evidence that names one
-tool, and halts when it finds none.
+`pnpm run build`, `yarn run build`, `npm run build` or `bun run build`, and
+those four resolve different dependency trees. Lattice looks for evidence that
+names one tool, and stops to ask when there is none.
 
-## The evidence ladder
+## Three places to look
 
-For each workspace, Lattice gathers candidate tools from three kinds of
-evidence. A tool named by more than one kind keeps the highest-ranked:
+Lattice checks three places in order and stops at the first that decides.
 
-| Rung | Evidence | Examples |
-| --- | --- | --- |
-| 1. Declaration | A driver named in the workspace's resolved `engines` map, meaning its own entries merged over the root's | `"engines": { "pnpm": ">=8" }` |
-| 2. Native file | A file the developer wrote to pin a tool | `packageManager` in `package.json`, `.tool-versions`, a `[tools]` table in `mise.toml` or `.mise.toml`, `.nvmrc`, `rust-toolchain.toml` or `rust-toolchain`, `.python-version`, `.ruby-version` or a `ruby` directive in a `Gemfile`, `.java-version`, a `toolchain` line in `go.mod`, `gradlew`, `mvnw`, `deno.json` or `deno.jsonc` |
-| 3. Lockfile | A lockfile or wrapper that only one tool produces | `pnpm-lock.yaml`, `bun.lockb`, `Cargo.lock`, `poetry.lock`, `turbo.json` |
+### 1. The workspace itself
 
-The rung does not decide which candidate drives the workspace. The candidates'
-[roles](#roles-composition-and-conflict) do. Rung rank settles two narrower
-questions: which evidence gets recorded for a tool that several rungs name, and,
-when two candidates hold the same role, whether a rung-1 declaration breaks the
-tie.
+| Evidence | Examples |
+| --- | --- |
+| A file a developer wrote to name a tool | `packageManager` in `package.json`, `.tool-versions`, a `[tools]` table in `mise.toml`, a `[tool.poetry]`, `[tool.pdm]` or `[tool.uv]` table in `pyproject.toml`, `gradlew`, `mvnw`, `deno.json`, `.nvmrc`, `rust-toolchain.toml` |
+| A lockfile only one tool writes | `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `package-lock.json`, `Cargo.lock`, `uv.lock`, `poetry.lock`, `turbo.json`, `justfile` |
 
-A bare ecosystem marker is not evidence of a driver. These files identify a
-language and no tool: `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`,
-`requirements.txt`, `setup.py`, `Gemfile`, `pom.xml`, `build.gradle`,
-`build.gradle.kts`, `composer.json`, `mix.exs`, `pubspec.yaml`, `Package.swift`,
-`stack.yaml`, `cabal.project`, and any `.sln`, `.csproj`, `.fsproj`, or
-`.vbproj` file. None of them is a driver fingerprint. They feed only the
-candidate list an ambiguity error prints, so the halt message can name the tools
-that could plausibly have been meant.
-
-Rung 3 covers the fingerprints in the driver registry. A sample:
-
-| Tool | Fingerprint | Invoke form |
-| --- | --- | --- |
-| `pnpm` | `pnpm-lock.yaml` | `pnpm run {task}` |
-| `cargo` | `Cargo.lock`, `rust-toolchain.toml`, `rust-toolchain` | `cargo {task}` |
-| `uv` | `uv.lock` | `uv run {task}` |
-| `just` | `justfile`, `.justfile` | `just {task}` |
-| `turbo` | `turbo.json` | `turbo run {task}` |
-
-All 34 built-in drivers, with every fingerprint and invoke form, are in the
-driver table on [Toolchains](/lattice/docs/toolchains). Two of them, `pip` and
-`kotlin`, have no fingerprint, because no file on disk belongs to them alone.
-They are reachable from rung 1 or rung 2 only.
-
-## Roles: composition and conflict
-
-Every driver declares one or more **roles**. Roles are what let several tools
-coexist in one workspace, and they decide which one drives:
+When several tools are in evidence, their **roles** decide:
 
 | Role | Rank | Examples |
 | --- | --- | --- |
 | Runtime | 0 | `node`, `python`, `ruby`, `java`, `kotlin` |
 | Build tool | 1 | `cargo`, `go`, `gradle`, `maven`, `dotnet`, `swift`, `stack`, `cabal` |
-| Package manager | 2 | `pnpm`, `npm`, `yarn`, `bun`, `uv`, `poetry`, `pdm`, `pipenv`, `pip`, `bundler`, `nuget`, `pod`, `composer`, `dart` |
+| Package manager | 2 | `pnpm`, `npm`, `yarn`, `bun`, `uv`, `poetry`, `pdm`, `pipenv`, `pip`, `bundler`, `composer`, `dart` |
 | Task runner | 3 | `just`, `task`, `turbo`, `nx`, `deno`, `rake`, `mix` |
 
-The candidate holding the highest-ranked role drives the workspace. A tool with
-several roles competes with its highest one and no other. `deno` is a runtime, a
-package manager, and a task runner, so it competes as a task runner. `bun` is a
-runtime and a package manager, so it competes as a package manager. `mix` is
-Elixir's package manager and task runner, so it competes as a task runner.
+The highest-ranked role drives, so different roles compose rather than
+conflict. A `.nvmrc` beside a `pnpm-lock.yaml` is pnpm, with node kept as an
+engine to check. A `turbo.json` over a `pnpm-lock.yaml` is turbo, because the
+task runner outranks the package manager and runs the tasks the repo declared to
+it. Among tools of the same role, a file someone wrote on purpose beats a
+lockfile: `packageManager: "pnpm@9.1.0"` wins over a stray `package-lock.json`.
 
-**Different roles compose.** A `.nvmrc` (node, a runtime) beside a
-`pnpm-lock.yaml` (pnpm, a package manager) is not a conflict. pnpm drives, and
-node stays in the resolved engine map so it can still be version-checked or
-provisioned. A `turbo.json` over a `pnpm-lock.yaml` resolves to turbo the same
-way, because a task runner outranks a package manager.
+A runtime alone decides nothing, because there is no universal `node build`.
 
-**The same role conflicts.** Two package managers in one workspace, say
-`pnpm-lock.yaml` and `bun.lockb`, leave Lattice nothing to prefer, so it halts:
+### 2. The directory above, for JavaScript and Python
 
-```text
-Error: workspace 'app' has an ambiguous or undeclared driver.
-Candidate drivers: bun, pnpm
-Declare the driver in lattice.json, under this workspace:
-  "engines": { "bun": ">=0.0.0" }
-```
+A package inside a pnpm monorepo has no lockfile of its own; pnpm wrote one at
+the root. So a workspace whose `package.json` or `pyproject.toml` could belong
+to several tools, and that has no evidence of its own, looks upward. The nearest
+directory with a lockfile or a `packageManager` for one of those tools decides.
+This is why the members of a JavaScript monorepo need no configuration.
 
-Two build tools, say `stack.yaml.lock` beside `cabal.project.freeze`, behave the
-same. A declaration naming exactly one of the tied candidates resolves it, even
-with the other's lockfile still on disk. A declaration for a *lower*-ranked role
-does not: declaring `node` in a workspace that has a `pnpm-lock.yaml` still
-resolves to pnpm, because pnpm's role outranks node's.
+### 3. A manifest only one tool reads
 
-**A runtime cannot drive a named task alone.** There is no universal
-`node build` or `python test`, because a runtime runs a file rather than a task
-by name. When every candidate in a workspace is a runtime, Lattice halts as if
-it had found nothing.
+`Cargo.toml` is Cargo's and `go.mod` is Go's. A manifest like that is enough on
+its own:
 
-## When Lattice halts
+| Manifest | Driver |
+| --- | --- |
+| `Cargo.toml` | `cargo` |
+| `go.mod` | `go` |
+| `pom.xml` | `maven` |
+| `build.gradle`, `build.gradle.kts`, `settings.gradle` | `gradle` |
+| `.csproj`, `.fsproj`, `.vbproj`, `.sln` | `dotnet` |
+| `Gemfile` | `bundler` |
+| `Pipfile` | `pipenv` |
+| `requirements.txt`, `setup.py` | `pip` |
+| `composer.json`, `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`, `cabal.project` | `composer`, `mix`, `dart`, `swift`, `stack`, `cabal` |
 
-An `auto` workspace with no unambiguous driver raises an ambiguity error and
-stops the run before any task starts. Here it is for a workspace containing only
-a `package.json`:
+## When Lattice stops to ask
 
-```text
-Error: workspace 'app' has an ambiguous or undeclared driver.
-Candidate drivers: pnpm, npm, yarn, bun
-Declare the driver in lattice.json, under this workspace:
-  "engines": { "pnpm": ">=0.0.0" }
-```
-
-With no ecosystem marker either, as in a workspace holding only a `.nvmrc`, the
-candidate list is empty and the message says so:
+A `package.json` or `pyproject.toml` with nothing to go by, here or above, halts
+the run before anything starts:
 
 ```text
-Error: workspace 'app' has an ambiguous or undeclared driver.
-Lattice detected no driver. The directory holds no lockfile, no wrapper, and no native declaration.
-Declare the driver in lattice.json, under this workspace:
-  "auto": false, "scripts": { "build": "<command>" }
+error: Lattice cannot tell which of npm, pnpm, yarn, bun runs the tasks in workspace 'gen': there is no lockfile or packageManager field to go by.
+Say which in lattice.json:
+  "overrides": { "gen": { "driver": "npm" } }
 ```
 
-The suggested line differs between the two because a runtime cannot drive tasks.
-Where a candidate tool exists, Lattice names one, and declaring it resolves the
-halt. Where none does, no `engines` entry would help, so the message suggests
-declaring the commands instead.
+Two package managers tied on equal evidence, `pnpm-lock.yaml` beside
+`bun.lockb`, halt the same way, naming both.
 
-Either error clears in one of three ways: declare the tool that should run the
-tasks in that workspace's `engines`, declare it in the root `engines` map, or
-set `auto: false` and write the commands yourself. The `>=0.0.0` in the first
-suggestion is a placeholder that matches any version. See [Engines and
-provisioning](/lattice/docs/engines) for a real constraint.
+Lattice could pick one. Picking one means every repo that never chose a package
+manager silently gets whichever Lattice's authors preferred, and the day the
+guess is wrong the failure looks like a bug in your build. Committing the
+lockfile settles it, and so does naming the tool:
 
-## `auto: false`
+```json
+{ "overrides": { "gen": { "driver": "pnpm" } } }
+```
 
-The ladder is how an `auto: true` workspace, the default, resolves a driver
-without you declaring commands. `auto: false` turns off its consequences.
-Lattice may still detect a driver, but it infers no command from one, and an
-ambiguous or undetectable result never halts the run. Only `scripts` supplies
-commands.
+`driver` also overrides a detection you disagree with: `"driver": "pnpm"` in a
+workspace that has a `turbo.json` runs pnpm scripts instead of `turbo run`. The
+value is any driver in the [toolchain reference](/lattice/docs/toolchains), or
+`"none"` for a workspace whose every task you write out yourself.
+
+## What a driver can run
+
+Knowing the driver is not the same as knowing the commands. Lattice runs a task
+in a workspace only where something defines it, and invents nothing.
+
+**Tools with a script map run what the map declares.** A `package.json`'s
+`scripts`, deno's `tasks`, a `composer.json`'s `scripts`, justfile recipes,
+Taskfile tasks, Rakefile tasks, a `turbo.json`'s tasks. `lattice run lint` in an
+npm workspace with no `lint` script does not run there.
+
+**Build tools run the verbs they have.** They publish no list of tasks, so
+Lattice knows each one's real verbs:
+
+| Driver | `build` | `test` | `lint` | Others |
+| --- | --- | --- | --- | --- |
+| `cargo` | `cargo build` | `cargo test` | `cargo clippy` | `check`, `format` (`cargo fmt`), `doc`, `bench`, `clean` (`cargo clean -p <crate>`) |
+| `go` | `go build ./...` | `go test ./...` | `go vet ./...` | `check`, `format` (`go fmt ./...`), `clean` |
+| `gradle` | `./gradlew build` | `./gradlew test` | with Spotless or Android | `assemble`, `check`, `clean`, `run` with `application`, `bootRun` with Spring Boot, any task the build script registers |
+| `maven` | `./mvnw package -DskipTests` | `./mvnw test` | with Spotless | `check` (`verify`), `install`, `clean` |
+| `dotnet` | `dotnet build` | `dotnet test` | `dotnet format --verify-no-changes` | `format`, `pack`, `clean` |
+
+**Some verbs need proof.** A Python workspace gets `test` only when `pytest` is a
+dependency, `lint` and `format` only with `ruff` (or `black`, `flake8`), `check`
+only with `mypy`. A Ruby workspace gets `lint` only when its Gemfile names
+`rubocop`. Offering `pytest` to a project that uses something else would be a
+command that fails.
+
+The complete table is in the [toolchain
+reference](/lattice/docs/toolchains#tasks-each-driver-can-run).
+
+A Gradle or Maven command goes through the build's wrapper, found in the
+workspace or any directory above it (`./gradlew`, `../gradlew`), or `gradle`
+and `mvn` on `PATH` when there is none.
+
+## A missing task is skipped, a typo is flagged
+
+A workspace without the task sits the run out, and the run carries on with the
+workspaces that have it. `lattice run lint` means "lint everything that lints"
+without a list of which those are. The live display says who sat out:
+
+```text
+· no 'lint' task in docs, web, so they sit this one out
+```
+
+A missing task and a mistyped one look the same from outside, so a workspace
+that declares a name one typo away is a warning on every run:
+
+```text
+lattice: warning: web has no 'build' task. Did you mean 'biuld'?
+```
+
+A task no workspace has at all refuses to run, with the tasks that do exist:
+
+```text
+error: no workspace has a 'tset' task. Did you mean 'test'?
+Tasks: build, check, clean, dev, format, lint, test
+```
+
+## Writing a command yourself
+
+An override's `tasks` supplies a command directly, for a workspace whose
+manifest does not declare the task or whose tool has no such verb:
 
 ```json
 {
-  "workspaces": [
-    { "name": "app", "path": "apps/app", "auto": false }
-  ],
-  "tasks": {
-    "build": {}
+  "overrides": {
+    "api": { "tasks": { "deploy": "./deploy.sh", "jib": "./gradlew jib" } }
   }
 }
 ```
 
-Such a workspace needs a `scripts` entry for every task it participates in.
-Asking for one it does not list fails rather than being skipped:
-
-```text
-Error: workspace 'app' has "auto": false and declares no command for task 'build'. Add the command under this workspace's "scripts" map in lattice.json
-```
-
-The skip applies only to an `auto: true` workspace whose driver has no command
-for a given task. See [Workspaces](/lattice/docs/workspaces) for the full
-`scripts` and `auto` reference.
-
-## What a driver can run
-
-Resolving a driver is not the same as resolving a command. A driver falls into
-one of two groups, and the group decides where a task's command comes from.
-
-One group takes the task name on its command line. `cargo`, `go`, `make`,
-`just`, `gradle`, and most of the table work this way, and the invoke form is the
-command. `lattice run test` in a `cargo` workspace runs `cargo test` whether or
-not such a target exists, and `cargo` reports the missing target rather than
-Lattice.
-
-Within that group, a task runner is treated differently for one thing:
-`persistent: true`. `just`, `task`, `turbo`, `nx`, `rake`, and `mix` run the
-tasks the repo declared to them, and `dev` is normally one of those, so a
-persistent task infers a command there — `dev` in a `turbo.json` workspace
-resolves to `turbo run dev`. The rest of the group cannot, because there is no
-`cargo dev`, so a persistent task in a `cargo`, `go`, or `gradle` workspace
-needs a `scripts` entry naming the command.
-
-The other group reads its tasks out of a manifest. `npm`, `pnpm`, `yarn`, and
-`bun` read `scripts` in `package.json`, and `deno` reads `tasks` in `deno.json`
-or `deno.jsonc`. Such a driver can run only a script that manifest declares. A
-requested task the manifest leaves out does not run in that workspace at all. The
-task drops out of the graph, and the run carries on with the workspaces that do
-declare it.
-
-That skip is deliberate. A types-only package with no `build` script has nothing
-to build, and an invented `npm run build` for it fails. Lattice used to invent
-one.
-
-A missing script and a mistyped one look the same from outside, so Lattice warns
-when a manifest declares a script map without the task you asked for:
-
-```text
-warn web declares scripts but no "build", so the task was skipped. Did you mean "biuld"?
-```
-
-Lattice stays quiet when the manifest declares no scripts at all, and when the
-workspace has `auto: false`. See [Errors](/lattice/docs/errors#a-task-was-skipped-because-the-manifest-declares-no-such-script)
-for every shape that warning takes, and for what Lattice says about a manifest
-it cannot parse.
-
-A `scripts` entry in `lattice.json` overrides both groups. It supplies the
-command directly, so it is how you run a task in a workspace whose manifest does
-not declare it.
+A written-out command replaces what Lattice found for that task in that
+workspace. Everything else keeps coming from the manifest.

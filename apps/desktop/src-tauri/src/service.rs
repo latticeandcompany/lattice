@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use lattice_project::scaffold;
 use lattice_project::view::{Catalog, ProjectView};
 use lattice_project::{Plan, RunOptions, RunOutcome, RunRequest};
-use lattice_workspace::scan::{scan_engine_pins, scan_workspaces, EnginePin, WorkspaceCandidate};
+use lattice_workspace::scan::{EnginePin, WorkspaceCandidate};
 
 use crate::reporter::{ChannelReporter, EventSink, RunLog};
 use crate::state::AppState;
@@ -94,6 +94,8 @@ pub struct ProjectSnapshot {
 	pub project: Option<ProjectView>,
 	pub config_text: Option<String>,
 	pub diagnostics: Vec<ConfigDiagnostic>,
+	/// The config is written for Lattice 1.x and has to be migrated to load.
+	pub needs_migration: bool,
 }
 
 /// Walk up from `start` for a repo root, so picking a subdirectory still works.
@@ -109,17 +111,20 @@ pub fn open_project(state: &AppState, start: &Path) -> Result<ProjectSnapshot> {
 			project: None,
 			config_text: None,
 			diagnostics: Vec::new(),
+			needs_migration: false,
 		});
 	}
 
 	let config_text = std::fs::read_to_string(&config_path)
 		.with_context(|| format!("failed to read {}", config_path.display()))?;
 
+	let needs_migration = lattice_config::is_v1_config(&config_text);
 	match state.open(&root) {
 		Ok(project) => Ok(ProjectSnapshot {
 			project: Some(project.view()),
 			config_text: Some(config_text),
 			diagnostics: Vec::new(),
+			needs_migration,
 		}),
 		// A config that does not load is still something to show and fix, so the
 		// error becomes a diagnostic rather than a failed command.
@@ -127,6 +132,7 @@ pub fn open_project(state: &AppState, start: &Path) -> Result<ProjectSnapshot> {
 			project: None,
 			config_text: Some(config_text),
 			diagnostics: vec![ConfigDiagnostic::error(format!("{err:#}"))],
+			needs_migration,
 		}),
 	}
 }
@@ -182,16 +188,25 @@ pub fn config_schema() -> Result<serde_json::Value> {
 pub struct ScanResult {
 	pub root: String,
 	pub already_initialized: bool,
+	/// Workspaces the repo's own workspace files name, which need no entry.
+	pub native: Vec<String>,
+	/// Projects no workspace file names, offered for the config to list.
 	pub candidates: Vec<WorkspaceCandidate>,
 	pub pins: Vec<EnginePin>,
+	/// The repo root when it is not offered as a workspace; its task runner's
+	/// settings are imported all the same.
+	pub root_settings: Option<WorkspaceCandidate>,
 }
 
 pub fn scan_for_init(dir: &Path) -> Result<ScanResult> {
+	let proposal = scaffold::propose(dir);
 	Ok(ScanResult {
 		root: dir.display().to_string(),
 		already_initialized: dir.join(lattice_config::CONFIG_FILE).exists(),
-		candidates: scan_workspaces(dir),
-		pins: scan_engine_pins(dir),
+		native: proposal.native,
+		candidates: proposal.extra,
+		pins: proposal.pins,
+		root_settings: proposal.root,
 	})
 }
 
@@ -201,13 +216,15 @@ pub fn scan_for_init(dir: &Path) -> Result<ScanResult> {
 pub struct InitSelection {
 	pub candidates: Vec<WorkspaceCandidate>,
 	pub pins: Vec<EnginePin>,
+	/// Every candidate path the scan offered, kept or not, so siblings that were
+	/// all kept can collapse into one glob.
+	pub offered: Vec<String>,
+	/// The scan's `root_settings`, passed back so the file matches `lattice init`.
+	pub root_settings: Option<WorkspaceCandidate>,
 }
 
 /// The exact text `write_init` would write, so the wizard can show it first.
-///
-/// Built by the same function `lattice init` uses. Assembling it in the front end
-/// instead would guarantee the two drift: the rules about when a `dist/**` output
-/// is justified and when `engines` is omitted live in one place on purpose.
+/// Built by the same function `lattice init` uses.
 pub fn preview_init(selection: &InitSelection) -> Result<String> {
 	scaffold::render_config(&config_value(selection))
 }
@@ -215,10 +232,195 @@ pub fn preview_init(selection: &InitSelection) -> Result<String> {
 fn config_value(selection: &InitSelection) -> serde_json::Value {
 	let candidates: Vec<&WorkspaceCandidate> = selection.candidates.iter().collect();
 	let pins: Vec<&EnginePin> = selection.pins.iter().collect();
-	if candidates.is_empty() && pins.is_empty() {
-		return scaffold::default_skeleton(BIN_VERSION);
+	let offered: Vec<&str> = if selection.offered.is_empty() {
+		candidates.iter().map(|c| c.path.as_str()).collect()
+	} else {
+		selection.offered.iter().map(String::as_str).collect()
+	};
+	let mut config = scaffold::build_config(&candidates, &offered, &pins, BIN_VERSION);
+	if let Some(root) = &selection.root_settings {
+		scaffold::import_settings(&mut config, &[root]);
 	}
-	scaffold::build_config(&candidates, &pins, BIN_VERSION)
+	config
+}
+
+// ---------- migration ----------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationPreview {
+	pub before: String,
+	pub after: String,
+	pub notes: Vec<String>,
+}
+
+fn migration_for(dir: &Path) -> Result<(PathBuf, String, lattice_project::migrate::Migration)> {
+	let root = find_root(dir).unwrap_or_else(|| dir.to_path_buf());
+	let path = root.join(lattice_config::CONFIG_FILE);
+	let before = std::fs::read_to_string(&path)
+		.with_context(|| format!("failed to read {}", path.display()))?;
+	let migration = lattice_project::migrate::migrate(&root, &before, BIN_VERSION)?;
+	Ok((root, before, migration))
+}
+
+pub fn preview_migration(dir: &Path) -> Result<MigrationPreview> {
+	let (_, before, migration) = migration_for(dir)?;
+	Ok(MigrationPreview {
+		before,
+		after: migration.text,
+		notes: migration.notes,
+	})
+}
+
+pub fn apply_migration(state: &AppState, dir: &Path) -> Result<ProjectSnapshot> {
+	let (root, _, migration) = migration_for(dir)?;
+	let path = root.join(lattice_config::CONFIG_FILE);
+	std::fs::write(&path, &migration.text)
+		.with_context(|| format!("failed to write {}", path.display()))?;
+	lattice_config::schema::ensure_schema(&root);
+	open_project(state, &root)
+}
+
+// ---------- toolchains ----------
+
+/// The engines a set of workspaces share, as a check or an install left them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolchainGroup {
+	pub workspaces: Vec<String>,
+	pub engines: Vec<EngineStatus>,
+	/// What went wrong, laid out the way the CLI prints it.
+	pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineStatus {
+	pub name: String,
+	pub wanted: Option<String>,
+	pub installs: bool,
+	pub version: Option<String>,
+	pub location: Option<String>,
+	pub provisioned: bool,
+}
+
+/// Check every workspace's engines, installing any whose `installCmd` has not
+/// run yet — exactly what a run does before it starts.
+pub fn check_toolchains(state: &AppState) -> Result<Vec<ToolchainGroup>> {
+	let project = state.project()?;
+	let mut groups: Vec<(String, ToolchainGroup)> = Vec::new();
+	for ws in &project.workspaces {
+		if ws.engines.is_empty() {
+			continue;
+		}
+		let wrapped = ws.engines.contains_key("gradle") || ws.engines.contains_key("maven");
+		let key = if wrapped {
+			format!("{:?}@{}", ws.engines, ws.path.display())
+		} else {
+			format!("{:?}", ws.engines)
+		};
+		if let Some((_, group)) = groups.iter_mut().find(|(k, _)| *k == key) {
+			group.workspaces.push(ws.name.clone());
+			continue;
+		}
+		let resolved = lattice_workspace::toolchain::provision_and_resolve_in(
+			&project.root,
+			&ws.engines,
+			Some(&ws.path),
+			&mut |_| {},
+		);
+		let (resolved_engines, error) = match resolved {
+			Ok(r) => (r.engines, None),
+			Err(err) => (Vec::new(), Some(format!("{err:#}"))),
+		};
+		let engines = ws
+			.engines
+			.iter()
+			.map(|(name, spec)| {
+				let found = resolved_engines.iter().find(|e| &e.name == name);
+				EngineStatus {
+					name: name.clone(),
+					wanted: spec.version().map(String::from),
+					installs: spec.install_cmd().is_some(),
+					version: found.and_then(|e| e.version.clone()),
+					location: found
+						.and_then(|e| e.location.as_ref())
+						.map(|p| p.display().to_string()),
+					provisioned: found.is_some_and(|e| e.provisioned),
+				}
+			})
+			.collect();
+		groups.push((
+			key,
+			ToolchainGroup {
+				workspaces: vec![ws.name.clone()],
+				engines,
+				error,
+			},
+		));
+	}
+	Ok(groups.into_iter().map(|(_, g)| g).collect())
+}
+
+// ---------- cache ----------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheReport {
+	pub dir: String,
+	pub bytes: u64,
+	pub entries: usize,
+	pub max_bytes: Option<u64>,
+	pub runs: usize,
+	pub tasks: usize,
+	pub hits: usize,
+	pub saved_ms: u64,
+	pub recent_saved_ms: u64,
+	pub since: Option<String>,
+}
+
+fn store_for(project: &lattice_project::Project) -> lattice_cache::LocalStore {
+	lattice_cache::LocalStore::new(project.root.join(project.config.settings.cache_dir()))
+}
+
+pub fn cache_report(state: &AppState) -> Result<CacheReport> {
+	use lattice_cache::CacheStore;
+	let project = state.project()?;
+	let store = store_for(&project);
+	let runs = store.recorded_runs()?;
+	let all = lattice_cache::Savings::of(&runs);
+	let recent = lattice_cache::Savings::recent(&runs, 7);
+	let usage = store.usage()?;
+	Ok(CacheReport {
+		dir: project.config.settings.cache_dir().to_string(),
+		bytes: usage.bytes,
+		entries: usage.entries,
+		max_bytes: project.config.settings.max_cache_size.map(|s| s.as_bytes()),
+		runs: all.runs,
+		tasks: all.tasks,
+		hits: all.hits,
+		saved_ms: all.saved_ms,
+		recent_saved_ms: recent.saved_ms,
+		since: all.since.map(|at| at.to_rfc3339()),
+	})
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PruneResult {
+	pub removed: usize,
+	pub bytes_freed: u64,
+}
+
+/// Evict the oldest entries until the cache fits `max_bytes`. Zero empties it.
+pub fn prune_cache(state: &AppState, max_bytes: u64) -> Result<PruneResult> {
+	use lattice_cache::CacheStore;
+	let project = state.project()?;
+	let report = store_for(&project).prune(max_bytes)?;
+	Ok(PruneResult {
+		removed: report.removed,
+		bytes_freed: report.bytes_freed,
+	})
 }
 
 pub fn write_init(
@@ -370,7 +572,7 @@ mod tests {
 	#[test]
 	fn valid_config_text_produces_no_diagnostics() {
 		let text = r#"{
-			"workspaces": [{ "name": "web", "path": "apps/web" }],
+			"workspaces": ["apps/web"],
 			"tasks": { "build": {} }
 		}"#;
 		assert!(validate_config(text).is_empty());
@@ -389,7 +591,7 @@ mod tests {
 	#[test]
 	fn an_empty_selection_falls_back_to_the_skeleton() {
 		let text = preview_init(&InitSelection::default()).unwrap();
-		assert!(text.contains("\"workspaces\": []"));
+		assert!(!text.contains("\"workspaces\""));
 		assert!(text.ends_with("}\n"));
 	}
 
@@ -405,6 +607,8 @@ mod tests {
 				declared: Default::default(),
 			}],
 			pins: Vec::new(),
+			offered: Vec::new(),
+			root_settings: None,
 		};
 		let preview = preview_init(&selection).unwrap();
 

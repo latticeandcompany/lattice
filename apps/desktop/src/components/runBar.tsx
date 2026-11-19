@@ -1,7 +1,11 @@
-import { useRunView } from '../hooks/useRunStore.ts';
+import { useState } from 'react';
+
+import { useRunView, useTaskViewsRev } from '../hooks/useRunStore.ts';
 import { isFullCache, runSummary } from '../lib/format.ts';
-import { CACHE_MODES, type CacheMode } from '../lib/runOptions.ts';
-import Spinner from './spinner.tsx';
+import { rosetteProgress } from '../lib/progress.ts';
+import { CACHE_MODES, splitPicker, type CacheMode } from '../lib/runOptions.ts';
+import { runStore } from '../lib/runStore.ts';
+import Rosette from './rosette.tsx';
 
 export interface RunBarState {
 	selected: string[];
@@ -10,6 +14,7 @@ export interface RunBarState {
 	concurrency: string;
 	keepGoing: boolean;
 	sequentially: boolean;
+	args: string;
 }
 
 interface RunBarProps {
@@ -20,16 +25,44 @@ interface RunBarProps {
 	onStop: () => void;
 }
 
+// The mark, woven as the run settles, and the line the CLI would print beside it.
+const RunStatus = ({ inFlight }: { inFlight: boolean }) => {
+	useTaskViewsRev();
+	const run = useRunView();
+	const progress = runStore.progress();
+	const mark = rosetteProgress(progress, inFlight);
+
+	let line = '';
+	if (inFlight) {
+		line = `${progress.settled}/${progress.total}`;
+		if (progress.cached > 0) line += ` · ${progress.cached} cached`;
+		if (progress.failed > 0) line += ` · ${progress.failed} failed`;
+		if (run.phase === 'stopping') line += ' · stopping';
+	} else if (run.result) {
+		line = runSummary(run.result);
+		if (isFullCache(run.result)) line += ' · full power, nothing to run';
+	}
+
+	return (
+		<div className="run-bar__status" aria-live="polite">
+			{line && <span className="run-bar__summary">{line}</span>}
+			<Rosette size="1.75rem" progress={mark} title={inFlight ? `Run progress: ${line}` : 'Lattice'} />
+		</div>
+	);
+};
+
 const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 	const run = useRunView();
+	const [options, setOptions] = useState(false);
 	const inFlight = run.phase === 'running' || run.phase === 'stopping';
+	const { direct, more } = splitPicker(tasks, state.selected);
 
 	const toggleTask = (task: string, additive: boolean) => {
 		if (!additive) {
 			onChange({ selected: [task] });
 			return;
 		}
-		// Stacked roots are a real thing the engine supports, so cmd-click builds one.
+		// Stacked roots are something the engine supports, so cmd-click builds one.
 		const next = state.selected.includes(task)
 			? state.selected.filter((candidate) => candidate !== task)
 			: [...state.selected, task];
@@ -41,19 +74,36 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 	return (
 		<div className="run-bar">
 			<div className="run-bar__row">
-				<div className="btn-group btn-group-sm" role="group" aria-label="Tasks to run">
-					{tasks.map((task) => (
+				<div className="picker" role="group" aria-label="Tasks to run">
+					{direct.map((task) => (
 						<button
 							key={task}
 							type="button"
-							className={`btn btn-outline-secondary${state.selected.includes(task) ? ' active' : ''}`}
+							className="picker__option"
 							onClick={(event) => toggleTask(task, event.metaKey || event.ctrlKey)}
 							disabled={inFlight}
 							aria-pressed={state.selected.includes(task)}
+							title="Cmd-click to run several at once"
 						>
 							{task}
 						</button>
 					))}
+					{more.length > 0 && (
+						<select
+							className="form-select form-select-sm picker__more"
+							aria-label="Another task"
+							value=""
+							onChange={(event) => event.target.value && onChange({ selected: [event.target.value] })}
+							disabled={inFlight}
+						>
+							<option value="">{more.length} more…</option>
+							{more.map((task) => (
+								<option key={task} value={task}>
+									{task}
+								</option>
+							))}
+						</select>
+					)}
 				</div>
 
 				{inFlight ? (
@@ -63,108 +113,137 @@ const RunBar = ({ tasks, state, onChange, onRun, onStop }: RunBarProps) => {
 						onClick={onStop}
 						disabled={run.phase === 'stopping'}
 					>
-						<i className="bi bi-stop-circle" aria-hidden="true" />
+						<i className="bi bi-stop-fill" aria-hidden="true" />
 						{run.phase === 'stopping' ? 'Stopping…' : 'Stop'}
 					</button>
 				) : (
 					<button
 						type="button"
-						className="btn btn-primary btn-sm d-inline-flex align-items-center gap-2 px-3 py-2"
+						className="btn btn-primary btn-sm d-inline-flex align-items-center gap-2"
 						onClick={onRun}
 						disabled={state.selected.length === 0}
 					>
-						<i className="bi bi-play-circle" aria-hidden="true" />
-						Run
+						<i className="bi bi-play-fill" aria-hidden="true" />
+						Run {state.selected.join(' ')}
 					</button>
 				)}
 
-				<div className="ms-auto small text-body-secondary" aria-live="polite">
-					{inFlight ? (
-						<Spinner label={run.phase === 'stopping' ? 'stopping…' : 'running…'} />
-					) : (
-						run.result &&
-						`${runSummary(run.result)}${isFullCache(run.result) ? ' · full power, nothing to run' : ''}`
-					)}
-				</div>
-			</div>
-
-			<div className="run-bar__row">
-				<div className="btn-group btn-group-sm" role="group" aria-label="Cache mode">
-					{CACHE_MODES.map((option) => (
-						<button
-							key={option.mode}
-							type="button"
-							className={`btn btn-outline-secondary${state.mode === option.mode ? ' active' : ''}`}
-							onClick={() => onChange({ mode: option.mode })}
-							disabled={inFlight}
-							title={option.hint}
-							aria-pressed={state.mode === option.mode}
-						>
-							{option.label}
-						</button>
-					))}
-				</div>
-				<span className="small text-body-secondary">{hint}</span>
-
-				<div className="input-group input-group-sm tw:max-w-[15rem]">
-					<span className="input-group-text">
-						<i className="bi bi-funnel" aria-hidden="true" />
-					</span>
-					<input
-						type="text"
-						className="form-control"
-						placeholder="Filter by workspace name"
-						aria-label="Filter workspaces by name"
-						title="Runs in the workspaces whose name contains this, plus what they depend on."
-						value={state.filter}
-						onChange={(event) => onChange({ filter: event.target.value })}
-						disabled={inFlight}
-					/>
-				</div>
-
-				<select
-					className="form-select form-select-sm tw:max-w-[11rem]"
-					aria-label="Concurrency"
-					value={state.concurrency}
-					onChange={(event) => onChange({ concurrency: event.target.value })}
-					disabled={inFlight}
+				<button
+					type="button"
+					className="disclosure"
+					onClick={() => setOptions((value) => !value)}
+					aria-expanded={options}
+					aria-controls="run-options"
 				>
-					<option value="">One per CPU</option>
-					{[1, 2, 4, 8, 16].map((value) => (
-						<option key={value} value={String(value)}>
-							{value} at once
-						</option>
-					))}
-				</select>
+					<i className="bi bi-chevron-right" aria-hidden="true" />
+					Options
+				</button>
 
-				<div className="form-check form-switch mb-0">
-					<input
-						className="form-check-input"
-						type="checkbox"
-						id="keep-going"
-						checked={state.keepGoing}
-						onChange={(event) => onChange({ keepGoing: event.target.checked })}
-						disabled={inFlight}
-					/>
-					<label className="form-check-label small" htmlFor="keep-going">
-						Keep going after a failure
-					</label>
-				</div>
-
-				<div className="form-check form-switch mb-0">
-					<input
-						className="form-check-input"
-						type="checkbox"
-						id="sequentially"
-						checked={state.sequentially}
-						onChange={(event) => onChange({ sequentially: event.target.checked })}
-						disabled={inFlight}
-					/>
-					<label className="form-check-label small" htmlFor="sequentially">
-						Finish each task before starting the next
-					</label>
-				</div>
+				<RunStatus inFlight={inFlight} />
 			</div>
+
+			{options && (
+				<div className="run-options" id="run-options">
+					<div className="picker" role="group" aria-label="Cache">
+						{CACHE_MODES.map((option) => (
+							<button
+								key={option.mode}
+								type="button"
+								className="picker__option"
+								onClick={() => onChange({ mode: option.mode })}
+								disabled={inFlight}
+								aria-pressed={state.mode === option.mode}
+							>
+								{option.label}
+							</button>
+						))}
+					</div>
+
+					<label className="run-options__field">
+						<span>Only in</span>
+						<input
+							type="text"
+							className="form-control form-control-sm"
+							placeholder="workspace name contains…"
+							value={state.filter}
+							onChange={(event) => onChange({ filter: event.target.value })}
+							disabled={inFlight}
+						/>
+					</label>
+
+					<label className="run-options__field">
+						<span>Arguments</span>
+						<input
+							type="text"
+							className="form-control form-control-sm font-monospace"
+							placeholder="--nocapture"
+							value={state.args}
+							onChange={(event) => onChange({ args: event.target.value })}
+							disabled={inFlight}
+							title="Passed to the tasks you picked, as after -- on the command line"
+						/>
+					</label>
+
+					<select
+						className="form-select form-select-sm w-auto"
+						aria-label="How many tasks run at once"
+						value={state.concurrency}
+						onChange={(event) => onChange({ concurrency: event.target.value })}
+						disabled={inFlight}
+					>
+						<option value="">One per CPU</option>
+						{[1, 2, 4, 8, 16].map((value) => (
+							<option key={value} value={String(value)}>
+								{value} at once
+							</option>
+						))}
+					</select>
+
+					<div className="form-check form-switch mb-0">
+						<input
+							className="form-check-input"
+							type="checkbox"
+							id="keep-going"
+							checked={state.keepGoing}
+							onChange={(event) => onChange({ keepGoing: event.target.checked })}
+							disabled={inFlight}
+						/>
+						<label className="form-check-label" htmlFor="keep-going">
+							Keep going after a failure
+						</label>
+					</div>
+
+					<div className="form-check form-switch mb-0">
+						<input
+							className="form-check-input"
+							type="checkbox"
+							id="sequentially"
+							checked={state.sequentially}
+							onChange={(event) => onChange({ sequentially: event.target.checked })}
+							disabled={inFlight}
+						/>
+						<label className="form-check-label" htmlFor="sequentially">
+							Finish each task before the next
+						</label>
+					</div>
+
+					<p className="run-options__hint">{hint}</p>
+				</div>
+			)}
+
+			{(run.notes.length > 0 || run.warnings.length > 0) && (
+				<ul className="run-bar__notes selectable">
+					{run.warnings.map((warning, index) => (
+						<li className="run-bar__warn" key={`w${index}`}>
+							<i className="bi bi-exclamation-triangle me-1" aria-hidden="true" />
+							{warning}
+						</li>
+					))}
+					{run.notes.map((note, index) => (
+						<li key={`n${index}`}>{note}</li>
+					))}
+				</ul>
+			)}
 		</div>
 	);
 };

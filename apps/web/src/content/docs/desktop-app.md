@@ -1,38 +1,33 @@
 ---
 title: The desktop app
-description: Build the window, open a project, and run tasks from the list, the graph, or the config editor.
+description: Open a project in Lattice Desktop to run tasks, read the graph, check toolchains, manage the cache, and edit the config.
 group: Guides
 order: 8
 ---
 
 # The desktop app
 
-Lattice has a window. It runs the tasks `lattice run` runs, and it shows three
-things a terminal cannot hold on screen: every workspace and what each one
-resolved to, the shape of the graph a task will run, and which part of the cache
-key moved when a task missed.
+Lattice Desktop runs the tasks `lattice run` runs, and shows what a terminal
+cannot hold on screen at once: every workspace and what it resolved to, the
+shape of the graph a task will run, which tool versions each workspace is using,
+what the cache holds, and which part of a cache key moved when a task missed.
 
 The engine is linked into the app, so the window and the CLI share one
-scheduler, one cache, and one set of driver rules. There is nothing the two can
-disagree about.
+scheduler, one cache, and one set of discovery rules. There is nothing the two
+can disagree about.
 
 ## Install it
 
 Every release publishes a bundle for each platform. The
-[Lattice Desktop page](/lattice/desktop) lists them all: a `.dmg` for Apple
-Silicon and Intel Macs, an installer and an `.msi` for Windows, and a `.deb`, an
-`.rpm`, and an AppImage for Linux on x86_64 and aarch64.
+[Lattice Desktop page](/lattice/desktop) lists them: a `.dmg` for Apple Silicon
+and Intel Macs, an installer and an `.msi` for Windows, and a `.deb`, an `.rpm`
+and an AppImage for Linux on x86_64 and aarch64.
 
 The bundles are not code-signed, so macOS and Windows both stop the first launch
 and ask you to confirm. The download page names the warning each one shows, says
 what to click, and publishes a checksum for every file.
 
-If the repo has no config yet, install the CLI and run `lattice init` first. The
-app needs a `lattice.json` before it can open a project.
-
 ## Build and run it from a clone
-
-To run the app from source instead:
 
 ```sh
 cd apps/desktop
@@ -41,16 +36,9 @@ npm run app
 ```
 
 That starts the frontend dev server, compiles the Rust backend, and opens the
-window. The first compile takes a while and later ones are incremental.
-
-To produce an installer for your own platform, run `npm run bundle` instead. It
-writes an `.app` and a `.dmg` on macOS, an installer and an `.msi` on Windows,
-and a `.deb`, an `.rpm`, and an AppImage on Linux. The release workflow builds
-the same targets, so a local bundle matches a published one except for the file
-name.
-
-Either command needs the platform's webview toolchain. macOS and Windows have
-one already. On Debian or Ubuntu, install what CI installs:
+window. `npm run bundle` produces an installer for your platform, matching the
+release build. Either needs the platform's webview toolchain; on Debian or
+Ubuntu:
 
 ```sh
 sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
@@ -59,194 +47,109 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
 
 ## Open a project
 
-A project is one repo with a `lattice.json` at its root. Click **Open a
-project…** in the sidebar and pick a directory in the OS dialog, titled **Open a
-Lattice project**. Lattice walks up from what you picked looking for a
-`lattice.json`, the same way every command does, so picking a subdirectory
-works.
+A project is one repo with a `lattice.json` at its root. Open a directory from
+the project control at the top of the sidebar; Lattice walks up from what you
+picked, the way every command does, so picking a subdirectory works. The same
+control lists every project you have opened.
 
-Pick a directory with no config anywhere above it and the app opens **Set up
-this project** instead of failing. That is a four-step walkthrough:
+**A repo with no config** opens a setup walkthrough instead of failing. It shows
+the workspaces the repo's own workspace files already name, offers the projects
+none of them name as extra `workspaces` entries, and offers the tool versions
+the repo already pins as `engines`. It previews the exact `lattice.json` it is
+about to write, which is the file `lattice init` would write, and redraws it as
+you change a selection.
 
-1. **Project root** confirms where `lattice.json` goes, and offers **Choose
-   another directory**.
-2. **Workspaces** lists every directory in the repo that holds a manifest, one
-   tick box each, and names the marker file it found and the driver it resolved.
-   A candidate with no driver is offered but left unticked, because declaring it
-   would halt the next run. The repo root, when it is one of the candidates,
-   starts unticked too. Each row also says how many tasks ticking it brings in
-   and which file they came from — `3 tasks from turbo.json` — because the
-   pipeline follows the workspaces you tick rather than being a step of its own.
-3. **Engines** lists every tool version the repo already pins at its root, read
-   out of `.tool-versions`, `.nvmrc`, `package.json`, `go.mod`, and the
-   `.python-version` family, and says which file each came from. Tick the ones
-   to copy into `engines`, verbatim.
-4. **Root config** shows the exact `lattice.json` about to be written, and
-   redraws it as you change a tick above. **Write lattice.json** commits it and
-   opens the project.
+**A 1.x config** opens a migration view. It shows the current file beside the
+one `lattice migrate` would write, what changed that the diff does not show —
+an engine dropped because it only chose a tool, an edge dropped because a
+manifest already states it — and writes it when you confirm. See [Upgrading to
+2.0](/lattice/docs/upgrading#upgrading-to-20).
 
-The preview comes from the same code path `lattice init` uses, so the file the
-window writes is the file the CLI would have written: `lattice.json`, holding
-the workspaces and engines you ticked and the tasks their drivers already
-declare, plus a committed `.lattice/schema.json` so your editor can check the
-config as you type, and five lines appended to `.gitignore`. See [`lattice
-init`](/lattice/docs/cli#the-tasks-it-writes) for what reaches the task map.
+**A config that does not parse** still opens, showing the error and the file so
+you can fix it.
 
-The project block at the top of the sidebar is also the control that changes it.
-Click it for every project you have opened, plus **Open another project…** and
-**Close this project**. The window reads the new project and redraws.
-
-Close a project, or switch to a different one, and the window stops whatever
-that project was running and takes its children down the way **Stop** does. A
-run belongs to the project it was started against. One left going in the
-background is a build you can no longer see or stop, and the task names it
-reports belong to a repo the window is no longer showing. Reopening the same
-project counts as a reload rather than a switch, and leaves the run alone.
-
-A reload of the window, whether a refresh or an app restart, reopens the project
-that was open and adopts a run still going in the backend. The output panes
-redraw from the tail Lattice kept, and **Stop** comes back. The window used to
-leave that run orphaned. **Reload from disk** underneath re-reads the config
-after you edit it outside the app.
+Close a project, or switch to another, and the window stops whatever that
+project was running. A reload of the window reopens the project and picks up a
+run still going in the backend, with its output redrawn.
 
 ## Run tasks
 
-The **Tasks** view is one card per workspace, in the order `lattice.json`
-declares them, with one row per task that resolves to a command there. A
-workspace whose driver has no `lint` shows no `lint` row, which is what happens
-on the command line too: the task is skipped, not failed.
+The **Tasks** view lists every workspace with one row per task it can run —
+whether it came from the workspace's manifest, its tool's verbs, or an override,
+with the source shown — so it answers "what can I run here" without opening a
+manifest. A workspace with no `lint` has no `lint` row, as on the command line.
 
-Each card carries the mark of its driver's ecosystem, so a repo with forty
-workspaces can be scanned by shape rather than read. Thirteen ecosystems have
-artwork; a task runner that belongs to none gets a two-letter monogram. The chip
-beside it names the driver, and its tooltip says whether the driver came from a
-declaration in `lattice.json` or from a file in the directory.
-
-A task row carries a `persistent` chip when the task declares `persistent: true`
-and a `never cached` chip when it declares `cache: false`. The row has two
-buttons of its own, both scoped to that one workspace with `--filter`: one runs
-the task, the other runs it again ignoring what is cached. The **Run** button in
-the bar above runs whatever the task tabs have selected. Cmd-click or Ctrl-click
-the tabs to stack several, the way `lattice run lint test build` does.
-
-The rest of the bar maps onto `lattice run` flags:
+Pick one or more tasks to run, the way `lattice run lint test build` stacks
+them. The run controls map onto `lattice run` flags:
 
 | Control | Flag |
 | --- | --- |
-| **Cache mode**: **Use cache** | none |
-| **Cache mode**: **Force** | `--force` |
-| **Cache mode**: **No cache** | `--no-cache` |
-| **Filter by workspace name** | `-f`/`--filter` |
-| **Concurrency**, default **One per CPU** | `--concurrency` |
-| **Keep going after a failure** | `--continue` |
-| **Finish each task before starting the next** | `-s`/`--sequentially` |
+| Cache: use it, force, or skip it | none, `--force`, `--no-cache` |
+| Workspace filter | `-f`/`--filter` |
+| Concurrency | `--concurrency` |
+| Keep going after a failure | `--continue` |
+| Finish each task before starting the next | `-s`/`--sequentially` |
 
-Cache mode is three exclusive choices rather than two switches because the flags
-overlap. **Force** runs every task and replaces its stored result. **No cache**
-runs every task and stores nothing, so whatever is already cached stays as it
-was. Two independent switches would let you ask for "write but do not read",
-which the engine cannot express.
+A row's own run button scopes the run to that workspace and what it depends on.
+**Stop** ends a run the way Ctrl-C does: running children are terminated, and
+the run reports as interrupted rather than failed.
 
-**Finish each task before starting the next** is about task graphs, not about
-parallelism: it runs `lint` everywhere to completion, then `build` everywhere.
-To run one task at a time, set **Concurrency** to **1 at once** instead. See
-[Selecting what runs](/lattice/docs/filtering).
-
-**Stop** ends a run the way Ctrl-C does. Scheduling stops, running children are
-terminated, and the run reports as interrupted rather than failed.
-
-When the run ends, the bar carries the same summary the CLI prints —
-`10 tasks, 8 cached, 0 failed, 4.20s, 2m 51s saved` — and appends
-`· full power, nothing to run` when every scheduled task came back from cache.
-The saved figure is task time rather than wall clock, and it is left off when it
-is zero. See [Caching](/lattice/docs/caching).
-
-When a task misses the cache, a row of chips under it reads `cache miss:`
-followed by the parts of the key that moved: `inputs`, `command`, `toolchain`,
-and so on. A key on its own can only tell you that a task missed. See [Cache
-internals](/lattice/docs/cache-internals) for what each name covers.
-
-Output is collected per task and opens on its own when a task fails. Any other
-task's output is behind the chevron on its row. A failed row reads
-`failed (code 101) 1.84s`, the same detail the CLI's `FAILED` line carries, and
-drops the half it does not have. A task a signal killed has no exit code. A task
-that failed before its command started has neither.
-
-Lines appear within about a tenth of a second, as the task prints them. Output
-used to move only when 256 lines had piled up or a task changed state, so a dev
-server that prints one line and then serves requests never showed that line at
-all.
+During a run, each task shows its state and its output as it prints, and a
+failed task opens its output on its own with the same detail the CLI's `FAILED`
+line carries. A task that missed the cache says which parts of its key moved —
+`inputs`, `command`, `dependencies` and so on; see [Cache
+internals](/lattice/docs/cache-internals). When the run ends, it carries the same
+summary the CLI prints, saved time included, and marks a run that came entirely
+from cache.
 
 ## Read the graph
 
-The **Graph** view draws the dependency graph for whatever tasks the tabs have
-selected, left to right in dependency order. Click a task to focus it:
-everything it depends on and everything that depends on it stays lit and the
-rest dims, which is the slice of the repo a change to that task can reach.
-**Clear focus** puts it back. **Find a task** narrows the graph by name, and the
-count on the right reads `N tasks · N layers deep`. While a run is going the
-graph fills in live.
+The **Graph** view draws the graph for the selected tasks, left to right in
+dependency order. Focus a task to light everything it depends on and everything
+that depends on it, which is the slice of the repo a change there can reach.
+Search narrows it by name. While a run is going the graph fills in live. The
+encoding is not all color, and the legend names it: filled means ran, faded is
+a cache hit, a dashed outline came along as a prerequisite, a rounded square is
+persistent. A list mode shows the same tasks as a table a screen reader and a
+keyboard can walk.
 
-The encoding is deliberately not all color, and the legend under the canvas
-names all of it: left to right is dependency order, filled means the task ran,
-an outline means it did not, faded is a cache hit, a rounded square is a
-persistent task, a dashed outline means the task came along as a prerequisite
-rather than because you asked for it, and an amber outline is a failure.
+## Check toolchains
 
-**List** shows the same tasks as a table in dependency order, with each one's
-resolved command. A canvas cannot be read by a screen reader or walked with a
-keyboard; the table can.
+The **Toolchains** view checks every workspace's engines the way a run does
+before it starts, installing any whose `installCmd` has not run yet. Workspaces
+that share the same engines are grouped. Each engine shows what the config wants,
+the version found, where it was found — the host tool's path, or the directory
+Lattice installed into — and whether Lattice installed it. A check that fails
+shows the same wanted, found, ran and fix lines the CLI prints. See [Engines and
+provisioning](/lattice/docs/engines).
+
+## Manage the cache
+
+The **Cache** view shows what `lattice stats` reports — the cache directory, its
+size and entry count against `settings.maxCacheSize`, and the task time it has
+saved, in total and over the last seven days — and prunes it, down to a size or
+empty, the way `lattice prune` does.
 
 ## Edit the config
 
-The **Config** view has two tabs over one file. **Form** covers the project
-settings, engines, workspaces, and tasks. **JSON** is the whole file in a text
-area.
+The **Config** view edits `lattice.json` as a form, with sections for
+workspaces, engines, tasks, overrides and settings, or as text. Every control
+names the `lattice.json` key it writes.
 
-Every control in the form carries a domain noun and the `lattice.json` key it
-writes, so you can use it without having read the schema and come away having
-read it:
-
-| Label | Key |
-| --- | --- |
-| **Lattice version** | `latticeVersion` |
-| **Cache directory** | `settings.cacheDir` |
-| **Cache size limit** | `settings.maxCacheSize` |
-| **Driver detection** | `auto`, on a workspace |
-| **Dependencies** | `dependsOn`, on a task |
-| **Inputs** | `inputs` |
-| **Outputs** | `outputs` |
-| **Persistent** | `persistent` |
-| **Cache** | `cache` |
-
-**Persistent** and **Cache** offer **Not set**, **Yes**, and **No** rather than
-a switch. Leaving a key out of the file is a third state, and neither key
-defaults to no, so a switch sitting in its off position would be a lie about
-what the file says.
-
-Both tabs edit the file's text, never a parsed copy of it. Lattice rejects
-unknown keys in `lattice.json`, so a key a newer version understands and this
-build does not is still yours: a form that parsed the file and wrote it back out
-would delete it, along with your key order and your formatting. Editing the text
-means only the bytes you changed are rewritten.
-
-The header says **Unsaved changes** or **Saved**, and **Save** stays unavailable
-while there is a problem to fix. A save that fails leaves the header on **Unsaved
-changes** and shows the error. The header used to say **Saved** whether the write
-had landed or not. Validation is the same parse a run does, run in the backend as
-you type, so the editor never writes a config `lattice run` would then reject. A
-file that is not valid JSON at all disables the form and says so; fix it in the
-**JSON** tab.
+Both edit the file's text rather than a parsed copy, so a key the app does not
+know, your key order and your formatting survive a save. Validation is the same
+parse a run does, running as you type, so the editor never writes a config
+`lattice run` would reject.
 
 ## Follow the system theme
 
-The control at the bottom of the sidebar offers **Light**, **Dark**, and
-**System**. **System** tracks the OS and changes live when it does. The choice
-persists across launches, and the native window frame follows it.
+The sidebar's theme control offers light, dark, and following the system, which
+changes live when the OS does. The native window frame follows it.
 
 ## Related pages
 
-- [CLI reference](/lattice/docs/cli) for every flag the run bar stands in for.
+- [CLI reference](/lattice/docs/cli) for every flag the run controls stand in
+  for.
 - [Configuration](/lattice/docs/configuration) for the fields the form writes.
-- [Driver detection](/lattice/docs/drivers) for how a workspace gets the driver
-  its card names.
+- [Driver detection](/lattice/docs/drivers) for where each workspace's tasks
+  come from.

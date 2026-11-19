@@ -17,6 +17,13 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use tempfile::TempDir;
 
+/// Cargo sets `CARGO_BIN_EXE_*` only for this package's binaries, and `assert_cmd`'s
+/// fallback looks beside the test executable, which a separate `build-dir` moves.
+fn workspace_bin(name: &str) -> PathBuf {
+	Path::new(env!("CARGO_BIN_EXE_lattice"))
+		.with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+}
+
 pub struct Fixture {
 	dir: TempDir,
 }
@@ -117,7 +124,7 @@ impl Fixture {
 	/// test's choosing — a dependency tree a package manager would own, for
 	/// instance, rather than a directory the test puts on `PATH` itself.
 	pub fn install_stub_bin_in(&self, dir_rel: &str, built: &str, as_name: &str) {
-		let source = assert_cmd::cargo::cargo_bin(built);
+		let source = workspace_bin(built);
 		assert!(
 			source.exists(),
 			"{} has not been built; `cargo test --workspace` builds every member's \
@@ -321,7 +328,7 @@ impl FakeRelease {
 		let dir = self.dir.path().join(format!("v{version}"));
 		std::fs::create_dir_all(&dir).expect("mkdir release dir");
 
-		let stub = assert_cmd::cargo::cargo_bin("release-stub");
+		let stub = workspace_bin("release-stub");
 		assert!(
 			stub.exists(),
 			"{} has not been built; `cargo test --workspace` builds every member's \

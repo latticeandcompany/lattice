@@ -191,6 +191,16 @@ pub fn sleep(secs: u64) -> String {
 	}
 }
 
+/// Read one line from stdin. Fails on EOF, so compose it with [`then`] when
+/// what follows should run either way.
+pub fn read_stdin() -> String {
+	if CMD {
+		"set /p line=".into()
+	} else {
+		"read line".into()
+	}
+}
+
 /// A character that [`std::env::join_paths`] refuses, for a test that needs a
 /// `PATH` entry which cannot be joined.
 ///

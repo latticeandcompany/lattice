@@ -11,13 +11,11 @@ use predicates::prelude::PredicateBooleanExt;
 use common::{curl_supports_file, FakeRelease, Fixture};
 
 const CONFIG: &str = r#"{
-  "latticeVersion": "0.1.0",
-  "workspaces": [
-    { "name": "app", "path": "app", "auto": false, "scripts": { "greet": "echo hello" } }
-  ],
-  "tasks": { "greet": {} }
-}
-"#;
+    "latticeVersion": "0.1.0",
+    "workspaces": ["app"],
+    "tasks": { "greet": {} },
+    "overrides": { "app": { "tasks": { "greet": "echo hello" } } }
+}"#;
 
 fn fixture() -> Fixture {
 	let fx = Fixture::new();
@@ -86,7 +84,7 @@ fn upgrade_installs_the_release_and_rewrites_the_pin() {
 		fx.read("lattice.json")
 	);
 	// The rest of the config is untouched, including its formatting.
-	assert!(fx.read("lattice.json").contains(r#""name": "app""#));
+	assert!(fx.read("lattice.json").contains(r#""workspaces": ["app"]"#));
 }
 
 #[test]
@@ -419,9 +417,10 @@ fn the_switch_can_be_turned_off_per_invocation() {
 		.success()
 		.stdout(predicates::str::contains("app:greet: done"));
 
-	fx.config(&CONFIG.replace("0.1.0", "9.9.9").replace(
+	fx.config(&CONFIG.replace("0.1.0", "9.9.9").replacen(
 		r#""tasks""#,
 		r#""settings": { "versionCheck": false }, "tasks""#,
+		1,
 	));
 	fx.managed_lattice(&bin)
 		.args(["run", "greet", "--no-cache"])

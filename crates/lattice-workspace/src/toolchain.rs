@@ -41,6 +41,30 @@ fn version_cmd_for(name: &str, spec: &EngineSpec) -> Option<String> {
 		.or_else(|| lattice_config::builtin_version_cmd(name).map(String::from))
 }
 
+/// [`version_cmd_for`] as seen from `cwd`: a Gradle or Maven project's wrapper
+/// is the version of the tool its build runs, whatever is on `PATH`.
+fn version_cmd_in(
+	name: &str,
+	spec: &EngineSpec,
+	root: &Path,
+	cwd: Option<&Path>,
+) -> Option<String> {
+	if spec.version_cmd().is_none() {
+		let wrapper = match name {
+			"gradle" => Some(("gradlew", "gradle")),
+			"maven" => Some(("mvnw", "mvn")),
+			_ => None,
+		};
+		if let (Some((script, tool)), Some(dir)) = (wrapper, cwd) {
+			let found = crate::tasks::wrapper(dir, root, script, tool);
+			if found != tool {
+				return Some(format!("{found} --version"));
+			}
+		}
+	}
+	version_cmd_for(name, spec)
+}
+
 /// Classify one engine spec into an [`EngineMode`].
 ///
 /// * object with `installCmd` → [`EngineMode::Provisioned`];
@@ -70,6 +94,31 @@ pub struct ResolvedToolchains {
 	pub path_prepend: Vec<PathBuf>,
 	/// A stable identity string over `(engine, version, installHash)`, sorted.
 	pub identity: String,
+	/// What each engine resolved to, for telling the developer.
+	pub engines: Vec<ResolvedEngine>,
+}
+
+/// One engine as a run will use it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedEngine {
+	pub name: String,
+	/// `None` when nothing checked it: no constraint, or no version to read.
+	pub version: Option<String>,
+	/// The provisioned bin directory, or the host binary a check found.
+	pub location: Option<PathBuf>,
+	pub provisioned: bool,
+}
+
+impl ResolvedEngine {
+	/// `node 22.11.0`, `node 22.11.0 (installed by Lattice)`, `cargo (unchecked)`.
+	pub fn describe(&self) -> String {
+		match (&self.version, self.provisioned) {
+			(Some(v), true) => format!("{} {v} (installed by Lattice)", self.name),
+			(Some(v), false) => format!("{} {v}", self.name),
+			(None, true) => format!("{} (installed by Lattice)", self.name),
+			(None, false) => format!("{} (unchecked)", self.name),
+		}
+	}
 }
 
 /// The pin record written to `pins.json` in each provisioned toolchain dir.
@@ -147,16 +196,38 @@ fn prepend_to_path(dir: &Path) -> Result<std::ffi::OsString> {
 	})
 }
 
+/// What a command printed, and how it ended.
+struct Capture {
+	ok: bool,
+	code: Option<i32>,
+	out: String,
+}
+
+impl Capture {
+	/// The shell could not find the program at all.
+	fn not_found(&self) -> bool {
+		self.code == Some(127)
+			|| self
+				.out
+				.contains("is not recognized as an internal or external command")
+	}
+}
+
 /// Run a command string through the platform shell, optionally prepending
-/// `extra_path` to `PATH` and setting extra env. Returns combined stdout+stderr.
+/// `extra_path` to `PATH`, in `cwd`, with extra env. Output is stdout then
+/// stderr.
 fn run_capture(
 	cmd: &str,
 	extra_path: Option<&Path>,
+	cwd: Option<&Path>,
 	extra_env: &[(String, String)],
-) -> Result<(bool, String)> {
+) -> Result<Capture> {
 	let mut command = shell_command(cmd);
 	if let Some(p) = extra_path {
 		command.env("PATH", prepend_to_path(p)?);
+	}
+	if let Some(dir) = cwd {
+		command.current_dir(dir);
 	}
 	for (k, v) in extra_env {
 		command.env(k, v);
@@ -166,7 +237,71 @@ fn run_capture(
 		.with_context(|| format!("failed to spawn `{cmd}`"))?;
 	let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
 	combined.push_str(&String::from_utf8_lossy(&out.stderr));
-	Ok((out.status.success(), combined))
+	Ok(Capture {
+		ok: out.status.success(),
+		code: out.status.code(),
+		out: combined,
+	})
+}
+
+/// Where the program a command names lives: the first directory on `PATH`
+/// (after `extra`) that holds it, or the file itself for a relative path like
+/// `./gradlew`.
+fn which(cmd: &str, extra: Option<&Path>, cwd: Option<&Path>) -> Option<PathBuf> {
+	let program = cmd.split_whitespace().next()?;
+	if program.contains('/') || program.contains('\\') {
+		let path = cwd
+			.map(|c| c.join(program))
+			.unwrap_or_else(|| PathBuf::from(program));
+		let tidy: PathBuf = path.components().collect();
+		return tidy.is_file().then_some(tidy);
+	}
+	let exts: &[&str] = if cfg!(windows) {
+		&["", ".exe", ".cmd", ".bat"]
+	} else {
+		&[""]
+	};
+	let path = std::env::var_os("PATH").unwrap_or_default();
+	extra
+		.map(Path::to_path_buf)
+		.into_iter()
+		.chain(std::env::split_paths(&path))
+		.flat_map(|dir| {
+			exts.iter()
+				.map(move |ext| dir.join(format!("{program}{ext}")))
+		})
+		.find(|candidate| candidate.is_file())
+}
+
+/// An engine failure laid out so each fact is on its own labeled line.
+fn engine_error(name: &str, headline: &str, rows: &[(&str, String)], fix: &str) -> anyhow::Error {
+	let mut message = format!("engine '{name}' {headline}");
+	for (label, value) in rows {
+		let value = value.trim();
+		if value.is_empty() {
+			continue;
+		}
+		let mut lines = value.lines();
+		message.push_str(&format!("\n  {label:<8} {}", lines.next().unwrap_or("")));
+		let rest: Vec<&str> = lines.collect();
+		let shown = rest.len().min(20);
+		let skipped = rest.len() - shown;
+		if skipped > 0 {
+			message.push_str(&format!("\n  {:<8} … {skipped} more lines", ""));
+		}
+		for line in &rest[rest.len() - shown..] {
+			message.push_str(&format!("\n  {:<8} {line}", ""));
+		}
+	}
+	message.push_str(&format!("\n  {:<8} {fix}", "fix"));
+	anyhow::anyhow!(message)
+}
+
+fn located(capture_path: Option<PathBuf>, version: impl std::fmt::Display) -> String {
+	match capture_path {
+		Some(path) => format!("{version} at {}", path.display()),
+		None => version.to_string(),
+	}
 }
 
 /// Tolerantly parse a version out of arbitrary tool output:
@@ -191,6 +326,24 @@ pub fn parse_version(raw: &str) -> Option<semver::Version> {
 		parts.get(1).copied().unwrap_or(0),
 		parts.get(2).copied().unwrap_or(0),
 	))
+}
+
+/// [`parse_version`] for engine `name`, starting after the words its output puts
+/// before the version where an earlier number is something else: `swift
+/// --version` on macOS leads with the driver's version, `elixir --version` and
+/// `mix --version` with Erlang/OTP's, and a first Maven wrapper run with
+/// download URLs through `maven2`.
+pub fn parse_engine_version(name: &str, raw: &str) -> Option<semver::Version> {
+	let marker = match name {
+		"swift" => "Swift version ",
+		"elixir" => "Elixir ",
+		"mix" => "Mix ",
+		"maven" => "Apache Maven ",
+		_ => return parse_version(raw),
+	};
+	raw.find(marker)
+		.and_then(|at| parse_version(&raw[at + marker.len()..]))
+		.or_else(|| parse_version(raw))
 }
 
 /// Whether `v` satisfies a (possibly loose) constraint such as `">=20.0.0"`,
@@ -251,7 +404,8 @@ fn find_verified_pin(
 		}
 		// Re-verify the version if we can; this does not reinstall.
 		if let (Some(vc), Some(cons)) = (version_cmd, constraint) {
-			if !capture_confirms(run_capture(vc, Some(&bin_dir), &[]), cons) {
+			let captured = run_capture(vc, Some(&bin_dir), None, &[]);
+			if !capture_confirms(&pins.engine, captured, cons) {
 				continue;
 			}
 		}
@@ -263,11 +417,11 @@ fn find_verified_pin(
 /// Whether a version command's captured output proves the pin still satisfies
 /// `constraint`. A run that never spawned, exited non-zero, or printed no
 /// version proves nothing — none of those is a pin worth reusing.
-fn capture_confirms(captured: Result<(bool, String)>, constraint: &str) -> bool {
-	let Ok((ok, out)) = captured else {
+fn capture_confirms(name: &str, captured: Result<Capture>, constraint: &str) -> bool {
+	let Ok(c) = captured else {
 		return false;
 	};
-	ok && parse_version(&out).is_some_and(|v| satisfies(&v, constraint))
+	c.ok && parse_engine_version(name, &c.out).is_some_and(|v| satisfies(&v, constraint))
 }
 
 /// An engine's `bin` as a path relative to its toolchain directory.
@@ -329,10 +483,11 @@ fn sweep_stale_staging(engine_dir: &Path, older_than: Duration) {
 	}
 }
 
-/// Run `install_cmd` into `staging` and return the version to record for what it
-/// installed. A constraint is enforced here or nowhere: a tool whose version
-/// cannot be read cannot be shown to satisfy one.
+/// Run `install_cmd` from the repo root into `staging` and return the version to
+/// record for what it installed. A constraint is enforced here or nowhere: a tool
+/// whose version cannot be read cannot be shown to satisfy one.
 fn install_and_verify(
+	root: &Path,
 	staging: &Path,
 	name: &str,
 	install_cmd: &str,
@@ -345,46 +500,77 @@ fn install_and_verify(
 	let staging_str = staging.to_string_lossy().into_owned();
 	let substituted = install_cmd.replace("$LATTICE_TOOLCHAIN_DIR", &staging_str);
 	let env = vec![("LATTICE_TOOLCHAIN_DIR".to_string(), staging_str)];
-	let (ok, out) = run_capture(&substituted, None, &env)?;
-	if !ok {
-		bail!("engine '{name}': installCmd failed:\n{}", out.trim());
+	let installed = run_capture(&substituted, None, Some(root), &env)?;
+	if !installed.ok {
+		let status = match installed.code {
+			Some(code) => format!("exited with code {code}"),
+			None => "was killed by a signal".to_string(),
+		};
+		return Err(engine_error(
+			name,
+			&format!("could not be installed: its installCmd {status}"),
+			&[("ran", install_cmd.to_string()), ("output", installed.out)],
+			"the command runs in a shell with $LATTICE_TOOLCHAIN_DIR set to an empty \
+			 directory; it should put the tool there, with its executables under `bin`",
+		));
 	}
 
 	let Some(vc) = version_cmd else {
 		if let Some(cons) = constraint {
-			bail!(
-				"engine '{name}' has the version constraint '{cons}' but no way to check what \
-				 was installed. '{name}' is not a well-known engine, so add a `versionCmd` to it"
-			);
+			return Err(engine_error(
+				name,
+				&format!("has the constraint '{cons}' but no way to check what was installed"),
+				&[],
+				&format!("'{name}' is not a well-known engine, so add a `versionCmd` to it"),
+			));
 		}
 		return Ok(UNKNOWN_VERSION.to_string());
 	};
 
-	let (ok, out) = run_capture(vc, Some(&staging.join(bin)), &[])?;
-	if !ok {
-		bail!(
-			"engine '{name}': version command `{vc}` failed after install:\n{}",
-			out.trim()
-		);
+	let bin_dir = staging.join(bin);
+	let checked = run_capture(vc, Some(&bin_dir), None, &[])?;
+	if !checked.ok {
+		return Err(engine_error(
+			name,
+			"was installed, but its version command failed",
+			&[("ran", vc.to_string()), ("output", checked.out)],
+			&format!(
+				"check that the installCmd puts `{}` in {}",
+				vc.split_whitespace().next().unwrap_or(vc),
+				bin.display()
+			),
+		));
 	}
-	match parse_version(&out) {
+	match parse_engine_version(name, &checked.out) {
 		Some(v) => {
 			if let Some(cons) = constraint {
 				if !satisfies(&v, cons) {
-					bail!(
-						"engine '{name}' provisioned {v}, which does not satisfy the constraint '{cons}'"
-					);
+					return Err(engine_error(
+						name,
+						"installed a version that does not match its constraint",
+						&[
+							("wanted", cons.to_string()),
+							("found", v.to_string()),
+							("ran", vc.to_string()),
+						],
+						&format!("change the installCmd to install a version matching '{cons}'"),
+					));
 				}
 			}
 			Ok(v.to_string())
 		}
 		None => {
 			if let Some(cons) = constraint {
-				bail!(
-					"engine '{name}': could not read a version from the output of `{vc}` after \
-					 install, so the constraint '{cons}' cannot be checked:\n{}",
-					out.trim()
-				);
+				return Err(engine_error(
+					name,
+					"was installed, but Lattice could not read a version from it",
+					&[
+						("wanted", cons.to_string()),
+						("ran", vc.to_string()),
+						("output", checked.out),
+					],
+					"point `versionCmd` at a command that prints the version",
+				));
 			}
 			Ok(UNKNOWN_VERSION.to_string())
 		}
@@ -430,53 +616,120 @@ fn promote_staging(staging: &Path, final_dir: &Path) -> Result<()> {
 }
 
 /// Provision (if needed) and resolve every engine in `engines` into a `PATH`
-/// prefix + cache identity. Memoized by content hash: identical toolchains
-/// install once.
+/// prefix + cache identity, checking versions from the repo root.
 pub fn provision_and_resolve(
 	root: &Path,
 	engines: &EngineMap,
 	log: &mut dyn FnMut(&str),
 ) -> Result<ResolvedToolchains> {
+	provision_and_resolve_in(root, engines, None, log)
+}
+
+/// [`provision_and_resolve`] for the workspace in `cwd`, where a build tool's
+/// wrapper decides which version of it runs.
+pub fn provision_and_resolve_in(
+	root: &Path,
+	engines: &EngineMap,
+	cwd: Option<&Path>,
+	log: &mut dyn FnMut(&str),
+) -> Result<ResolvedToolchains> {
 	let mut path_prepend = Vec::new();
 	let mut identity_parts: Vec<String> = Vec::new();
+	let mut engines_out: Vec<ResolvedEngine> = Vec::new();
 
 	for (name, spec) in engines {
 		match classify(name, spec) {
 			EngineMode::HostPath => {
 				identity_parts.push(format!("{name}=host"));
+				engines_out.push(ResolvedEngine {
+					name: name.clone(),
+					version: None,
+					location: None,
+					provisioned: false,
+				});
 			}
 			EngineMode::ValidateOnly { constraint } => {
-				let vc = version_cmd_for(name, spec);
-				let version = if let Some(vc) = &vc {
-					let (ok, out) = run_capture(vc, None, &[])?;
-					if !ok {
-						bail!(
-							"engine '{name}': version command `{vc}` failed:\n{}",
-							out.trim()
-						);
-					}
-					match parse_version(&out) {
-						Some(v) => v,
-						None => bail!(
-							"engine '{name}': could not read a version from the output of `{vc}`:\n{}",
-							out.trim()
+				let Some(vc) = version_cmd_in(name, spec, root, cwd) else {
+					return Err(engine_error(
+						name,
+						"has a version constraint but no way to check the installed version",
+						&[],
+						&format!(
+							"'{name}' is not a well-known engine, so add a `versionCmd` to it"
 						),
-					}
-				} else {
-					bail!(
-						"engine '{name}' has a version constraint but no way to check the \
-                         installed version. '{name}' is not a well-known engine, so add a \
-                         `versionCmd` to it"
-					);
+					));
 				};
-				if let Some(cons) = &constraint {
-					if !satisfies(&version, cons) {
-						bail!(
-                            "engine '{name}' on PATH is {version}, which does not satisfy the constraint '{cons}'"
-                        );
-					}
+				let dir = cwd.unwrap_or(root);
+				let found = which(&vc, None, Some(dir));
+				let checked = run_capture(&vc, None, Some(dir), &[])?;
+				let cons = constraint.clone().unwrap_or_default();
+				let install_hint = if vc.contains("gradlew") {
+					format!(
+						"move the project's wrapper to a version matching {cons}: \
+						 `./gradlew wrapper --gradle-version <version>`"
+					)
+				} else if vc.contains("mvnw") {
+					format!(
+						"move the project's wrapper to a version matching {cons}: \
+						 `./mvnw wrapper:wrapper -Dmaven=<version>`"
+					)
+				} else {
+					format!(
+						"install {name} {cons}, or give the engine an installCmd so Lattice installs \
+						 it for this repo"
+					)
+				};
+				if checked.not_found() || (!checked.ok && found.is_none()) {
+					return Err(engine_error(
+						name,
+						"is not installed, or not on PATH",
+						&[("wanted", cons.clone()), ("ran", vc.clone())],
+						&install_hint,
+					));
+				}
+				if !checked.ok {
+					return Err(engine_error(
+						name,
+						"could not be checked: its version command failed",
+						&[
+							("wanted", cons.clone()),
+							("ran", vc.clone()),
+							("output", checked.out),
+						],
+						"fix the tool, or point `versionCmd` at a command that prints its version",
+					));
+				}
+				let Some(version) = parse_engine_version(name, &checked.out) else {
+					return Err(engine_error(
+						name,
+						"could not be checked: Lattice found no version in what it printed",
+						&[
+							("wanted", cons.clone()),
+							("ran", vc.clone()),
+							("output", checked.out),
+						],
+						"point `versionCmd` at a command that prints the version",
+					));
+				};
+				if !satisfies(&version, &cons) {
+					return Err(engine_error(
+						name,
+						"does not match the version this repo pins",
+						&[
+							("wanted", cons.clone()),
+							("found", located(found.clone(), &version)),
+							("ran", vc.clone()),
+						],
+						&install_hint,
+					));
 				}
 				identity_parts.push(format!("{name}={version}@host"));
+				engines_out.push(ResolvedEngine {
+					name: name.clone(),
+					version: Some(version.to_string()),
+					location: found,
+					provisioned: false,
+				});
 			}
 			EngineMode::Provisioned {
 				install_cmd,
@@ -495,8 +748,15 @@ pub fn provision_and_resolve(
 					constraint.as_deref(),
 					version_cmd.as_deref(),
 				) {
-					path_prepend.push(dir.join(checked_bin(name, &pins.bin)?));
+					let bin_dir = dir.join(checked_bin(name, &pins.bin)?);
 					identity_parts.push(format!("{name}={}@{hash}", pins.version));
+					engines_out.push(ResolvedEngine {
+						name: name.clone(),
+						version: (pins.version != UNKNOWN_VERSION).then(|| pins.version.clone()),
+						location: Some(bin_dir.clone()),
+						provisioned: true,
+					});
+					path_prepend.push(bin_dir);
 					continue;
 				}
 
@@ -514,6 +774,7 @@ pub fn provision_and_resolve(
 				));
 
 				let version = match install_and_verify(
+					root,
 					&staging,
 					name,
 					&install_cmd,
@@ -553,6 +814,12 @@ pub fn provision_and_resolve(
 
 				path_prepend.push(final_dir.join(bin_rel));
 				identity_parts.push(format!("{name}={version}@{hash}"));
+				engines_out.push(ResolvedEngine {
+					name: name.clone(),
+					version: (version != UNKNOWN_VERSION).then(|| version.clone()),
+					location: Some(final_dir.join(bin_rel)),
+					provisioned: true,
+				});
 			}
 		}
 	}
@@ -561,12 +828,102 @@ pub fn provision_and_resolve(
 	Ok(ResolvedToolchains {
 		path_prepend,
 		identity: identity_parts.join(";"),
+		engines: engines_out,
 	})
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	fn cap(ok: bool, out: &str) -> Capture {
+		Capture {
+			ok,
+			code: Some(if ok { 0 } else { 1 }),
+			out: out.to_string(),
+		}
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn a_tool_that_is_missing_says_so_and_how_to_fix_it() {
+		let tmp = tempfile::tempdir().unwrap();
+		let engines = fake_engine(serde_json::json!({
+			"version": ">=1.0.0",
+			"versionCmd": "definitely-not-a-real-tool-xyz --version"
+		}));
+		let err = provision_and_resolve(tmp.path(), &engines, &mut |_| {})
+			.unwrap_err()
+			.to_string();
+		assert!(err.contains("is not installed, or not on PATH"), "{err}");
+		assert!(err.contains("wanted   >=1.0.0"), "{err}");
+		assert!(err.contains("fix      install"), "{err}");
+	}
+
+	#[test]
+	fn a_version_mismatch_names_what_was_wanted_and_found() {
+		let tmp = tempfile::tempdir().unwrap();
+		let engines = fake_engine(serde_json::json!({
+			"version": ">=99.0.0",
+			"versionCmd": "echo fake 1.2.3"
+		}));
+		let err = provision_and_resolve(tmp.path(), &engines, &mut |_| {})
+			.unwrap_err()
+			.to_string();
+		assert!(
+			err.contains("does not match the version this repo pins"),
+			"{err}"
+		);
+		assert!(err.contains("wanted   >=99.0.0"), "{err}");
+		assert!(err.contains("found    1.2.3"), "{err}");
+		assert!(err.contains("ran      "), "{err}");
+	}
+
+	#[test]
+	fn a_failed_install_shows_its_output_and_status() {
+		let tmp = tempfile::tempdir().unwrap();
+		let engines = fake_engine(serde_json::json!({
+			"installCmd": lattice_testkit::then([
+				lattice_testkit::echo("downloading"),
+				lattice_testkit::echo_err("no network"),
+				lattice_testkit::exit(7),
+			])
+		}));
+		let err = provision_and_resolve(tmp.path(), &engines, &mut |_| {})
+			.unwrap_err()
+			.to_string();
+		assert!(err.contains("installCmd exited with code 7"), "{err}");
+		assert!(err.contains("no network"), "{err}");
+		assert!(err.contains("$LATTICE_TOOLCHAIN_DIR"), "{err}");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn gradle_is_checked_through_the_wrapper_of_the_build_it_runs() {
+		let tmp = tempfile::tempdir().unwrap();
+		std::fs::write(tmp.path().join("gradlew"), "").unwrap();
+		std::fs::create_dir_all(tmp.path().join("app")).unwrap();
+		let spec = EngineSpec::Version(">=8".into());
+		assert_eq!(
+			version_cmd_in("gradle", &spec, tmp.path(), Some(&tmp.path().join("app"))).as_deref(),
+			Some("../gradlew --version")
+		);
+		assert_eq!(
+			version_cmd_in("gradle", &spec, tmp.path(), None).as_deref(),
+			Some("gradle --version")
+		);
+	}
+
+	#[test]
+	fn a_resolved_engine_describes_where_it_came_from() {
+		let e = ResolvedEngine {
+			name: "node".into(),
+			version: Some("22.11.0".into()),
+			location: None,
+			provisioned: true,
+		};
+		assert_eq!(e.describe(), "node 22.11.0 (installed by Lattice)");
+	}
 	use serde_json::json;
 	use tempfile::TempDir;
 
@@ -623,6 +980,33 @@ mod tests {
 			semver::Version::new(1, 75, 0)
 		);
 		assert!(parse_version("no digits here").is_none());
+
+		let swift =
+			"swift-driver version: 1.90.11.1 Apple Swift version 5.10 (swiftlang-5.10.0.13)";
+		assert_eq!(
+			parse_engine_version("swift", swift).unwrap().to_string(),
+			"5.10.0"
+		);
+		let elixir =
+			"Erlang/OTP 26 [erts-14.2] [64-bit]\n\nElixir 1.16.0 (compiled with Erlang/OTP 26)";
+		assert_eq!(
+			parse_engine_version("elixir", elixir).unwrap().to_string(),
+			"1.16.0"
+		);
+		let mix = "Erlang/OTP 26 [erts-14.2]\n\nMix 1.16.0 (compiled with Erlang/OTP 26)";
+		assert_eq!(
+			parse_engine_version("mix", mix).unwrap().to_string(),
+			"1.16.0"
+		);
+		let maven = "Downloading from central: https://repo.maven.apache.org/maven2/x\nApache Maven 3.9.6 (bc0240f)";
+		assert_eq!(
+			parse_engine_version("maven", maven).unwrap().to_string(),
+			"3.9.6"
+		);
+		assert_eq!(
+			parse_engine_version("swift", "5.9").unwrap().to_string(),
+			"5.9.0"
+		);
 	}
 
 	#[test]
@@ -788,14 +1172,20 @@ mod tests {
 	/// used to accept the pin outright when the command could not be spawned.
 	#[test]
 	fn a_version_check_that_did_not_run_confirms_nothing() {
-		assert!(capture_confirms(Ok((true, "1.2.3".into())), ">=1.0.0"));
-		assert!(!capture_confirms(Ok((true, "0.9.0".into())), ">=1.0.0"));
-		assert!(!capture_confirms(Ok((false, "1.2.3".into())), ">=1.0.0"));
+		assert!(capture_confirms("tool", Ok(cap(true, "1.2.3")), ">=1.0.0"));
+		assert!(!capture_confirms("tool", Ok(cap(true, "0.9.0")), ">=1.0.0"));
 		assert!(!capture_confirms(
-			Ok((true, "no-version-here".into())),
+			"tool",
+			Ok(cap(false, "1.2.3")),
 			">=1.0.0"
 		));
 		assert!(!capture_confirms(
+			"tool",
+			Ok(cap(true, "no-version-here")),
+			">=1.0.0"
+		));
+		assert!(!capture_confirms(
+			"tool",
 			Err(anyhow::anyhow!("failed to spawn `faketool`")),
 			">=1.0.0"
 		));

@@ -1,6 +1,6 @@
 {
 	"name": "@lattice/web",
-	"version": "1.1.1",
+	"version": "2.0.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -17,7 +17,6 @@
 		"@astrojs/mdx": "^7.0.8",
 		"@astrojs/react": "^6.0.5",
 		"@astrojs/sitemap": "^3.7.4",
-		"@tailwindcss/vite": "^4.3.3",
 		"astro": "^7.3.4",
 		"astro-seo": "^1.2.0",
 		"bootstrap": "^5.3.8",
@@ -25,8 +24,7 @@
 		"echarts": "^6.1.0",
 		"react": "^19.3.0",
 		"react-dom": "^19.3.0",
-		"sass": "^1.104.1",
-		"tailwindcss": "^4.3.3"
+		"sass": "^1.104.1"
 	},
 	"devDependencies": {
 		"@types/react": "^19.3.0",

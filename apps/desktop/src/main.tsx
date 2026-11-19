@@ -1,14 +1,16 @@
 import { createRoot } from 'react-dom/client';
 
-// Load order matches the website: Tailwind's layers, then Bootstrap's compiled
-// output, then our globals, then the sheets only this app has.
-import './styles/tailwind.css';
+// Bootstrap's compiled output first, then the base layer, then the sheets for each
+// part of the window.
 import './styles/bootstrap.scss';
 import './globals.scss';
 import './styles/shell.scss';
-import './styles/codeCard.scss';
-import './styles/steps.scss';
-import './styles/tasks.scss';
+import './styles/controls.scss';
+import './styles/runSheet.scss';
+import './styles/graph.scss';
+import './styles/panels.scss';
+import './styles/config.scss';
+import './styles/wizard.scss';
 
 import App from './app';
 

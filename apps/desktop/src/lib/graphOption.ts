@@ -30,7 +30,32 @@ export interface GraphOptionInput {
 	/** The focused node's dependency closure, dimming everything else. */
 	focus?: ReadonlySet<string>;
 	reducedMotion: boolean;
+	/** `from->to` ids of edges lattice.json declares rather than a manifest implying. */
+	declared?: ReadonlySet<string>;
 }
+
+export const edgeId = (from: string, to: string): string => `${from}->${to}`;
+
+/**
+ * The cross-workspace edges that come from `dependsOn` in lattice.json. Every other
+ * edge between workspaces was read from a manifest.
+ */
+export const declaredEdges = (
+	dump: GraphDump,
+	workspaces: readonly { name: string; dependsOn: readonly string[]; inferredDeps: readonly string[] }[],
+): Set<string> => {
+	const byName = new Map(workspaces.map((ws) => [ws.name, ws]));
+	const declared = new Set<string>();
+	for (const edge of dump.edges) {
+		if (!edge.crossWorkspace) continue;
+		const from = dump.nodes.find((node) => node.id === edge.from)?.workspace;
+		const to = byName.get(dump.nodes.find((node) => node.id === edge.to)?.workspace ?? '');
+		if (from && to && to.dependsOn.includes(from) && !to.inferredDeps.includes(from)) {
+			declared.add(edgeId(edge.from, edge.to));
+		}
+	}
+	return declared;
+};
 
 const escapeHtml = (value: string): string =>
 	value
@@ -76,7 +101,7 @@ export const nodeStyle = (
 };
 
 export const buildGraphOption = (input: GraphOptionInput): Record<string, unknown> => {
-	const { dump, states, tokens, focus, reducedMotion } = input;
+	const { dump, states, tokens, focus, reducedMotion, declared } = input;
 	const points = layout(dump);
 
 	const dim = (id: string) => (focus && !focus.has(id) ? 0.15 : 1);
@@ -118,8 +143,9 @@ export const buildGraphOption = (input: GraphOptionInput): Record<string, unknow
 		source: edge.from,
 		target: edge.to,
 		lineStyle: {
-			color: tokens.border,
-			width: 1,
+			// An edge someone wrote into lattice.json is the one worth finding again.
+			color: declared?.has(edgeId(edge.from, edge.to)) ? tokens.textSubtle : tokens.border,
+			width: declared?.has(edgeId(edge.from, edge.to)) ? 1.5 : 1,
 			curveness: 0.12,
 			// A cached prerequisite's edge recedes with it.
 			opacity:
@@ -215,9 +241,9 @@ export const tooltipHtml = (
 	// writing it that way means the tooltip re-themes with everything else instead of
 	// carrying a private copy of the surface colours.
 	return [
-		'<div class="card shadow p-3 small tw:max-w-[26rem]">',
+		'<div class="card shadow p-3 small graph-tooltip__card">',
 		`<div class="font-monospace fw-medium">${escapeHtml(node.id)}</div>`,
-		`<div class="font-monospace text-body-secondary mt-1 mb-2 tw:text-[0.75rem] tw:whitespace-pre-wrap tw:break-all">${escapeHtml(node.command)}</div>`,
+		`<div class="font-monospace text-body-secondary mt-1 mb-2 graph-tooltip__command">${escapeHtml(node.command)}</div>`,
 		body,
 		'</div>',
 	].join('');
@@ -242,3 +268,9 @@ export const LEGEND: LegendEntry[] = [
 	{ icon: 'bi-x-lg', label: 'Failed' },
 	{ icon: 'bi-square', label: 'Persistent' },
 ];
+
+/** Shown only when the graph has an edge lattice.json declares. */
+export const DECLARED_LEGEND: LegendEntry = {
+	icon: 'bi-dash-lg',
+	label: 'Dependency written in lattice.json',
+};

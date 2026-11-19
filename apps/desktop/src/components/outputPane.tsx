@@ -6,6 +6,7 @@ import { runStore } from '../lib/runStore.ts';
 
 interface OutputPaneProps {
 	taskKey: string;
+	failed?: boolean;
 }
 
 // Output text never enters React.
@@ -14,7 +15,7 @@ interface OutputPaneProps {
 // inside it and appending is safe. That turns "ten thousand lines" from a
 // reconciliation problem into an appendChild, which is the difference between a pane
 // that scrolls and one that stutters.
-const OutputPane = ({ taskKey }: OutputPaneProps) => {
+const OutputPane = ({ taskKey, failed = false }: OutputPaneProps) => {
 	const ref = useRef<HTMLPreElement>(null);
 	const drawn = useRef(0);
 	const revision = useTaskOutputRev(taskKey);
@@ -32,9 +33,7 @@ const OutputPane = ({ taskKey }: OutputPaneProps) => {
 		const fragment = document.createDocumentFragment();
 		for (const line of draw.append) {
 			const span = document.createElement('span');
-			span.className = line.stderr
-				? 'code-card__line code-card__line--err'
-				: 'code-card__line';
+			span.className = line.stderr ? 'log-line log-line--err' : 'log-line';
 			span.textContent = line.line;
 			fragment.append(span);
 		}
@@ -52,7 +51,7 @@ const OutputPane = ({ taskKey }: OutputPaneProps) => {
 	return (
 		<pre
 			ref={ref}
-			className="code-card__body code-card__body--log mb-0 selectable"
+			className={`log-pane selectable${failed ? ' log-pane--failed' : ''}`}
 			tabIndex={0}
 			aria-label={`Output for ${taskKey}`}
 		/>
