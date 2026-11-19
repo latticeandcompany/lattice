@@ -4,7 +4,8 @@ description: >
   Reference for Lattice, a CLI that runs and caches a monorepo's tasks in any
   language and pins the versions of the tools those tasks use. It reads the
   workspaces, the dependencies between them and their tasks from the repo's own
-  manifests; an optional `lattice.json` at the root says only what those cannot.
+  manifests; the `lattice.json` that marks the repo root, which can be `{}`, says
+  only what those cannot.
   Use this skill when:
   (1) the repo contains a `lattice.json`,
   (2) the user asks to build, test, lint, or run anything through `lattice`,
@@ -54,9 +55,9 @@ workspace unless it is one on its own.
 
 ## Orient before you act
 
-1. Find the root. Every command walks up from the current directory to the
-   nearest `lattice.json`. No config in this directory or any parent is a hard
-   error.
+1. Find the root. Every command that reads the config walks up from the current
+   directory to the nearest `lattice.json`. No config in this directory or any
+   parent is a hard error.
 2. Ask the binary what a task will do. The config does not list most of what
    Lattice runs:
 
@@ -109,9 +110,11 @@ Rules that follow from that:
 - **A glob match with nothing Lattice recognizes is skipped silently.** A
   directory of notes under `apps/*` is not an error. A `workspaces` entry that
   matches no directory at all is.
-- **Hidden, gitignored, dependency and output directories are never matched**
-  by a glob (`node_modules`, `target`, `dist`, `build`, `out`, `vendor`, `venv`,
-  `__pycache__`). A literal path is looked up directly, so it still works.
+- **A glob never matches a hidden or gitignored directory, and never walks
+  through a dependency or output one** (`node_modules`, `target`, `dist`,
+  `build`, `out`, `vendor`, `venv`, `__pycache__`). A pattern's last segment
+  still matches those names (`packages/*` matches `packages/build`), except
+  under `**`. A literal path is looked up directly, so it always works.
 
 A workspace is named after its manifest: `package.json` `name` (the full name,
 scope included: `@acme/ui`), then Cargo `[package] name`, then pyproject
@@ -248,8 +251,9 @@ files say everything.
 ```
 
 An `overrides` key is a **workspace name**, or a **glob over workspace paths**
-when it is `"."` or holds a `/` or a glob character. A top-level directory is
-matched by path as `"./tools"`. Several keys can match one workspace; they
+when it is `"."` or holds a `/` or a glob character; a scoped npm name such as
+`@acme/ui` is still a name. A top-level directory is matched by path as
+`"./tools"`. Several keys can match one workspace; they
 apply in the order written, `name` and `driver` last-wins, `engines` merged per
 key, `dependsOn` combined, `tasks` layered per task. A key that matches no
 workspace is a load error with the nearest name offered. A name key matches the
@@ -260,9 +264,9 @@ detected; `"none"` means the workspace runs only the commands its override
 writes out. A task object in an override takes every task field plus `run`.
 
 In a task's `dependsOn`, `^build` means `build` in each workspace this one
-depends on, and a bare `build` means `build` in this workspace. Those two tokens
-are the whole vocabulary. A name no workspace has is an error at plan time,
-with the nearest name offered.
+depends on directly, and a bare `build` means `build` in this workspace. Those
+two tokens are the whole vocabulary. A name no workspace has is an error at
+plan time, with the nearest name offered.
 
 Every field, type, default, and validation error: `references/configuration.md`.
 
@@ -289,12 +293,14 @@ Every field, type, default, and validation error: `references/configuration.md`.
   failure.
 - **Running inside a workspace scopes the run to it.** From `packages/web`,
   `lattice run test` runs `web`'s test plus whatever it depends on, and says so.
+  If `web` has none of the tasks named, the run fails rather than exiting `0`.
   `--filter` replaces the scope. Run from the root for every workspace.
 - **Arguments after `--` go to the tasks you named**, in the workspaces the run
   is for, never to prerequisites pulled in: `lattice run test -- --release`
-  runs `cargo test --release`. For `npm run`, Lattice inserts npm's own `--`.
-  Arguments are passed as written, so Cargo's test harness still needs its own
-  separator: `lattice run test -- -- --nocapture`.
+  runs `cargo test --release`. For `npm run` and a Taskfile task, Lattice
+  inserts the `--` the tool needs. Arguments are otherwise passed as written,
+  so Cargo's test harness still needs its own separator:
+  `lattice run test -- -- --nocapture`.
 - **`--filter` selects the roots of a run.** It matches workspaces whose name
   *contains* the pattern (never the path), then adds everything they depend on,
   tagged `(dependency)` under `--dry-run`. Nothing that depends *on* a match is
@@ -315,7 +321,8 @@ Every field, type, default, and validation error: `references/configuration.md`.
   out of date.
 - **`lattice run` installs no dependencies.** It does install a toolchain whose
   `installCmd` has not run yet. `lattice setup` provisions engines and runs each
-  workspace's installer once per lockfile directory.
+  workspace's installer from the nearest directory holding its driver's own
+  lockfile, once per such directory.
 - **Lattice never guesses a driver.** An ambiguous workspace halts with the fix
   printed. Ask which tool the workspace uses if its files do not say. See
   [When detection halts](#when-detection-halts).
@@ -346,8 +353,8 @@ each (`✓ web  1.20s`, `● ui  cached · 2.00s saved`, `✗ api  failed (code 
 shows its elapsed time and last three output lines, the next tasks waiting say
 what they wait on, and a count tracks progress.
 
-With no terminal, with `CI` set, or with `--stream`, the run prints the plain
-stream, which is what to parse:
+When stdout or stderr is not a terminal, with `CI` set, or with `--stream`, the
+run prints the plain stream, which is what to parse:
 
 ```text
 api:build: running
@@ -518,9 +525,12 @@ writing down only where it would come out differently from what 1.x said: a
 workspace no workspace file names, one the 1.x config left out (`exclude`), a
 name the manifest spells otherwise (`overrides.<path>.name`), an edge no
 manifest states, a `scripts` command, `auto: false` (`"driver": "none"`), and a
-driver chosen through a `>=0.0.0` engine. It prints what it dropped and why.
-`--dry-run` prints the new file instead of writing it. Every workspace keeps the
-name it had, so filters and CI keep working.
+driver 1.x chose from `engines`. It prints what it dropped and why, and each
+task whose meaning this version's defaults change: a `dev` that is now
+persistent, a `build` that now waits on `^build`, a `deploy` no longer cached.
+A config with no workspace objects that pins a 1.x `latticeVersion` only has
+the pin moved. `--dry-run` prints the new file instead of writing it. Every
+workspace keeps the name it had, so filters and CI keep working.
 
 ## In CI
 

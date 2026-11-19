@@ -46,7 +46,13 @@ Stacked names merge into one graph, so a dependency they share runs once.
 directory below it) and the run covers that workspace and everything it depends
 on, the same closure `--filter` produces. The live display's header says `· in
 web, the workspace you are in`; the stream prints `lattice: running in web, the
-workspace you are in`. Run from the root, or pass `--filter`, to widen it.
+workspace you are in`. Run from the root, or pass `--filter`, to widen it. A
+workspace with none of the named tasks fails the run rather than running
+nothing:
+
+```text
+error: web, the workspace you are in, has no 'lint' task. Run it from the repo root to run it everywhere, or pick workspaces with --filter
+```
 
 **Arguments after `--`** are appended, shell-quoted, to the commands of the
 named tasks in the workspaces the run is for. A prerequisite pulled in as a
@@ -96,8 +102,8 @@ needs at least one task, no failures, and nothing executed.
 ## What a run prints
 
 Two modes. The **live display** is used on a terminal. The **stream** is used
-when stdout is not a terminal, when `CI` is set to anything, with `--stream`,
-and for any run that includes a persistent task.
+when stdout or stderr is not a terminal, when `CI` is set to anything, with
+`--stream`, and for any run that includes a persistent task.
 
 ### The live display
 
@@ -124,7 +130,10 @@ finish: `✓` ran and passed, `●` came from cache (with the task time it saved
 `○` skipped or a persistent task that exited. Below, the region that redraws in
 place: each running task with a spinner and its elapsed time and its last three
 non-empty output lines; up to three waiting tasks with what they still wait on
-(`queued` when nothing), then `+N more waiting`; and a progress count. Rows are
+(`queued` when nothing), then `+N more waiting`; and a progress count. The
+region never grows past the terminal's height: output tails give way first,
+then waiting rows, and running tasks that still do not fit collapse into
+`+N more running`. Rows are
 labeled by workspace, or `workspace:task` when the run names more than one
 task. The summary replaces the region:
 
@@ -211,21 +220,28 @@ workspace is refused: `there is no workspace named 'wbe'. Workspaces: api, web`.
 | `stack`, `cabal` | `stack build --only-dependencies`, `cabal build --only-download` |
 
 The installer runs in the nearest directory at or above the workspace that
-holds a lockfile, so the members of one npm, pnpm, yarn or Cargo tree share a
-single install. It is skipped, printing `dependencies up to date`, when no
-lockfile in the workspace or above it is newer than the workspace's marker under
-`.lattice/setup` (one file per workspace, named for its path with `/` written
-`%2F`; the root is `.marker`). The installer's output streams indented; it gets
-no stdin, so an installer that prompts fails with its own message.
+holds one of its own driver's lockfiles (another ecosystem's lockfile does not
+count), or in the workspace when there is none, so the members of one npm,
+pnpm, yarn or Cargo tree share a single install. It is skipped, printing
+`dependencies up to date`, when none of those lockfiles in the workspace or
+above it is newer than the workspace's marker under `.lattice/setup` (one file
+per workspace, named for its path with `/` written `%2F`; the root is
+`.marker`). Gradle and Maven have no lockfile Lattice reads, so once their
+marker exists only `--force` re-runs them. The installer's output streams
+indented; it gets no stdin, so an installer that prompts fails with its own
+message.
 
 A workspace with no driver and no engines is skipped; with engines but no driver
 it reports `toolchains ready. This workspace has no package manager to
 install`; a driver with no installer reports `no dependency installer known for
-'<tool>'. Skipping this workspace`.
+'<tool>'. Skipping this workspace`. A failed installer is a warning naming the
+workspace and command; the rest still install, and `setup` then exits `1` with
+`setup failed in one or more workspaces`.
 
 ## `lattice init [OPTIONS]`
 
-Writes a `lattice.json` holding only what discovery would not find, plus
+Writes a `lattice.json` in the current directory, holding only what discovery
+would not find, plus
 `.lattice/schema.json` and the `.gitignore` lines for `.lattice/cache/`,
 `.lattice/toolchains/`, `.lattice/bin/`, `.lattice/setup/`, and
 `.lattice-setup-marker`.
@@ -293,24 +309,30 @@ writes down only where the result would differ from what the 1.x config said:
 | A `dependsOn` a manifest states | Dropped |
 | `scripts` | `overrides.<name>.tasks`, as command strings |
 | `auto: false` | `"driver": "none"` |
-| A driver chosen through a `>=0.0.0` engine | `overrides.<name>.driver`, and the engine dropped |
+| A driver chosen by naming it in `engines`, where discovery now picks another tool of that role or cannot decide | `overrides.<name>.driver` |
+| An engine pinned to `>=0.0.0` or `*` | Dropped: it only chose a driver |
 | Workspace `engines` | `overrides.<name>.engines` |
 | `tasks`, `engines`, `globalDependencies`, `globalEnv`, `settings` | Kept as they are |
 
-`latticeVersion` is set to the running version. Before writing, `migrate` parses
-the result and discovers the repo with it, so what it writes loads. It prints a
-line for each thing it dropped:
+A `latticeVersion` the file had is set to the running version. Before writing,
+`migrate` parses the result and discovers the repo with it, so what it writes
+loads. It prints a line for each thing it dropped, and for each task whose
+meaning this version's defaults change:
 
 ```text
 ✓ rewrote lattice.json 64 lines → 21
 · dropped the `pnpm` engine: its constraint matched any version, so it only chose a driver, and drivers are chosen with `driver` now
 · web: dropped dependsOn ui — its manifest already says so
+· `dev` is now a persistent task, as every dev, start, serve and watch is: never cached, and nothing can wait on it. Set "persistent": false on it to keep the 1.x behavior
 ```
 
 `--dry-run` prints the new file to stdout and the notes to stderr. On a config
 that is already current: `lattice.json is already written for this version.
-Nothing to do.` `migrate` always runs as the binary invoked, never handed to a
-pinned `latticeVersion`.
+Nothing to do.` A config with no workspace objects that pins an older major
+(1.x `init` wrote `"workspaces": []`) only has the pin moved:
+`pinned latticeVersion to <version> (was <old>). Nothing else needed changing`.
+`migrate` always runs as the binary invoked, never handed to a pinned
+`latticeVersion`.
 
 ## `lattice env [OPTIONS]`
 
@@ -330,6 +352,10 @@ export PATH='/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin':'/repo/node_mo
 $ lattice env --shell fish
 set -gx PATH '/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin' '/repo/node_modules/.bin' $PATH
 ```
+
+Each directory is quoted, so a `$` or backtick in a path is taken literally. On
+Windows the `posix` and `fish` forms write Git Bash paths (`/c/repo/...`),
+because a drive letter's `:` would split their `PATH`.
 
 Use `eval "$(lattice env)"` or `lattice env --shell fish | source`. With nothing
 to add it prints nothing to stdout and says why on stderr: `lattice: nothing to

@@ -239,8 +239,9 @@ The root `tasks` map and overrides replace any of these field by field.
 
 `lattice run <task> -- <args>` appends the arguments, each quoted for the shell
 unless it is plain (`[A-Za-z0-9-_./=:@%+,]`), to the named task's command. A
-script run through `npm run` gets npm's `--` first. Everything else gets them
-directly, so a tool's own separator still has to be written:
+script run through `npm run`, and a Taskfile task, gets a `--` first.
+Everything else gets them directly, so a tool's own separator still has to be
+written:
 `lattice run test -- -- --nocapture` for Cargo's test harness.
 
 ## Well-known engines
@@ -297,9 +298,11 @@ or Maven the build uses; a machine with no `gradle` on `PATH` passes a
 wrapper-only build's check.
 
 Version parsing takes the first run of digits and dots in the output
-(`v20.11.1`, `go1.22`, `rustc 1.75.0 (abc 2024)`). A constraint that parses as a
-semver range is matched as one (`>=20.0.0`, `^1.75`; a bare `22.11.0` is
-`^22.11.0`). Otherwise its first version is a lower bound.
+(`v20.11.1`, `go1.22`, `rustc 1.75.0 (abc 2024)`). For `swift`, `elixir`, `mix`
+and `maven` it reads the number after `Swift version`, `Elixir`, `Mix` or
+`Apache Maven`, because their output prints another number first. A constraint
+that parses as a semver range is matched as one (`>=20.0.0`, `^1.75`; a bare
+`22.11.0` is `^22.11.0`). Otherwise its first version is a lower bound.
 
 ## The three modes, chosen by shape
 
@@ -365,8 +368,9 @@ a killed run is swept after 24 hours. With no readable version the directory is
 
 `installCmd` gets its target directory as `LATTICE_TOOLCHAIN_DIR` and by literal
 substitution of `$LATTICE_TOOLCHAIN_DIR` in the command, so either spelling
-works on every platform. It should put the tool there with its executables under
-`bin` (or wherever `bin` says).
+works on every platform. It runs from the repo root, wherever Lattice was
+started. It should put the tool there with its executables under `bin` (or
+wherever `bin` says).
 
 ```json
 {
@@ -389,7 +393,10 @@ host tool.
 A workspace's engines are the root map with its overrides' engines layered per
 name. Resolution is memoized on that map (and, for `gradle`/`maven`, on the
 workspace directory), so identical maps provision once. Under `lattice run`, only
-workspaces with nodes in the graph are resolved.
+workspaces with nodes in the graph are resolved, and a validate-mode check runs
+in the directory of the first workspace resolved with that map, where a version
+manager's shim reads its pin. `lattice setup`, and `lattice env` outside a
+workspace, check the root `engines` from the repo root.
 
 Activation prepends the toolchain `bin` directories to the `PATH` of the one
 child process a task runs in; nothing outside `.lattice/` changes, and `rm -rf

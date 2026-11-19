@@ -1,8 +1,8 @@
 # `lattice.json` reference
 
-One optional file at the repo root. Every command that reads config walks up
-from the current directory to the nearest `lattice.json` and treats that
-directory as the repo root. With none in this directory or any parent:
+One file at the repo root, which has to exist: every command that reads config
+walks up from the current directory to the nearest `lattice.json` and treats
+that directory as the repo root. With none in this directory or any parent:
 
 ```text
 error: no lattice.json found in this directory or any parent. Run `lattice init` to create one
@@ -106,9 +106,10 @@ native or listed.
   directory, the load fails: ``error: `workspaces` entry 'tolls/*' matches no
   directory. Check the spelling, or remove the entry`` (the same wording for a
   glob that matches nothing).
-- A glob walks the tree, skipping hidden and gitignored directories and
-  `node_modules`, `target`, `dist`, `build`, `out`, `vendor`, `venv` and
-  `__pycache__`.
+- A glob walks the tree, skipping hidden and gitignored directories. It does
+  not walk through `node_modules`, `target`, `dist`, `build`, `out`, `vendor`,
+  `venv` or `__pycache__`, but its last segment matches one by name
+  (`packages/*` matches `packages/build`), except under `**`.
 - A directory an entry matches that holds nothing Lattice recognizes is not a
   workspace and says nothing, unless an override writes out a command for it.
 - A directory listed here is one workspace whatever it contains: a nested
@@ -145,8 +146,9 @@ error: two workspaces are named 'web'. Give each a different `name` in `override
 
 Keys are **workspace names**, or **globs over workspace paths** when the key is
 `"."` or contains a `/` or a glob character (`*`, `?`, `[`, `{`). A top-level
-directory is matched by path as `"./tools"`. A name key matches the discovered
-name, or a name a path override gave the workspace.
+directory is matched by path as `"./tools"`. A key that starts with `@` and has
+no glob character, such as `@acme/ui`, is a name. A name key matches the
+discovered name, or a name a path override gave the workspace.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -290,7 +292,7 @@ number (`1.5`) is rejected rather than rounded; write `"90s"`.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `maxCacheSize` | `string` | none | An integer plus `B`, `KB`, `MB`, `GB` or `TB` (base 1024), or bare bytes, as a string. Enforced after every run that writes, and used by `lattice prune` without `--max-size` |
+| `maxCacheSize` | `string` | none | A number plus `B`, `KB`, `MB`, `GB` or `TB` (or `K`, `M`, `G`, `T`; base 1024, any case), or bare bytes, as a string. Enforced after every run that writes, and used by `lattice prune` without `--max-size` |
 | `cacheDir` | `string` | `".lattice/cache"` | Cache directory relative to the root. Inside the repo, not the root itself |
 | `loquacious` | `boolean` | `false` | Always verbose, as if `-v` were passed |
 | `versionCheck` | `boolean` | `true` | `false` disables the `latticeVersion` handover and the nag |
