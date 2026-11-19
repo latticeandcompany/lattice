@@ -1,0 +1,14 @@
+{
+	"name": "Lattice",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"serayuzgur.crates"
+			]
+		}
+	}
+}

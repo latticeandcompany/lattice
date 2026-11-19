@@ -182,6 +182,15 @@ TRUECOLOR="$(printf '\033[38;2;')"
 # =========================================================================
 sect "Top-level surfaces"
 
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'FROM rust:latest' "the devcontainer is based on the Rust latest image"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'FROM node:latest AS node' "the devcontainer includes the Node latest image"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'COPY --from=node /usr/local/ /usr/local/' "the devcontainer installs Node tools"
+t_grepfile "$REPO_ROOT/.devcontainer/devcontainer.json" '"dockerfile": "Dockerfile"' "the devcontainer builds from its Dockerfile"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'libwebkit2gtk-4.1-dev' "the devcontainer installs GTK and WebKit build dependencies"
+t_grepfile "$REPO_ROOT/.devcontainer/Dockerfile" 'libayatana-appindicator3-dev' "the devcontainer installs the app indicator build dependency"
+t_grepfile "$REPO_ROOT/.devcontainer/devcontainer.json" 'rust-lang.rust-analyzer' "the devcontainer includes rust-analyzer"
+t_grepfile "$REPO_ROOT/.devcontainer/devcontainer.json" 'serayuzgur.crates' "the devcontainer includes Cargo support"
+
 lat "$ENVROOT" ; t_ok "bare \`lattice\` exits 0"
 t_has "bare \`lattice\` points at help" "lattice --help"
 
