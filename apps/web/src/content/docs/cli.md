@@ -81,7 +81,12 @@ Tasks: build, check, clean, dev, format, lint, test
 **The directory you run from scopes the run.** Inside a workspace, `lattice run
 build` covers that workspace and everything it depends on, the same closure
 `--filter` produces. The output says so (`in web, the workspace you are in`). Run
-from the root, or pass `--filter`, to cover more.
+from the root, or pass `--filter`, to cover more. A workspace that has none of
+the tasks named fails the run rather than running nothing and exiting `0`:
+
+```text
+error: web, the workspace you are in, has no 'lint' task. Run it from the repo root to run it everywhere, or pick workspaces with --filter
+```
 
 **Arguments after `--`** are appended to the commands of the tasks you named, in
 the workspaces the run is for. Prerequisites pulled in do not get them. A script
@@ -163,12 +168,14 @@ error: there is no workspace named 'wbe'. Workspaces: api, web
 ```
 
 An installer runs in the nearest directory at or above the workspace that holds
-a lockfile, so the members of one pnpm, npm, yarn or Cargo tree share a single
-install. It is skipped, with `dependencies up to date`, when no lockfile in the
-workspace or above it is newer than that workspace's marker under
-`.lattice/setup`. The installer's output streams indented as it runs, and it gets
-no stdin, so an installer that asks a question fails with its own message instead
-of waiting on a prompt nobody sees.
+one of its own tool's lockfiles (`pnpm-lock.yaml` for pnpm, `go.sum` for Go), or
+in the workspace when there is none. The members of one pnpm, npm, yarn or Cargo
+tree share a single install, and a Go module inside a JavaScript repo installs
+in its own directory. It is skipped, with `dependencies up to date`, when none of
+those lockfiles in the workspace or above it is newer than that workspace's
+marker under `.lattice/setup`. The installer's output streams indented as it
+runs, and it gets no stdin, so an installer that asks a question fails with its
+own message instead of waiting on a prompt nobody sees.
 
 A workspace with no tool and no engines is skipped. A failed install is a warning
 for that workspace, the others still run, and the command then fails.
@@ -301,9 +308,11 @@ lattice env --workspace api
 export PATH='/repo/.lattice/toolchains/node/22.11.0-1a2b3c4d/bin':'/repo/node_modules/.bin':"$PATH"
 ```
 
-With nothing to add it prints nothing, and says why on stderr. An engine checked
-against the host tool adds nothing (the tool is already on `PATH`), but still has
-to pass its check.
+Each directory is quoted, so a `$` or a backtick in a path is taken literally.
+On Windows, `posix` and `fish` get each path the way Git Bash spells it,
+`/c/repo/...`. With nothing to add it prints nothing, and says why on stderr. An
+engine checked against the host tool adds nothing (the tool is already on
+`PATH`), but still has to pass its check.
 
 ## `lattice prune`
 
@@ -319,8 +328,11 @@ limit: `--max-size`, else `settings.maxCacheSize`.
 | `--max-size` | — | `<SIZE>` | `settings.maxCacheSize` | Upper bound, such as `10GB` |
 
 ```text
-❖ removed 12 artifacts, freed 1.2GB
+❖ removed 12 artifacts, freed 1288490188B
 ```
+
+The freed size is exact, so it is in the largest unit that divides it evenly,
+which is usually bytes.
 
 A size is a number and `B`, `KB`, `MB`, `GB` or `TB` (base 1024), or bare bytes.
 With no limit anywhere, `prune` fails rather than guess. It also reclaims what
@@ -406,8 +418,8 @@ These parse on `lattice` and on every subcommand, before or after its name.
 | `--release-base-url` | — | `<URL>` | GitHub releases | Where release archives download from. A `file://` base works offline |
 
 `-v` adds detail to whichever display the run uses; it no longer switches
-displays. `--stream` does that, and a run already gets the stream when stdout is
-not a terminal, when `CI` is set, or when it includes a persistent task.
+displays. `--stream` does that, and a run already gets the stream when stdout or
+stderr is not a terminal, when `CI` is set, or when it includes a persistent task.
 `--loquacious` (`-l`) is a hidden alias for `--verbose`.
 
 `-V` and `--version` print the binary's version and exist only on `lattice`
@@ -447,9 +459,10 @@ skipped, and the run exits `1` after its summary. `--sequentially` applies the
 rule per phase.
 
 On an interrupt, every running task's process group gets `SIGTERM`, five
-seconds, then `SIGKILL`, and the process exits `130` with `error: interrupted.
-Lattice stopped the tasks that were still running`. A task stopped that way is
-not counted as failed. `130` is distinct from `1` so a cancelled CI job does not
-read as a broken build.
+seconds, then `SIGKILL`. The run prints its summary and exits `130`, with no
+`error:` line. A task stopped that way is not counted as failed. A second Ctrl-C
+exits at once, printing `lattice: interrupted again — exiting now. Some child
+processes may still be running.` `130` is distinct from `1` so a cancelled CI
+job does not read as a broken build.
 
 Every message is in [Errors](/lattice/docs/errors).

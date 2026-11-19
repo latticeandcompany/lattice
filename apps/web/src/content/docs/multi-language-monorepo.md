@@ -120,9 +120,10 @@ default, and `go build ./...` writes nothing it keeps, so give either task
 `outputs` if its artifact should be restored.
 
 Edit `libs/utils/src/utils.py` and run again: `utils:build` misses on `inputs`,
-and `worker:build` misses on `dependencies`, because a task's key includes its
-prerequisites' keys. `web` and `api` stay cached. `lattice run build --stream -v`
-prints the reason for each miss. See [Caching](/lattice/docs/caching).
+and `worker:build` misses on `dependencies` and `upstream`, because a task's key
+includes its prerequisites' keys and the files of every workspace it depends
+on. `web` and `api` stay cached. `lattice run build --stream -v` prints the
+reason for each miss. See [Caching](/lattice/docs/caching).
 
 `lattice run lint` runs `npm run lint` in `web`, `cargo clippy` in `api`,
 `python3 -m py_compile ...` in `utils` and `go vet ./...` in `worker`: one name,

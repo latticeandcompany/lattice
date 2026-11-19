@@ -35,9 +35,10 @@ order:
 - It is not named by a root workspace file (`package.json` `workspaces`,
   `pnpm-workspace.yaml`, Cargo `[workspace]`, `go.work`, uv, deno) and not by
   `lattice.json` `workspaces`. Add its directory, or a glob, to `workspaces`.
-- A glob skips hidden and gitignored directories and `node_modules`, `target`,
-  `dist`, `build`, `out`, `vendor`, `venv`, `__pycache__`. Name such a directory
-  literally.
+- A glob skips hidden and gitignored directories, and does not walk through
+  `node_modules`, `target`, `dist`, `build`, `out`, `vendor`, `venv` or
+  `__pycache__` (`packages/*` still matches `packages/build`; `packages/**`
+  does not). Name such a directory literally.
 - `*` does not cross a `/`. `apps/*` does not reach `apps/web/admin`; use
   `apps/**` or list it.
 - It is inside another workspace that Lattice runs as one: a Gradle, Maven or
@@ -127,14 +128,20 @@ directories are on `PATH`.
 They go to the tasks named on the command line, in the workspaces the run is
 for, never to prerequisites. They are passed as written: `lattice run test --
 --nocapture` gives Cargo `cargo test --nocapture`, which Cargo rejects; its
-harness needs `lattice run test -- -- --nocapture`. `npm run` is the one command
-that gets a `--` inserted for you.
+harness needs `lattice run test -- -- --nocapture`. `npm run` and a Taskfile
+task are the two that get a `--` inserted for you.
 
 ## A run from a subdirectory ran fewer workspaces
 
 Running inside a workspace scopes the run to it and what it depends on, and the
 header or first line says `in <ws>, the workspace you are in`. Run from the
 root, or pass `--filter`, for more.
+
+## `<ws>, the workspace you are in, has no 'x' task`
+
+The run started inside a workspace that has none of the tasks named, which
+would otherwise run nothing and exit `0`. Run it from the repo root, or pick
+workspaces with `--filter`.
 
 ## `sh: <tool>: command not found`
 
@@ -182,7 +189,8 @@ fatal: either typo would change what a task caches without a word.
 
 ## `` `overrides` key 'x' names no workspace ``
 
-The key is read as a name (no `/` or glob character) and no workspace has it.
+The key is read as a name (no glob character, and no `/` unless it starts with
+`@`) and no workspace has it.
 Workspace names come from manifests, so `apps/web` may be named `@acme/web`;
 `--dry-run` or `lattice init`'s table shows the names. Match by path instead:
 `"apps/web"`, or `"./tools"` for a top-level directory.
@@ -238,9 +246,11 @@ walk honors it. `--force` replaces a bad entry; `--no-cache` leaves it in place.
 ## Files disappeared after a cache hit
 
 A hit deletes what the entry's `outputs` match, then unpacks the archive. That
-includes a default output: an npm, uv, poetry or pdm workspace's `build` owns
-`dist/**`, Gradle's `build/**`, Maven's `target/**`, .NET's `bin/**`. Keep
-hand-written files out of those, or set `outputs` for the task.
+includes a default output: an npm, pnpm, yarn, bun, deno, uv, poetry or pdm
+workspace's `build` owns `dist/**`; Gradle's and Maven's own the `build/` or
+`target/` beside each build file; .NET's own every `bin/Debug` and
+`bin/Release` in the build. Keep hand-written files out of those, or set
+`outputs` for the task.
 
 ## `no files matched outputs [...], so nothing was cached`
 
@@ -255,9 +265,9 @@ a pattern that matched an empty directory.
 
 ## The live display does not appear
 
-The stream is used when stdout is not a terminal, when `CI` is set to anything,
-with `--stream`, and for any run that includes a persistent task. `-v` no longer
-switches modes.
+The stream is used when stdout or stderr is not a terminal, when `CI` is set to
+anything, with `--stream`, and for any run that includes a persistent task. `-v`
+no longer switches modes.
 
 ## A run never finishes
 
@@ -281,10 +291,10 @@ and was stopped` line above the task's `✗`. A timeout leaves no exit code, so
 the `FAILED` line carries the duration alone.
 
 `Ctrl-C` or `SIGTERM` stops every task's process group (`SIGTERM`, five
-seconds, `SIGKILL`) and exits `130` with `error: interrupted. Lattice stopped
-the tasks that were still running`. A process a task started in a group of its
-own is out of reach; if it holds the output open Lattice warns `a task left a
-process holding its output open; it is still running` and exits. A second
+seconds, `SIGKILL`) and exits `130` after the summary, with no error line. A
+process a task started in a group of its own is out of reach; if it holds the
+output open Lattice warns `a task left a process holding its output open; it is
+still running` and exits. A second
 `Ctrl-C` exits at once.
 
 ## The run stopped at the first failure
@@ -301,8 +311,10 @@ names now come from manifests, so `--filter web` also matches `@acme/web-ui`.
 
 ## `lattice setup` says `dependencies up to date` and the build fails
 
-The workspace's marker under `.lattice/setup` is newer than every lockfile in
-the workspace and above it. `lattice setup --force`.
+The workspace's marker under `.lattice/setup` is newer than every lockfile its
+driver writes, in the workspace and above it. Gradle and Maven have no lockfile
+Lattice reads, so their install never re-runs on its own. Run
+`lattice setup --force`.
 
 ## `lattice run` did nothing and exited 0
 

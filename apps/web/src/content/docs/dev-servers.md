@@ -50,6 +50,7 @@ Check what resolves before starting anything:
 ```text
 $ lattice run dev --dry-run
 ❖ lattice  dry run · dev
+  → api:build  cargo build
   → ui-kit:build  npm run build
   → web:build  npm run build
   → api:dev  cargo watch -x run
@@ -57,7 +58,8 @@ $ lattice run dev --dry-run
 ```
 
 `ui-kit` has no `dev` script, so it sits this one out; its `build` is here
-because `web:dev` waits on it.
+because `web:dev` waits on it. `api:build` is here because the bare `build` in
+`dependsOn` applies to `api` too, and Cargo has a `build` verb.
 
 ## Start every dev server
 
@@ -70,18 +72,20 @@ a server prints for as long as it is up. Every line carries its
 `workspace:task:` label, and several servers interleave:
 
 ```text
-api:dev: running
+api:build: running
 ui-kit:build: running
-api:dev: listening on 0.0.0.0:8080
 ui-kit:build: done (0.23s)
 web:build: running
 web:build: done (0.19s)
 web:dev: running
+api:build: done (1.84s)
+api:dev: running
 web:dev: Local:   http://localhost:4321/
+api:dev: listening on 0.0.0.0:8080
 ```
 
-`api:dev` starts at once because it waits on nothing. `web:dev` waits for
-`ui-kit:build` and `web:build`. A server gets a closing line only if it exits.
+`api:dev` waits for `api:build`, and `web:dev` for `ui-kit:build` and
+`web:build`. A server gets a closing line only if it exits.
 
 ## Start one dev server
 
@@ -151,10 +155,11 @@ the run open.
 A server that quits gets a line, and a non-zero exit fails the run:
 
 ```text
+api:build: cache hit [06d8d459]
 api:dev: running
 api:dev: port 8080 already in use
 api:dev: EXITED (code 1) after 0.01s
-lattice: 1 tasks, 0 cached, 1 failed, 0.01s
+lattice: 2 tasks, 1 cached, 1 failed, 0.02s, 1.84s saved
 ```
 
 `exited (code 0)` is reported too, and does not fail the run; it usually means a

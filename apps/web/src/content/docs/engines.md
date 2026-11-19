@@ -46,8 +46,11 @@ error: workspace 'web' cannot run
 
 Version parsing is loose, because tools disagree about how to print one: the
 first run of digits and dots counts, so `v20.11.1`, `go1.22` and `rustc 1.75.0
-(abc 2024)` all parse. A constraint that is a semver range is matched as one; a
-bare version such as `"22.11.0"` means `^22.11.0`.
+(abc 2024)` all parse. `swift`, `elixir`, `mix` and `maven` print another
+tool's version first, so for those Lattice reads the number after
+`Swift version`, `Elixir`, `Mix` or `Apache Maven`. A constraint that is a
+semver range is matched as one; a bare version such as `"22.11.0"` means
+`^22.11.0`.
 
 Check mode reads each machine's own `PATH`, so a constraint that passes on one
 machine and fails on another is behaving as written. An `installCmd` is what
@@ -140,7 +143,7 @@ a check nobody runs.
 `LATTICE_TOOLCHAIN_DIR` environment variable, and by literal substitution of
 `$LATTICE_TOOLCHAIN_DIR` in the command before it runs, so either spelling works
 on every platform. It runs through the platform shell, `sh -c` on Unix and
-`cmd /C` on Windows.
+`cmd /C` on Windows, from the repo root wherever Lattice was started.
 
 `bin` has to stay inside the install. An absolute `bin` would put a directory
 Lattice never installed at the front of every task's `PATH` while the run still
@@ -149,10 +152,10 @@ reported an installed toolchain, so it fails at load, and again if a hand-edited
 
 ## Activation is per task
 
-Checks and installs happen once per distinct set of engines, on the first run,
-`setup` or `env` that needs them. Putting a `bin` directory on `PATH` happens per
-task: only that task's process gets it. No shell is sourced and no profile is
-written, so `rm -rf .lattice/toolchains` is a complete uninstall.
+Every run, `setup` and `env` checks each distinct set of engines once, and
+installs only what is not installed already. Putting a `bin` directory on `PATH`
+happens per task: only that task's process gets it. No shell is sourced and no
+profile is written, so `rm -rf .lattice/toolchains` is a complete uninstall.
 
 The directories a package manager installed tools into, such as
 `node_modules/.bin`, go on the same `PATH` after the pinned tools, never before:
@@ -165,6 +168,13 @@ To use the pinned tools in your own terminal, `lattice env` prints the same
 ```sh
 eval "$(lattice env)"
 ```
+
+From inside a workspace, or with `--workspace <name>`, it prints that
+workspace's `PATH`. It writes for the shell `$SHELL` names, falling back to
+PowerShell or `cmd` on Windows when `$SHELL` is unset, and `--shell` picks
+`posix`, `fish`, `powershell` or `cmd` outright. Each directory is quoted, so a
+`$` or a backtick in a path is taken literally, and under Git Bash a Windows
+path is written the way that shell reads one, `/c/repo` for `C:\repo`.
 
 ## Root and per-workspace engines
 

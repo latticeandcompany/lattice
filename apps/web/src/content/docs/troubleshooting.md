@@ -117,6 +117,12 @@ none. `--dry-run` shows the command as written, before installed tools and
 A run inside a workspace covers that workspace and what it depends on, and says
 `in <ws>, the workspace you are in`. Run from the root, or pass `--filter`.
 
+### `<ws>, the workspace you are in, has no '<task>' task`
+
+The run started inside a workspace that defines none of the tasks named, so it
+fails instead of running nothing and exiting `0`. Other workspaces have the
+task. Run from the root to run it everywhere, or pass `--filter`.
+
 ### Arguments after `--` did not reach the tool
 
 They go to the tasks named on the command line, never to prerequisites. They
@@ -259,9 +265,9 @@ No lockfile in the workspace or above it is newer than its install marker. Run
 
 ### You expected the live display and got plain lines
 
-The stream is used when stdout is not a terminal, when `CI` is set to anything,
-with `--stream`, and for any run that includes a persistent task (`dev`,
-`start`, `serve`, `watch`).
+The stream is used when stdout or stderr is not a terminal (`2> err.log` counts),
+when `CI` is set to anything, with `--stream`, and for any run that includes a
+persistent task (`dev`, `start`, `serve`, `watch`).
 
 ### You passed `-v` and still got the live display
 

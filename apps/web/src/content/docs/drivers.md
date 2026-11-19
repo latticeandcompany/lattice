@@ -37,11 +37,13 @@ When several tools are in evidence, their **roles** decide:
 | Task runner | 3 | `just`, `task`, `turbo`, `nx`, `deno`, `rake`, `mix` |
 
 The highest-ranked role drives, so different roles compose rather than
-conflict. A `.nvmrc` beside a `pnpm-lock.yaml` is pnpm, with node kept as an
-engine to check. A `turbo.json` over a `pnpm-lock.yaml` is turbo, because the
-task runner outranks the package manager and runs the tasks the repo declared to
-it. Among tools of the same role, a file someone wrote on purpose beats a
-lockfile: `packageManager: "pnpm@9.1.0"` wins over a stray `package-lock.json`.
+conflict. A `.nvmrc` beside a `pnpm-lock.yaml` is pnpm: the `.nvmrc` names a
+runtime, and a runtime does not drive. Its version is checked only once it is an
+`engines` entry, which `lattice init` offers to write. A `turbo.json` over a
+`pnpm-lock.yaml` is turbo, because the task runner outranks the package manager
+and runs the tasks the repo declared to it. Among tools of the same role, a file
+someone wrote on purpose beats a lockfile: `packageManager: "pnpm@9.1.0"` wins
+over a stray `package-lock.json`.
 
 A runtime alone decides nothing, because there is no universal `node build`.
 
@@ -64,11 +66,11 @@ its own:
 | `go.mod` | `go` |
 | `pom.xml` | `maven` |
 | `build.gradle`, `build.gradle.kts`, `settings.gradle` | `gradle` |
-| `.csproj`, `.fsproj`, `.vbproj`, `.sln` | `dotnet` |
+| `.csproj`, `.fsproj`, `.vbproj`, `.sln`, `.slnx` | `dotnet` |
 | `Gemfile` | `bundler` |
 | `Pipfile` | `pipenv` |
 | `requirements.txt`, `setup.py` | `pip` |
-| `composer.json`, `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`, `cabal.project` | `composer`, `mix`, `dart`, `swift`, `stack`, `cabal` |
+| `composer.json`, `mix.exs`, `pubspec.yaml`, `Package.swift`, `stack.yaml`, `cabal.project` or a `.cabal` file | `composer`, `mix`, `dart`, `swift`, `stack`, `cabal` |
 
 ## When Lattice stops to ask
 

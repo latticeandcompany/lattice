@@ -87,6 +87,14 @@ If the repo already has a `lattice.json`, you get the version its
 and writes that version back to `lattice.json`. Commit the change and everyone on
 the repo moves at once.
 
+Every [GitHub release](https://github.com/latticeandcompany/lattice/releases)
+carries the archives the installers download, a musl build for Linux x86_64
+among them, with a sha256 checksums file beside them. The same release carries
+[Lattice Desktop](https://latticeandcompany.github.io/lattice/desktop), the app
+that runs tasks, checks toolchains and manages the cache from a window: a
+`.dmg` for macOS, an `.msi` and a `-setup.exe` for Windows, and a `.deb`, an
+`.rpm` and an AppImage for Linux.
+
 To build from source instead, run
 `cargo install --git https://github.com/latticeandcompany/lattice lattice`, or
 clone the repo and run `cargo build --release`. Either way you need Rust 1.88 or
@@ -181,11 +189,12 @@ workspace's name.
 A task's cache key is a hash of everything that can change what the task
 produces: the command it resolved to, the files in its workspace, the manifests
 and lockfiles the workspace and the repo root hold, the environment values it
-names, the tool versions it resolved to, and the cache keys of the tasks it
-depends on. Change one file and every task downstream of it runs again, and
-nothing else does. A stored result counts as a hit only when its archive's
-sha256 matches the digest recorded when it was written, so a corrupt artifact is
-a miss and never a false hit.
+names, the tool versions it resolved to, the cache keys of the tasks it depends
+on, and the files of every workspace its workspace depends on. Change one file
+and every task downstream of it runs again, and nothing else does. A stored
+result counts as a hit only when its archive's sha256 matches the digest
+recorded when it was written, so a corrupt artifact is a miss and never a false
+hit.
 
 Each workspace's tool comes from the evidence in its files: a `packageManager`
 field, a lockfile only one tool writes, a wrapper like `gradlew`, a manifest only

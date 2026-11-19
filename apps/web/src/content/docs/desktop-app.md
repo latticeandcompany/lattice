@@ -20,8 +20,8 @@ can disagree about.
 
 Every release publishes a bundle for each platform. The
 [Lattice Desktop page](/lattice/desktop) lists them: a `.dmg` for Apple Silicon
-and Intel Macs, an installer and an `.msi` for Windows, and a `.deb`, an `.rpm`
-and an AppImage for Linux on x86_64 and aarch64.
+and Intel Macs, a `-setup.exe` installer and an `.msi` for Windows on x86_64,
+and a `.deb`, an `.rpm` and an AppImage for Linux on x86_64 and aarch64.
 
 The bundles are not code-signed, so macOS and Windows both stop the first launch
 and ask you to confirm. The download page names the warning each one shows, says
@@ -65,8 +65,9 @@ an engine dropped because it only chose a tool, an edge dropped because a
 manifest already states it — and writes it when you confirm. See [Upgrading to
 2.0](/lattice/docs/upgrading#upgrading-to-20).
 
-**A config that does not parse** still opens, showing the error and the file so
-you can fix it.
+**A config that does not load** opens a screen with the error in the parser's
+own words. Fix the file in your editor and press **Reload**, which opens that
+config again.
 
 Close a project, or switch to another, and the window stops whatever that
 project was running. A reload of the window reopens the project and picks up a
@@ -87,6 +88,7 @@ them. The run controls map onto `lattice run` flags:
 | Cache: use it, force, or skip it | none, `--force`, `--no-cache` |
 | Workspace filter | `-f`/`--filter` |
 | Concurrency | `--concurrency` |
+| Arguments | after `--`, passed to the tasks you picked |
 | Keep going after a failure | `--continue` |
 | Finish each task before starting the next | `-s`/`--sequentially` |
 
@@ -94,13 +96,13 @@ A row's own run button scopes the run to that workspace and what it depends on.
 **Stop** ends a run the way Ctrl-C does: running children are terminated, and
 the run reports as interrupted rather than failed.
 
-During a run, each task shows its state and its output as it prints, and a
-failed task opens its output on its own with the same detail the CLI's `FAILED`
-line carries. A task that missed the cache says which parts of its key moved —
-`inputs`, `command`, `dependencies` and so on; see [Cache
-internals](/lattice/docs/cache-internals). When the run ends, it carries the same
-summary the CLI prints, saved time included, and marks a run that came entirely
-from cache.
+During a run, each running task shows the last lines it printed, a queued one
+names the prerequisites it is still waiting on, and a failed task opens its
+output on its own with the same detail the CLI's `FAILED` line carries. A task
+that missed the cache says which parts of its key moved — `inputs`, `command`,
+`dependencies` and so on; see [Cache internals](/lattice/docs/cache-internals).
+When the run ends, it carries the same summary the CLI prints, saved time
+included, and marks a run that came entirely from cache.
 
 ## Read the graph
 
@@ -108,10 +110,13 @@ The **Graph** view draws the graph for the selected tasks, left to right in
 dependency order. Focus a task to light everything it depends on and everything
 that depends on it, which is the slice of the repo a change there can reach.
 Search narrows it by name. While a run is going the graph fills in live. The
-encoding is not all color, and the legend names it: filled means ran, faded is
-a cache hit, a dashed outline came along as a prerequisite, a rounded square is
-persistent. A list mode shows the same tasks as a table a screen reader and a
-keyboard can walk.
+encoding is not all color: filled means ran, faded is a cache hit, a heavy
+border is running or failed, a dashed outline came along as a prerequisite, and
+a rounded square is persistent. A dashed edge stays inside one workspace, and a
+heavier edge is a dependency written in `lattice.json` rather than read from a
+manifest. The legend names the states, and a dashed node's tooltip says it is
+a dependency of a task you selected. A list mode shows the same tasks as a
+table a screen reader and a keyboard can walk.
 
 ## Check toolchains
 
@@ -127,8 +132,9 @@ provisioning](/lattice/docs/engines).
 
 The **Cache** view shows what `lattice stats` reports — the cache directory, its
 size and entry count against `settings.maxCacheSize`, and the task time it has
-saved, in total and over the last seven days — and prunes it, down to a size or
-empty, the way `lattice prune` does.
+saved, in total and over the last seven days — and prunes it, down to
+`settings.maxCacheSize` when one is set or to empty, the way `lattice prune`
+does.
 
 ## Edit the config
 

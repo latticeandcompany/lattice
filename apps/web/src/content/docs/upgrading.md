@@ -43,21 +43,24 @@ every ordering holds, and every command you wrote still runs:
 | A `dependsOn` no manifest states | `overrides.<name>.dependsOn` |
 | `scripts` | `overrides.<name>.tasks` |
 | `auto: false` | `"driver": "none"` |
-| An engine like `"pnpm": ">=0.0.0"` that only chose a tool | `overrides.<name>.driver`, and the engine dropped |
+| An engine like `"pnpm": ">=0.0.0"` that only chose a tool | Dropped, plus `overrides.<name>.driver` where discovery would now pick a different tool |
 | Workspace `engines` | `overrides.<name>.engines` |
 | `tasks`, `engines`, `globalDependencies`, `globalEnv`, `settings` | Kept as they were |
 
 Before writing, `migrate` parses the new file and discovers the repo with it. It
-then says what it dropped:
+then says what it dropped, and which of your tasks 2.0's defaults change:
 
 ```text
 ✓ rewrote lattice.json 64 lines → 21
 · dropped the `pnpm` engine: its constraint matched any version, so it only chose a driver, and drivers are chosen with `driver` now
+· `dev` is now a persistent task, as every dev, start, serve and watch is: never cached, and nothing can wait on it. Set "persistent": false on it to keep the 1.x behavior
 · web: dropped dependsOn ui — its manifest already says so
 ```
 
 `migrate` always runs as the binary you invoked, even in a repo that pins a 1.x
-`latticeVersion`, and it sets `latticeVersion` to its own version. Commit the new
+`latticeVersion`, and it moves that pin to its own version. A config already in
+the 2.0 shape that still pins 1.x, such as the `"workspaces": []` a 1.x `init`
+wrote in an empty directory, gets the new pin and nothing else. Commit the new
 `lattice.json` and `.lattice/schema.json` together.
 
 Things to check afterwards:
@@ -68,16 +71,16 @@ Things to check afterwards:
   `tasks`: any script a package declares, and any verb its tool has (`lint` is
   `cargo clippy` in a crate), runs by name. `lattice run lint` in a Cargo crate
   used to run `cargo lint`, which does not exist.
-- **`build` caches the tool's build directory by default.** An npm, uv, poetry
-  or pdm workspace's `build` stores `dist/**`, the `build/**` beside each
-  Gradle build file, the `target/**` beside each `pom.xml`, .NET's `**/bin/Debug/**` and `**/bin/Release/**`, unless
-  `outputs` says otherwise. A cache hit
-  clears those directories before restoring them.
+- **`build` caches the tool's build directory by default**, unless `outputs`
+  says otherwise: `dist/**` for a JavaScript, uv, poetry or pdm workspace, the
+  `build/**` beside each Gradle build file, the `target/**` beside each
+  `pom.xml`, and `**/bin/Debug/**` and `**/bin/Release/**` for .NET. A cache
+  hit clears those directories before restoring them.
 - **`dev`, `start`, `serve` and `watch` are persistent** unless a task setting
   says `"persistent": false`.
 - **`-v` no longer switches to the line stream.** It adds the trace to either
   display. Scripts that relied on `-v` for parseable output should pass
-  `--stream`, or run where stdout is not a terminal, as CI does.
+  `--stream`, or run where stdout or stderr is not a terminal, as CI does.
 - **Workspaces added later take their manifest's name**, such as `@acme/ui` for
   a scoped package, which is what `--filter` matches.
 - **A Gradle, Maven or .NET build is one workspace.** A 1.x config that listed
@@ -108,13 +111,14 @@ A version may carry a leading `v` or not, and is otherwise validated as semver.
 Anything else is rejected:
 
 ```text
-'../../etc' is not a version (expected something like 0.2.0)
+error: '../../etc' is not a version. Write it like 0.2.0
 ```
 
 When it finishes, `lattice upgrade` reports what changed:
 
 ```text
 ❖ lattice  upgrade
+  downloading lattice 0.2.0 (aarch64-apple-darwin)
   0.1.0 → 0.2.0
 
 lattice.json now pins 0.2.0. Commit it so the whole repo moves together.
@@ -168,8 +172,8 @@ If the pinned version cannot be installed, the command fails rather than run
 the wrong one:
 
 ```text
-this repo pins lattice 0.2.0, which is not installed and could not be fetched.
-Run with --no-version-check to use lattice 0.1.0 anyway
+error: this repo pins lattice 0.2.0. That version is not installed, and Lattice could not download it.
+Run with --no-version-check to use lattice 0.1.0 instead
 ```
 
 **Any other binary** is never replaced. A `cargo install` build, a debug build

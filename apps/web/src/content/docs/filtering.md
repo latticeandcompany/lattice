@@ -34,7 +34,11 @@ package directory, and it means `cd` into what you are working on is enough.
 
 From the repo root, a run covers every workspace. `--filter` replaces the
 directory's scope. A run whose workspace has none of the tasks named fails,
-the way an unknown task does, rather than running nothing.
+the way an unknown task does, rather than running nothing and exiting `0`:
+
+```text
+error: api, the workspace you are in, has no 'lint' task. Run it from the repo root to run it everywhere, or pick workspaces with --filter
+```
 
 ## Narrow the run with `--filter`
 
@@ -71,9 +75,9 @@ filtered run costs a lookup per prerequisite, not a rebuild. The edges travel
 one way only: `--filter core` runs `core` alone, even though `api` and `web`
 depend on it.
 
-A prerequisite pulled in is asked only for the tasks its dependents need.
-`lattice run test --filter web` runs `web`'s test and the builds it waits on, not
-`api`'s tests.
+A prerequisite pulled in is asked only for the tasks its dependents need. With
+`test` depending on `build`, `lattice run test --filter web` runs `web`'s test
+and the builds it waits on, not `api`'s tests.
 
 ## Pass arguments to a task
 
@@ -141,11 +145,11 @@ the order you listed:
 ```text
 $ lattice run lint build --sequentially --dry-run
 ❖ lattice  dry run · lint (phase)
-  → docs:lint  npm run lint
   → web:lint  npm run lint
+  → docs:lint  npm run lint
 ❖ lattice  dry run · build (phase)
-  → core:build  npm run build
   → docs:build  npm run build
+  → core:build  npm run build
   → api:build  npm run build
   → web:build  npm run build
 ```

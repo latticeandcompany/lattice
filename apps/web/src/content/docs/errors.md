@@ -34,7 +34,8 @@ has run.
 no lattice.json found in this directory or any parent. Run `lattice init` to create one
 ```
 
-Every command walks up from the current directory looking for the file.
+Every command but `init` walks up from the current directory looking for the
+file. `lattice migrate` prints the first sentence alone.
 
 ### A 1.x config
 
@@ -126,7 +127,7 @@ Siblings: `... which points outside the toolchain install`, `... has an empty
 ```
 
 ```text
-`workspaces` entry is empty. Remove it, or write a directory like "apps/*"
+`workspaces` has an empty entry. Remove it, or write a directory like "apps/*"
 ```
 
 The same wording with `` `exclude` `` for an `exclude` entry.
@@ -313,6 +314,16 @@ Tasks: build, check, clean, dev, format, lint, test
 No workspace defines the task. A task listed only in the `tasks` map does not
 count: that map configures tasks, it does not create them. The list is every
 task any workspace has.
+
+### The workspace you are in has none of the tasks
+
+```text
+web, the workspace you are in, has no 'lint' task. Run it from the repo root to run it everywhere, or pick workspaces with --filter
+```
+
+A run started inside a workspace is scoped to it, and this one defines none of
+the tasks named, though some other workspace does. Several names read `no 'lint'
+or 'test' task`. Run from the root, or pass `--filter`.
 
 ### A dependency on an unknown task
 
@@ -517,6 +528,17 @@ failed to read cache dir /repo/.lattice/cache
 `lattice prune` treats a missing cache directory as nothing to prune. Any other
 read error, such as a permission denial, is fatal.
 
+### The run could not hold the cache to `maxCacheSize`
+
+```text
+failed to prune the cache: failed to read cache dir /repo/.lattice/cache
+```
+
+A warning at the end of a run. With `settings.maxCacheSize` set, every run that
+stores entries prunes the cache back under it, and this one could not. The run's
+result stands. When the prune does remove entries, it says so as a note:
+`pruned 3 cache entries to stay under 2GB`.
+
 ## Task execution
 
 Raised by the scheduler while running task commands.
@@ -583,22 +605,34 @@ timeout whatever `timeout` says.
 A task whose command ignores `SIGTERM`, or that backgrounded something still
 holding its output pipes, reports up to five seconds after the timeout itself.
 Those five seconds are the grace period, and Lattice kills the process group
-outright once it runs out. Such a task previously never reported at all. The run
-kept waiting on pipes that nothing was going to close.
+outright once it runs out.
+
+### A process was left holding a task's output
+
+```text
+a task left a process holding its output open; it is still running. A dev-server launcher that starts its children in their own process group is the usual cause.
+```
+
+A warning at the end of a run. A task started a process in a process group of
+its own, outside the reach of the run's shutdown, and that process still holds
+the task's output open. Lattice waits half a second for it, then finishes the
+run without it. Stop the process by its port or name.
 
 ### The run was interrupted
 
 Ctrl-C, or a `SIGTERM` delivered to Lattice, stops the run. Every running task's
-process group is sent `SIGTERM`, given five seconds, then killed. The process
-exits `130` rather than `1`:
-
-```text
-interrupted. Lattice stopped the tasks that were still running
-```
+process group is sent `SIGTERM`, given five seconds, then killed. No `error:`
+line prints: the run prints its summary and exits `130` rather than `1`.
 
 The tasks that were running are not counted as failures, because the run was
 stopped rather than broken. `130` is the shell's convention for `SIGINT`, 128 +
 2, which lets a CI runner tell a cancelled job from a failed build.
+
+A second interrupt during that teardown exits at once, with the same status:
+
+```text
+lattice: interrupted again — exiting now. Some child processes may still be running.
+```
 
 ### The runner panicked
 
@@ -618,7 +652,8 @@ there is no workspace named 'wbe'. Workspaces: api, web
 
 A name passed to `lattice setup` that is not a workspace. Fatal, and raised
 before Lattice provisions or installs anything. With no workspaces at all the
-tail reads `Lattice found no workspaces`.
+tail reads `Lattice found no workspaces`. `lattice env --workspace` refuses an
+unknown name with the same message.
 
 ```text
 web: `pnpm install` failed
@@ -649,25 +684,75 @@ marker is named.
 An installer that wants to prompt is a third case. `lattice setup` gives the
 install command no stdin, so an installer that asks for a password or a
 confirmation reads end-of-file and exits non-zero. Its own message about what it
-wanted appears under `web: \`pnpm install\` failed`. The install command used to
-inherit the terminal and wait on a prompt nothing was showing, until something
-killed the run. Supply the credential without a prompt, through an environment
-variable or a configured keychain helper. Running the installer once yourself,
-outside Lattice, also works.
+wanted appears under `web: \`pnpm install\` failed`. Supply the credential
+without a prompt, through an environment variable or a configured keychain
+helper. Running the installer once yourself, outside Lattice, also works.
 
-### Two conditions that are not errors
+### Messages that are not errors
 
-Both print a message and exit `0`. A `--filter` that matches no workspace:
+Each prints a line and exits `0`. A `--filter` that matches no workspace:
 
 ```text
 lattice: no workspaces matched filter '<pattern>'.
 ```
 
-And a repo with no workspaces at all:
+A repo with no workspaces at all:
 
 ```text
 lattice: found no workspaces. The repo root names none in a workspace file and holds no project Lattice recognizes. List workspace directories under `workspaces` in lattice.json, like "apps/*".
 ```
+
+`lattice env` with no directory to add, on stderr, so an `eval` of its output
+does nothing:
+
+```text
+lattice: nothing to add to PATH. No engine here has an installCmd, and no package manager has installed tools for this workspace yet
+```
+
+`lattice migrate` on a config already written for this version:
+
+```text
+lattice.json is already written for this version. Nothing to do.
+```
+
+## `init` and `migrate`
+
+### `lattice init` on an existing config
+
+```text
+lattice.json already exists. Pass --force to overwrite it
+```
+
+```text
+lattice.json already exists, written for Lattice 1.x. Run `lattice migrate` to rewrite it, or pass --force to start over
+```
+
+`init` writes a new file only. `--force` replaces the existing one with what the
+scan finds. For a 1.x config, `lattice migrate` keeps what it says.
+
+### `lattice migrate` cannot rewrite the config
+
+```text
+lattice.json could not be read as a 1.x config
+```
+
+The file looks like a 1.x config, with objects under `workspaces`, but does not
+parse as one. The parser's message is on the indented line under it.
+
+```text
+the migrated config does not resolve against this repo
+```
+
+The rewritten config does not resolve its workspaces in this checkout, and
+nothing is written. The indented lines hold the error a run would raise, such as
+a `workspaces` entry that matches no directory or a workspace whose tool Lattice
+cannot tell.
+
+```text
+the migrated config does not parse; this is a bug in `lattice migrate`
+```
+
+Nothing is written. Report it, with the 1.x `lattice.json`.
 
 ## Version pinning and self-update
 
@@ -695,8 +780,7 @@ download of a release that cannot exist. The indented lines carry the
 message shown above this one, `'1.x' is not a version. Write it like 0.2.0`, with
 the parser's complaint under that. Lattice accepts a `v` prefix and strips it, so
 `"v2.0.0"` and `"2.0.0"` pin the same release. When that release is the running
-build there is no handover to make, and the pin does nothing. A repo whose own
-tags carry the `v` prefix used to fail here on a download.
+build there is no handover to make, and the pin does nothing.
 
 ### No downloader available
 

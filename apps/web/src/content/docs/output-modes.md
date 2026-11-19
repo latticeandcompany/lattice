@@ -20,7 +20,7 @@ Every transcript on this page is a run of the same repo: four workspaces named
 
 The live display is what a terminal gets. The stream is used instead when:
 
-- stdout is not a terminal: a pipe, a redirect, a CI step;
+- stdout or stderr is not a terminal: a pipe, a redirect, a CI step;
 - `CI` is set to any value;
 - you pass `--stream`;
 - the run includes a persistent task, such as a dev server. A server prints for
@@ -57,8 +57,8 @@ Two parts.
 permanently, in the order they finished: `✓` and its duration when it passed, a
 teal `●` and the task time it saved when it came from cache, `✗` with its exit
 code and duration when it failed, `○` when it was skipped or a persistent task
-exited. These lines scroll away like any other output and stay in your terminal
-after the run.
+exited with code 0, and a red `✗` when one exited any other way. These lines
+scroll away like any other output and stay in your terminal after the run.
 
 **Below, the live region**, redrawn about ten times a second:
 
@@ -67,6 +67,10 @@ after the run.
 - up to three tasks still waiting, with what they wait on (`· web  waiting on
   ui`), then `+N more waiting`;
 - a count: `2/4 · 1 cached`, and failures in red.
+
+The region never grows taller than the terminal. When the rows do not fit,
+output lines go first, then `+N more running` and `+N more waiting` stand in
+for the rows that are left out.
 
 Rows are labeled by workspace. A run of several tasks, such as `lattice run lint
 test`, labels them `workspace:task`. A run started inside a workspace says so in
@@ -112,8 +116,9 @@ task in docs, so they sit this one out`, or a `! ui: timed out after 30s and was
 stopped` warning. With `-v`, each settled line also carries why the task missed
 the cache, and per-task notes print as they come.
 
-The live display draws on stderr. Whether you get it at all is decided by
-stdout: `lattice run build > build.log` writes the stream to the log.
+The live display draws on stderr, and needs stdout and stderr both to be a
+terminal. `lattice run build > build.log` writes the stream to the log, and so
+does `lattice run build 2> errors.log`.
 
 ## Read the stream
 
@@ -137,7 +142,9 @@ lattice: 4 tasks, 1 cached, 0 failed, 3.09s, 3.02s saved
 Every line a task prints is streamed under its label as it arrives, stdout to
 stdout and stderr to stderr. Lines from parallel tasks interleave; the label is
 what tells them apart. Nothing repaints and nothing is erased, which is what
-makes the stream safe to grep or hand to another tool.
+makes the stream safe to grep or hand to another tool. A reader that stops
+early, such as `| head`, does not stop the run: the lines it no longer reads are
+dropped, and every task still runs to the end.
 
 The events, as the stream prints them:
 
@@ -173,12 +180,13 @@ ui:build: running
 lattice: docs:build: hash 944775197435b927
 docs:build: cache hit [94477519]
 ...
-lattice: web:build: cache miss: dependencies changed
+lattice: web:build: cache miss: dependencies, upstream changed
 ```
 
-The `cache miss:` line names which part of the key moved. Here an edit to `ui`
-moved `inputs`, and `web` then missed on `dependencies`, because a
-prerequisite's key is part of its own. For what each part covers, see [Cache
+The `cache miss:` line names which parts of the key moved. Here an edit to `ui`
+moved its `inputs`. `web` then missed on `dependencies`, because a
+prerequisite's key is part of its own, and on `upstream`, which covers the files
+of every workspace `web` depends on. For what each part covers, see [Cache
 internals](/lattice/docs/cache-internals). `-v` also prints the tasks that sat
 the run out, and `skipped (dependency failed)` under `--continue`.
 
