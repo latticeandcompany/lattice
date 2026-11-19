@@ -1601,6 +1601,7 @@ mod tests {
 			"include(\":core\", \":app\")\n",
 		);
 		write(root, "gradlew", "");
+		write(root, "gradlew.bat", "");
 		write(root, "core/build.gradle.kts", "");
 		write(root, "app/build.gradle.kts", "plugins { application }\n");
 		let ws = discover_workspaces(root, &config("{}")).unwrap();
@@ -1608,8 +1609,13 @@ mod tests {
 		assert_eq!(ws[0].rel_path, ".");
 		assert_eq!(ws[0].driver.as_ref().unwrap().tool, "gradle");
 		let build = ws[0].task("build").unwrap();
+		let wrapper = if cfg!(windows) {
+			"gradlew.bat"
+		} else {
+			"gradlew"
+		};
 		assert!(
-			build.command.ends_with("gradlew build"),
+			build.command.ends_with(&format!("{wrapper} build")),
 			"{}",
 			build.command
 		);
