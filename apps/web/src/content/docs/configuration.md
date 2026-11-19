@@ -116,9 +116,11 @@ on top of the ones the root's own workspace files name: `package.json`
 - `*` matches within one directory level and `**` crosses levels.
   `"apps/*"` does not reach `apps/web/admin`.
 - `"."` makes the repo root a workspace.
-- A glob skips hidden and gitignored directories and `node_modules`, `target`,
-  `dist`, `build`, `out`, `vendor`, `venv` and `__pycache__`. A literal path is
-  looked up as written.
+- A glob never matches a hidden or gitignored directory. It does not walk
+  through `node_modules`, `target`, `dist`, `build`, `out`, `vendor`, `venv` or
+  `__pycache__` either, but a directory it names directly is matched whatever
+  it is called: `packages/*` includes `packages/build`. Under `**`, those names
+  are skipped at every level. A literal path is looked up as written.
 - A directory a glob matches that holds nothing Lattice recognizes is skipped
   without comment.
 - A directory named here is one workspace whatever is inside it: a nested
@@ -265,8 +267,9 @@ the fields it sets, and a list replaces rather than extends:
 
 2. For a `build` the workspace's own files define, the tool's build directory as
    `outputs`: `dist/**` for npm, pnpm, yarn, bun, deno, uv, poetry and pdm;
-   `build/**` beside each Gradle build file; `target/**` beside each `pom.xml`; `**/bin/Debug/**` and
-   `**/bin/Release/**` for .NET. Cargo, Go and uv workspace members get none.
+   `build/**` beside each Gradle build file; `target/**` beside each `pom.xml`;
+   `**/bin/Debug/**` and `**/bin/Release/**` for .NET. Every other tool, Cargo
+   and Go included, gets none, and so does a member of a uv workspace.
 3. This `tasks` map.
 4. The workspace's overrides.
 
@@ -312,7 +315,8 @@ rejected rather than clamped, and so is a fractional number like `1.5`; write
 
 Settings for particular workspaces. A key is a **workspace name**, or a **glob
 over workspace paths** when it is `"."` or contains a `/` or a glob character. A
-top-level directory is matched by path as `"./tools"`.
+scoped npm name such as `"@acme/ui"` is a name, slash and all. A top-level
+directory is matched by path as `"./tools"`.
 
 | Field | Type | Description |
 | --- | --- | --- |

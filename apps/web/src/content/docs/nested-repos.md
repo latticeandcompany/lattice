@@ -47,7 +47,7 @@ services/api/          a directory of shell scripts that serves site's bundle
       "tasks": {
         "build": "mkdir -p dist && cp src/serve.sh dist/serve.sh && chmod +x dist/serve.sh",
         "test": "test -x dist/serve.sh",
-        "serve": { "run": "sh dist/serve.sh", "dependsOn": ["build"], "cache": false },
+        "serve": { "run": "sh dist/serve.sh", "dependsOn": ["build"], "persistent": false, "cache": false },
         "clean": "rm -rf dist"
       }
     }
@@ -110,7 +110,8 @@ $ lattice run build --dry-run
 `api` waits for `frontend` because the override says it depends on it, and
 `build` depends on `^build`. A second run comes back from cache for both. Edit
 `frontend/packages/ui/src/index.js` and both rerun: `frontend` because its inputs
-moved, and `api` because its prerequisite's key did.
+moved, and `api` because it depends on `frontend`, whose build key and files are
+both part of `api:build`'s key.
 
 ## A task only one workspace has
 
@@ -119,10 +120,12 @@ sits it out. `serve` depends on `build`, so `frontend:build` and `api:build` run
 first, from cache when nothing changed, and `api` never serves a bundle that was
 not built.
 
-`serve` is one of the names Lattice treats as a long-running server, so the run
-streams and waits for it to exit. This example's `serve.sh` prints the bundle and
-exits, which Lattice reports as `api:serve: exited (code 0)`. A real server would
-keep running until `Ctrl-C`. See [Persistent tasks](/lattice/docs/persistent-tasks).
+`serve` is one of the names Lattice treats as a long-running server by default.
+This example's `serve.sh` prints the bundle and exits, so the override sets
+`"persistent": false` and the run treats it as an ordinary task that finishes,
+with `"cache": false` so it runs every time. A real server leaves `persistent`
+out: the run streams its output and keeps it running until `Ctrl-C`. See
+[Persistent tasks](/lattice/docs/persistent-tasks).
 
 ## Wrap, or flatten?
 

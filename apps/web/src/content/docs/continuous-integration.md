@@ -64,9 +64,10 @@ task fails with `command not found`.
 
 `lattice run` and `lattice setup` pick their output mode the same way
 everywhere. Lattice prints the plain stream, one `workspace:task:` line per
-event, when stdout is not a terminal, when the `CI` environment variable is set,
-or when you pass `--stream`. A CI job satisfies the first two at once: a step's
-stdout is not a terminal, and GitHub Actions sets `CI` in every job.
+event, when stdout or stderr is not a terminal, when the `CI` environment
+variable is set, or when you pass `--stream`. A CI job satisfies the first two at
+once: a step's output is not a terminal, and GitHub Actions sets `CI` in every
+job.
 
 Every line a task prints is streamed under its label as it arrives, so a job log
 reads like the build's own output with a prefix. `-v` adds each task's cache key
@@ -101,9 +102,7 @@ lattice: full power, nothing to run
 ```
 
 That marker needs at least one task scheduled, no failures, and a hit for every
-task, so a `--filter` that matched no workspace never prints it. If a CI check
-of yours greps for `lattice: full cache, nothing to run`, that is the string
-this one replaced.
+task, so a `--filter` that matched no workspace never prints it.
 
 ## Exit codes
 
@@ -125,9 +124,6 @@ shutdown.
 
 `SIGTERM` ends the run wherever it arrives, including a run a `persistent` task
 is holding open, such as a job that starts a dev server and tests against it.
-Such a run used to ignore `SIGTERM` and hang until the runner force-killed it.
-The hang cost a cancelled job the rest of its timeout and left the step's result
-unreported. A cancel now stops the run on the signal itself.
 
 Lattice does not report a task stopped that way as a failure. The log shows the
 tasks that were running and then the summary, with no `FAILED` line for the ones
@@ -179,9 +175,10 @@ hang a `timeout`:
 An overrun stops the task's whole process group and counts as a failure, so the
 run ends the way any other failure ends and later steps still get to save the
 cache. A task stopped that way has no exit code, so its line names only the
-time, `api:test: FAILED after 10:00`. The captured output ends with `timed out
-after 10m and was stopped`. `timeout` accepts `ms`, `s`, `m`, and `h`, or a bare
-integer of seconds. A `persistent` task ignores it.
+time, `api:test: FAILED after 10:00`, and the warning just before it names the
+limit: `lattice: warning: api:test: timed out after 10m and was stopped`.
+`timeout` accepts `ms`, `s`, `m`, and `h`, or a bare integer of seconds. A
+`persistent` task ignores it.
 
 ## Persist the cache between runs
 

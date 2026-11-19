@@ -32,6 +32,9 @@ mean the workspace is otherwise the same as last time. The set is:
 - whether each of those files is executable, and, for a symlink, the path it
   points at rather than the bytes on the other end
 - the cache key of every task this one depends on
+- the files of every workspace this one depends on, directly or not, whether or
+  not that workspace has a task of the same name
+- the `inputs`, `outputs` and `ignore` patterns themselves
 - the contents of the manifest the command resolves through, so editing the
   `build` script in `package.json` changes the work even though `npm run build`
   is the same string
@@ -83,12 +86,15 @@ and it is the only thing a hit restores. A file the command produces that no
 and whatever consumes it will find it missing.
 
 A `build` a workspace's own files define already has outputs: the directory its
-tool builds into, `dist/**` for JavaScript and Python packages, `build/**` beside each Gradle build file, `target/**` beside each `pom.xml`,
- `**/bin/Debug/**` and `**/bin/Release/**`
-for .NET. Each subproject of a JVM or .NET build writes its own, so a source
-package named `build` or `target` is never mistaken for output. Cargo and Go get none, because Cargo's `target/` is
-shared across a workspace and `go build ./...` keeps nothing, and neither does a
-uv workspace member, which builds into the workspace root's `dist/`. Set `outputs` on the task to replace the default.
+tool builds into. That is `dist/**` for JavaScript and Python packages,
+`build/**` beside each Gradle build file, `target/**` beside each `pom.xml`, and
+`**/bin/Debug/**` and `**/bin/Release/**` for .NET. Gradle and Maven name only
+the directory beside each build file, so a source package called `build` or
+`target` is never mistaken for output and cleared by a hit. Cargo and Go get
+none, because Cargo's `target/` is shared across a workspace and
+`go build ./...` keeps nothing, and neither does a uv workspace member, which
+builds into the workspace root's `dist/`. Set `outputs` on the task to replace
+the default.
 
 A restore also clears what `outputs` matches before it unpacks. That is a
 correctness decision rather than tidiness. Without it, a hit would layer the
@@ -221,8 +227,9 @@ lattice: web:build: cache miss: globalDependencies changed
 lattice: api:test: cache miss: dependencies, env changed
 ```
 
-The names are the parts listed above. Two misses have no part to name, and they
-say so instead of guessing:
+The names are the key's components, each listed in [Cache
+internals](/lattice/docs/cache-internals#cache-key-composition). Two misses have
+no part to name, and they say so instead of guessing:
 
 ```text
 lattice: app:build: cache miss (nothing cached for this task yet)

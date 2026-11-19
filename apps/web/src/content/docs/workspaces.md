@@ -32,9 +32,12 @@ does:
 | `pyproject.toml` | `[tool.uv.workspace] members`, minus `exclude` |
 | `deno.json` | `workspace` |
 
-A `!` entry removes what the entries before it matched, and a member has to hold
+A `!` entry removes what the other entries matched, and a member has to hold
 its ecosystem's manifest to count, so `packages/*` does not sweep in a
-`packages/notes` directory.
+`packages/notes` directory. A pattern does not walk through `node_modules`,
+`dist`, `build`, `out`, `target`, `vendor`, `venv` or `__pycache__`, but a
+directory it names directly is a member whatever it is called: `packages/*`
+includes `packages/build`.
 
 **`workspaces` in `lattice.json`.** Directories or globs added to the list:
 the Go service beside a JavaScript monorepo, a Python tool no workspace file
@@ -106,7 +109,8 @@ both named by their paths instead. To choose a name yourself, set it in
 ```
 
 Names are what `--filter` matches, what `overrides` keys and `dependsOn` refer
-to, and what the run output labels lines with.
+to, and what the run output labels lines with. A scoped name such as `@acme/ui`
+is an `overrides` key as written, slash and all.
 
 ## Dependencies come from the manifest too
 

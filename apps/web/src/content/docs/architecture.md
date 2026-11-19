@@ -51,8 +51,8 @@ lattice           -> dagger, lattice-cache, lattice-config, lattice-output,
                      lattice-project, lattice-runner, lattice-workspace
 lattice-cache     -> lattice-config
 lattice-config    -> (nothing internal)
-lattice-desktop   -> dagger, lattice-config, lattice-events, lattice-project,
-                     lattice-runner, lattice-workspace
+lattice-desktop   -> dagger, lattice-cache, lattice-config, lattice-events,
+                     lattice-project, lattice-runner, lattice-workspace
 lattice-events    -> (nothing internal)
 lattice-output    -> lattice-events
 lattice-project   -> dagger, lattice-cache, lattice-config, lattice-events,
@@ -221,18 +221,21 @@ with `assert_cmd`:
 | `e2e_toolchain.rs` | Provisioning and `PATH` injection with a fake `installCmd` |
 | `e2e_halves.rs` | The task-runner and toolchain-manager halves used independently, plus `prune` and `completions` |
 | `e2e_init.rs` | Scaffolding |
+| `e2e_migrate.rs` | Rewriting a 1.x config with `lattice migrate` |
+| `e2e_setup.rs` | Dependency installs with `lattice setup` |
 | `e2e_passthrough.rs` | Wrapping a nested repo that has its own runner |
 | `e2e_upgrade.rs` | Version pinning and self-update |
 | `e2e_guardrails.rs` | Defects that produced a plausible-looking run: a misordered build from a misspelled name, a hit serving a stale artifact, a prune taking the toolchains with it |
 
-**`scripts/stress-test.sh`** is a single dependency-free hermetic script, just
-under 2,000 lines, that builds the release or debug binary, generates a
-production-shaped multi-language monorepo plus focused sub-repos in a temp
-directory, and exercises every command and flag against it: top-level surfaces,
-`init`, `setup`, `run` (ordering, filtering, dry-run, concurrency), caching,
-persistent tasks, failure handling, driver detection across roughly sixteen
-ecosystems, error paths, `prune`, nested-repo passthrough, install and upgrade
-and pinning, the shipped agent skill, and the desktop app's wiring. It needs no
+**`scripts/stress-test.sh`** is a single dependency-free hermetic script that
+builds the release or debug binary, generates a production-shaped
+multi-language monorepo plus focused sub-repos in a temp directory, and
+exercises every command and flag against it: top-level surfaces, `init`,
+`setup`, `run` (ordering, filtering, dry-run, concurrency), caching, persistent
+tasks, failure handling, driver detection across roughly sixteen ecosystems,
+workspace discovery and inferred order, error paths, `prune`, nested-repo
+passthrough, `migrate`, `env`, build-tool wrappers, install and upgrade and
+pinning, the shipped agent skill, and the desktop app's wiring. It needs no
 network and no real language toolchains: driver detection is verified through
 `--dry-run`, and provisioning through a fake locally-installed toolchain.
 `AGENTS.md` requires updating it alongside any change to CLI surface or behavior.

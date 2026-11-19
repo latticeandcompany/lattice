@@ -37,8 +37,9 @@ bare string works for the [40 well-known
 engines](/lattice/docs/toolchains#well-known-engines).
 
 A version the repo already records elsewhere is a good source. `lattice init`
-proposes what it finds in `.nvmrc`, `.tool-versions`, `rust-toolchain.toml`,
-`.python-version`, `package.json` `packageManager` and `engines`, and `go.mod`.
+proposes what it finds in `.tool-versions`, `.nvmrc`, `rust-toolchain.toml` or
+`rust-toolchain`, `.python-version`, `.ruby-version`, `.java-version`,
+`package.json` `packageManager` and `engines`, and `go.mod`.
 
 ## Have Lattice install the tool
 
@@ -58,7 +59,9 @@ result is checked against `version`:
 
 `$LATTICE_TOOLCHAIN_DIR` is the empty directory to install into, available as
 an environment variable and substituted literally into the command. Put the
-executables in its `bin`, or set `bin` to wherever they land.
+executables in its `bin`, or set `bin` to wherever they land. The command runs
+from the repo root wherever you start Lattice, so a relative path in it, such as
+a script checked into the repo, means the same thing from every directory.
 
 ```sh
 lattice setup
@@ -104,8 +107,9 @@ eval "$(lattice env)"          # bash, zsh
 lattice env --shell fish | source
 ```
 
-Run it inside a workspace to include that workspace's pins and the tools its
-package manager installed, such as `node_modules/.bin`.
+Run it inside a workspace, or pass `--workspace <name>`, to include that
+workspace's pins and the tools its package manager installed, such as
+`node_modules/.bin`.
 
 ## Give some workspaces their own version
 

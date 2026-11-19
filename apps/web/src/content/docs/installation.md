@@ -37,7 +37,7 @@ Which version it installs, in order:
 To install a specific version, set `LATTICE_VERSION`:
 
 ```sh
-LATTICE_VERSION=0.2.0 curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
+LATTICE_VERSION=2.0.0 curl -fsSL https://latticeandcompany.github.io/lattice/install.sh | sh
 ```
 
 The script also appends a `PATH` line to your shell config, so that a bare
@@ -94,7 +94,7 @@ Which version it installs is resolved exactly as above, with
 `$env:LATTICE_VERSION` standing in for `$LATTICE_VERSION`:
 
 ```powershell
-$env:LATTICE_VERSION = '0.2.0'
+$env:LATTICE_VERSION = '2.0.0'
 irm https://latticeandcompany.github.io/lattice/install.ps1 | iex
 ```
 
@@ -140,8 +140,9 @@ To install Lattice through the package manager the repo already uses:
 npm install --save-dev @latticeandcompany/lattice
 ```
 
-`pnpm add -D`, `yarn add -D`, and `bun add -d` take the same package name. Run
-Lattice from a package script, or with `npx`:
+`pnpm add -D`, `yarn add -D`, and `bun add -d` take the same package name. The
+package needs Node 22 or newer. Run Lattice from a package script, or with
+`npx`:
 
 ```sh
 npx lattice run build
@@ -154,7 +155,7 @@ the same program with the same help.
 npm installs the binary and nothing else, so it does not set up shell
 completions. See [Add shell completions](#add-shell-completions).
 
-### Only one binary is installed
+### One package per platform
 
 The binary is not in the wrapper. Six sibling packages carry one build each, and
 the wrapper depends on all six as `optionalDependencies`:
@@ -168,8 +169,10 @@ the wrapper depends on all six as `optionalDependencies`:
 | `@latticeandcompany/lattice-linux-arm64-gnu` | Linux, aarch64 (glibc) |
 | `@latticeandcompany/lattice-win32-x64-msvc` | Windows, x86_64 (MSVC) |
 
-Each package declares the `os` and `cpu` it is for, so your package manager
-unpacks only the one that matches. The binaries are the ones the release
+Each package declares the `os` and `cpu` it is for, and on Linux the `libc`, so
+your package manager skips the ones that do not match. Package managers honor
+`libc` inconsistently, so on Linux x86_64 both the glibc and the musl package
+can install, and the wrapper runs the one for the system it is on. The binaries are the ones the release
 publishes, repackaged from the same archives.
 
 The install downloads nothing beyond those packages and runs no `postinstall`
@@ -199,8 +202,8 @@ When the two disagree, Lattice runs the installed version and prints the
 mismatch on stderr:
 
 ```text
-lattice: lattice.json pins latticeVersion 0.2.0, but the installed package is 0.3.0.
-Running 0.3.0. Reconcile them by updating one to match the other, or set
+lattice: lattice.json pins latticeVersion 1.1.1, but the installed package is 2.0.0.
+Running 2.0.0. Reconcile them by updating one to match the other, or set
 "settings": { "versionCheck": false } in lattice.json to silence this.
 ```
 
@@ -329,6 +332,7 @@ root:
 .lattice/
   bin/         lattice-<version> binaries and the lattice symlink (gitignored)
   cache/       task result cache (gitignored)
+  setup/       which workspaces lattice setup has installed (gitignored)
   toolchains/  provisioned engine versions (gitignored)
   schema.json  the lattice.json JSON Schema (committed)
 ```

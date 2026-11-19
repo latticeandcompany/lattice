@@ -30,9 +30,9 @@ The sha256 hash that identifies one task's result, computed over everything that
 can change what the task produces. Eleven components feed it: the run environment
 (Lattice version, platform, shell, workspace name, task name), the resolved
 command, the [toolchain](#toolchain) identity, the cache keys of the task's
-prerequisites, the files of the workspaces it depends on, the `inputs`,
-`outputs`, and `ignore` pattern lists, the resolved `env` and `globalEnv`
-values, the contents of every matched input file, the
+prerequisites, the files of every workspace it depends on, directly or not,
+the `inputs`, `outputs`, and `ignore` pattern lists, the resolved `env` values,
+the resolved `globalEnv` values, the contents of every matched input file, the
 [manifests](#manifest) and lockfiles present in the workspace and at the repo
 root, and the digest of `globalDependencies`. See [Cache
 internals](/lattice/docs/cache-internals).
@@ -152,9 +152,10 @@ false hit. See [Cache internals](/lattice/docs/cache-internals).
 Which of two presentations `lattice run` uses: the **live display**, which
 settles finished tasks into lines while a region redraws with running tasks and
 their latest output, or the **stream**, one plain `workspace:task:` line per
-event. The stream is used when stdout is not a terminal, when `CI` is set, with
-`--stream`, or when the run includes a [persistent task](#persistent-task). `-v`
-adds detail to either. See [Output and logging](/lattice/docs/output-modes).
+event. The stream is used when stdout or stderr is not a terminal, when `CI` is
+set, with `--stream`, or when the run includes a [persistent
+task](#persistent-task). `-v` adds detail to either. See [Output and
+logging](/lattice/docs/output-modes).
 
 ### Outputs
 
@@ -254,8 +255,9 @@ graph](/lattice/docs/task-graph).
 
 The workspace a run is narrowed to because it was started inside that
 workspace's directory. The run covers the workspace and everything it depends
-on, and says so. A [filter](#filter) replaces it. See [Selecting what
-runs](/lattice/docs/filtering#run-from-inside-a-workspace).
+on, and says so. When the workspace has none of the tasks named, the run fails
+rather than running nothing. A [filter](#filter) replaces it. See [Selecting
+what runs](/lattice/docs/filtering#run-from-inside-a-workspace).
 
 ### Stacked run
 

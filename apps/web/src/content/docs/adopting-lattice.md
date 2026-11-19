@@ -44,8 +44,8 @@ write is only the rest:
   is picked up without an edit.
 - **Tool versions the root already pins**, in `.nvmrc`, `.tool-versions`,
   `rust-toolchain.toml` and the rest, as `engines` entries.
-- **Task settings a `turbo.json` spells out**, when its directory is one of the
-  proposed workspaces.
+- **Task settings a `turbo.json` spells out**, with its `globalDependencies`
+  and `globalEnv`, when it sits at the repo root or in a proposed workspace.
 
 On a terminal you confirm each list. Besides `$schema` and `latticeVersion`, the
 result is often a handful of lines:
@@ -135,10 +135,11 @@ The root `tasks` map applies to every workspace that has the task. Where one
 workspace differs, set it in that workspace's override; fields layer, so an
 override that names `outputs` changes only `outputs`.
 
-`build` already caches the tool's build directory (`dist/**` for JavaScript and
-Python packages, `build/**` beside each Gradle build file, `target/**` beside each `pom.xml`,
-`**/bin/Debug/**` and `**/bin/Release/**` for .NET). A framework that writes elsewhere, such as `.next/`, needs its own
-`outputs`.
+`build` already caches the tool's build directory: `dist/**` for JavaScript
+packages and uv, poetry or pdm projects, the `build/**` beside each Gradle build
+file, the `target/**` beside each `pom.xml`, and `**/bin/Debug/**` and
+`**/bin/Release/**` for .NET. A framework that writes elsewhere, such as
+`.next/`, needs its own `outputs`.
 
 A file above every workspace, such as a shared `tsconfig.base.json`, goes in
 `globalDependencies`, and repo-wide variables in `globalEnv`. See

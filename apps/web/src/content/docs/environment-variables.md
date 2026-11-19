@@ -25,6 +25,8 @@ variables in the environment of the commands it spawns.
 | `LATTICE_RELEASE_BASE_URL` | `--release-base-url` | Base URL that `lattice upgrade` and the automatic version switch download release archives from. A `file://` base needs no network. | Present and not empty or whitespace-only |
 | `LATTICE_RELEASE_LATEST_URL` | `--release-latest-url` | Endpoint that resolves `lattice upgrade latest` to the newest stable release. | Present and not empty or whitespace-only |
 | `LATTICE_RELEASE_LIST_URL` | `--release-list-url` | Endpoint used as a fallback when the latest-stable endpoint has nothing to name, because no stable release has been published. | Present and not empty or whitespace-only |
+| `SHELL` | `lattice env --shell` | Which shell's syntax [`lattice env`](/lattice/docs/cli#lattice-env) prints: fish when the value ends in `fish`, POSIX `export` for anything else. Read before any Windows guess, so Git Bash and MSYS2 get POSIX. | Present |
+| `PSModulePath` | `lattice env --shell` | On Windows with no `SHELL`, makes `lattice env` print PowerShell; without it, `cmd`. | `SHELL` is unset, and this is present |
 
 `--theme` and `--release-base-url` are global: they parse on `lattice` itself
 and on every subcommand. `--release-latest-url` and `--release-list-url` live on
@@ -106,7 +108,8 @@ identity and the files the task reads.
 
 The directories have to exist before they can be added, which is what
 `lattice setup` is for. On a fresh clone, run it before the first
-`lattice run`.
+`lattice run`. To put the same `PATH` in your own shell, so `node` or `eslint` in
+a terminal is the copy a task gets, run `eval "$(lattice env)"`.
 
 ## How a task's `env` list resolves
 

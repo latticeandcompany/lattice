@@ -111,9 +111,10 @@ graph](/lattice/docs/task-graph).
 lattice setup
 ```
 
-`setup` checks or installs any tool versions pinned under `engines` and runs
-each workspace's installer, once per lockfile: here, one `npm install` at the
-root. On a fresh clone, run it before the first build.
+`setup` checks or installs any tool versions pinned under `engines`, then runs
+each workspace's installer from the nearest directory holding its own tool's
+lockfile, once per lockfile: here, one `npm install` at the root. On a fresh
+clone, run it before the first build.
 
 ## Run it
 
@@ -169,9 +170,17 @@ A run started inside a workspace covers that workspace and what it depends on,
 so this builds `greet` alone. From `packages/app` it would build `greet` and
 then `app`.
 
+A run from inside a workspace that has none of the tasks named fails, rather
+than running nothing and exiting 0. `greet` has no `test` script:
+
+```text
+$ lattice run test
+error: greet, the workspace you are in, has no 'test' task. Run it from the repo root to run it everywhere, or pick workspaces with --filter
+```
+
 ## Pass arguments through
 
-Anything after `--` goes to the task you named:
+From the repo root, anything after `--` goes to the task you named:
 
 ```sh
 lattice run test -- --trace-warnings

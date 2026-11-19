@@ -164,9 +164,7 @@ it open with nothing left to schedule.
 
 Lattice listens for the signal for the whole run, not only while it is waiting,
 so the first `Ctrl-C` ends the run wherever it lands, including during the builds
-that run ahead of the servers. It used to take a second press in that case, and
-a `SIGTERM` never registered at all. A cancelled CI job hung until the runner
-force-killed it.
+that run ahead of the servers.
 
 On Unix, Lattice sends `SIGTERM` to each still-running child's process group,
 waits five seconds, then sends `SIGKILL` to whatever is left. On Windows there is

@@ -39,16 +39,15 @@ the task's settled line.
    merged `engines` map holds them: `<name>=host` for an engine trusted on
    `PATH`, `<name>=<version>@host` for one version-checked on the host, and
    `<name>=<version>@<installHash>` for a provisioned one. A provisioned engine
-   with no way to read its version contributes `<name>=unknown@<installHash>`. It
-   used to contribute a fabricated `<name>=0.0.0@<installHash>`, so those keys
-   move once.
+   with no way to read its version contributes `<name>=unknown@<installHash>`.
 4. `dependencies`. One entry per task this task depends on, each that task's own
    resolved cache key, sorted and deduplicated.
 5. `upstream`. One entry per workspace this one depends on, directly or
    through others, sorted by name: the name and a digest of what that
    workspace's tasks read. That is the union of their `inputs` when every task
    declares some, and otherwise every file the applicable `.gitignore` files do
-   not exclude, minus whatever any of its tasks lists in `ignore` or `outputs`. `dependencies` only covers
+   not exclude, minus whatever any of its tasks lists in `ignore` or `outputs`.
+   Each file is hashed the way component 9 hashes one. `dependencies` only covers
    prerequisites in the graph, and a dependency with no task of the same name
    has none, so without this an edit there would leave the key where it was.
 6. `patterns`. The raw `inputs`, `outputs`, and `ignore` glob strings as
@@ -82,7 +81,7 @@ the task's settled line.
     matches. The pattern list is hashed even when it matches nothing. This digest
     is the same for every task in a run and is computed once, before scheduling.
 
-The dependency-state file order for component 9:
+The dependency-state file order for component 10:
 
 ```text
 package-lock.json    yarn.lock            pnpm-lock.yaml
@@ -95,8 +94,9 @@ mix.lock             pubspec.lock         Package.resolved
 stack.yaml.lock      cabal.project.freeze
 ```
 
-The same list decides whether `lattice setup` reinstalls dependencies, so the two
-cannot disagree.
+`lattice setup` decides whether to reinstall from the same files, narrowed to
+the ones the workspace's own driver writes and looked for in every directory
+from the workspace up to the root.
 
 The repo-root pass exists for hoisted layouts. A pnpm, yarn, or npm workspace, a
 Cargo virtual workspace, and a Go workspace all keep the only lockfile at the
@@ -111,7 +111,8 @@ depend on filesystem iteration order, on the order fields were declared in
 ### The executable bit
 
 Every file hashed anywhere in the key contributes one permission bit: whether
-any of the three execute bits is set. Components 8, 9, and 10 all include it.
+any of the three execute bits is set. Components 5, 9, 10, and 11 all include
+it.
 
 The stored artifact preserves file modes, so `chmod +x` on a script changes what
 a hit puts back, and the key has to move with it. The rest of the mode stays out
@@ -447,8 +448,9 @@ files they match are removed from the input set.
 **Files a task reads but does not declare.** When `inputs` is declared it is the
 whole input set, so a file the command reads that no glob matches has no effect
 on the key. Omit `inputs` and the whole workspace is hashed instead. Either way
-the walk stops at the workspace directory. A file above it is covered only by
-`globalDependencies`.
+the walk stops at the workspace directory. A file outside it is covered only by
+`globalDependencies`, the repo-root lockfile pass, or `upstream` when it belongs
+to a workspace this one depends on.
 
 **Undeclared environment variables.** Only names listed in a task's `env` or the
 repo's `globalEnv` are resolved and hashed. The rest of the ambient environment
